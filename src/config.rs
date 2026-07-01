@@ -123,10 +123,6 @@ impl ConfigStore {
         PathBuf::from(CONFIG_FILE_NAME)
     }
 
-    pub fn default() -> Self {
-        Self::new(Self::default_path())
-    }
-
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -172,6 +168,12 @@ impl ConfigStore {
         fs::rename(&tmp_path, &self.path)
             .map_err(|source| AppError::io("replace config", &self.path, source))?;
         Ok(())
+    }
+}
+
+impl Default for ConfigStore {
+    fn default() -> Self {
+        Self::new(Self::default_path())
     }
 }
 

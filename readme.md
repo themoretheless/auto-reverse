@@ -4,7 +4,7 @@ Auto Reverse — будущая системная утилита на Rust дл
 
 Цель по возможностям: повторить feature set Scroll Reverser для macOS и разложить его на маленькие Rust-модули, чтобы проект можно было изучать постепенно.
 
-Сейчас проект свежий: в `src/main.rs` находится стандартный `Hello, world!`. Документы в репозитории фиксируют план, архитектуру и список рекомендаций перед началом реализации.
+Сейчас реализован первый рабочий срез: macOS event tap, конфиг, rule resolver, scroll transformer, step size для wheel mouse, CLI-команды и unit tests. GUI/menu bar пока в roadmap.
 
 ## Команды
 
@@ -16,6 +16,41 @@ cargo test
 cargo fmt
 cargo clippy
 ```
+
+## CLI
+
+```bash
+cargo run -- doctor
+cargo run -- show-config
+cargo run -- simulate --device mouse --dy 1 --dx 2 --continuous false
+cargo run -- enable
+cargo run -- disable
+cargo run -- toggle
+cargo run -- run
+```
+
+`run` запускает macOS scroll event tap. Для него нужны permissions:
+
+- System Settings -> Privacy & Security -> Accessibility;
+- System Settings -> Privacy & Security -> Input Monitoring.
+
+Для безопасных проверок без системного hook используй `doctor`, `show-config` и `simulate`.
+
+## Что уже реализовано
+
+- Конфиг `config.toml` с versioned schema.
+- Глобальный `enabled`.
+- `reverse_vertical` и `reverse_horizontal`.
+- `reverse_mouse`, `reverse_trackpad`, `reverse_magic_mouse`, `reverse_unknown`.
+- `discrete_scroll_step_size` для wheel mouse.
+- CLI `doctor`, `init`, `enable`, `disable`, `toggle`, `show-config`, `simulate`.
+- CoreGraphics event tap для macOS.
+- Safe pass-through при disabled config.
+- Conservative classifier: physical wheel = mouse, continuous scroll = trackpad-like.
+- Source classifier по модели Scroll Reverser подготовлен для будущих gesture events.
+- Unit tests для конфига, classifier и scroll transform.
+
+Текущий важный gap: Magic Mouse и trackpad пока не разделяются на уровне реального event tap, потому что для этого нужен следующий слой gesture tracking.
 
 ## Пользовательский сценарий
 

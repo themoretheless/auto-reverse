@@ -1,6 +1,6 @@
 # Архитектура Auto Reverse
 
-Документ описывает, как разложить свежий Rust binary crate в понятную программу для reverse scrolling. Сейчас проект находится в состоянии `cargo new`: в `src/main.rs` только `Hello, world!`, поэтому ниже не фиксация текущей реализации, а целевая архитектура, дизайн-решения и 3 итерации разработки.
+Документ описывает, как разложить Rust binary crate в понятную программу для reverse scrolling. Первый рабочий срез уже реализован: macOS event tap, конфиг, rule resolver, transformer, step size и CLI-диагностика. Ниже остается целевая архитектура, дизайн-решения и 3 итерации разработки.
 
 Файл называется `architecture.md`, чтобы имя совпадало с общепринятым написанием.
 
@@ -50,18 +50,17 @@ Auto Reverse должен покрыть основные фичи Scroll Revers
 
 ## Что сейчас сделано плохо
 
-Текущее состояние не ошибочное для scaffold, но для реальной утилиты почти все отсутствует:
+Текущее состояние уже лучше scaffold, но для parity с Scroll Reverser еще не хватает нескольких крупных частей:
 
-- нет описания цели и сценариев;
-- нет модели настроек;
-- нет слоя платформы;
-- нет обработки input events;
-- нет device detection;
-- нет разделения ответственности;
-- нет тестов;
-- нет UX-модели;
-- нет стратегии прав доступа;
-- нет логирования и диагностики;
+- нет menu bar/tray UI;
+- нет preferences window;
+- нет полноценного gesture tracking для разделения Magic Mouse и trackpad;
+- нет debug console с ring buffer;
+- нет start at login integration;
+- нет show/hide menu bar icon;
+- нет AppleScript/automation integration;
+- нет update flow;
+- нет localization workflow;
 - нет packaging/release-плана.
 
 ## Три итерации
