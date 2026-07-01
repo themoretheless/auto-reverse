@@ -2,6 +2,7 @@ use std::env;
 use std::process;
 
 use auto_reverse::config::{AppConfig, ConfigStore};
+use auto_reverse::device;
 use auto_reverse::device::DeviceKind;
 use auto_reverse::error::{AppError, AppResult};
 use auto_reverse::event_tap;
@@ -53,12 +54,16 @@ fn run_event_tap() -> AppResult<()> {
         return Ok(());
     }
 
-    if !permissions::is_trusted() {
+    if !permissions::request_missing_permissions() {
         permissions::print_permission_help();
         return Err(AppError::Platform(
-            "Accessibility permission is not granted".to_string(),
+            "Accessibility or Input Monitoring permission is not granted".to_string(),
         ));
     }
+
+    println!(
+        "auto-reverse: config changes made while this is running have no effect until restart"
+    );
 
     event_tap::install_and_run(config)
 }
@@ -67,28 +72,36 @@ fn doctor() -> AppResult<()> {
     let store = ConfigStore::default();
     let config = store.load_or_create()?;
 
+    let accessibility = permissions::has_accessibility_trust();
+    let input_monitoring = permissions::has_input_monitoring_access();
+    let status = if !config.enabled {
+        "OFF (disabled in config)"
+    } else if !accessibility || !input_monitoring {
+        "NEEDS PERMISSION"
+    } else {
+        "ON"
+    };
+
     println!("Auto Reverse doctor");
+    println!("status: {status}");
+    println!();
     println!("version: {}", env!("CARGO_PKG_VERSION"));
     println!("config: {}", store.path().display());
     println!("settings: {}", config_summary(&config));
     println!(
         "accessibility permission: {}",
-        permission_word(permissions::has_accessibility_trust())
+        permissions::permission_status(accessibility)
     );
     println!(
         "input monitoring permission: {}",
-        permission_word(permissions::has_input_monitoring_access())
+        permissions::permission_status(input_monitoring)
     );
-    println!("current macOS classifier: physical wheel = mouse, continuous scroll = trackpad-like");
+    println!("device classifier: {}", device::CLASSIFIER_DESCRIPTION);
     println!(
         "known gap: reverse_magic_mouse has no effect yet - the classifier above cannot tell a \
          Magic Mouse apart from a trackpad, so continuous scroll is always treated as trackpad"
     );
     Ok(())
-}
-
-fn permission_word(granted: bool) -> &'static str {
-    if granted { "granted" } else { "required" }
 }
 
 fn init_config() -> AppResult<()> {
@@ -205,14 +218,16 @@ fn parse_bool(value: Option<&String>, flag: &str) -> AppResult<bool> {
 
 fn config_summary(config: &AppConfig) -> String {
     format!(
-        "enabled={}, vertical={}, horizontal={}, mouse={}, trackpad={}, magic_mouse={}, step_size={}",
+        "enabled={}, vertical={}, horizontal={}, mouse={}, trackpad={}, magic_mouse={}, \
+         step_size={}, raw_input_only={}",
         config.enabled,
         config.reverse_vertical,
         config.reverse_horizontal,
         config.reverse_mouse,
         config.reverse_trackpad,
         config.reverse_magic_mouse,
-        config.discrete_scroll_step_size
+        config.discrete_scroll_step_size,
+        config.reverse_only_raw_input,
     )
 }
 
@@ -220,17 +235,20 @@ fn print_help() {
     println!(
         "Auto Reverse\n\
          \n\
-         Commands:\n\
+         Everyday commands:\n\
            run                         Start the macOS scroll event tap\n\
-           doctor                      Show config, permission and platform status\n\
+           enable                      Turn scroll reversing on\n\
+           disable                     Turn scroll reversing off\n\
+           toggle                      Flip scroll reversing on/off\n\
+           doctor                      Show status, config, and permissions\n\
+           help                        Show this help\n\
+         \n\
+         Advanced commands:\n\
            init                        Create the default config if it does not exist\n\
-           enable                      Enable scroll reversing in config\n\
-           disable                     Disable scroll reversing in config\n\
-           toggle                      Toggle scroll reversing in config\n\
            config-path                 Print the config file path\n\
            show-config                 Print the current config as TOML\n\
-           simulate [flags]            Run one scroll event through the rules\n\
-           help                        Show this help\n\
+           simulate [flags]            Debugging tool: run one synthetic scroll event\n\
+                                       through the rules without touching real hardware\n\
          \n\
          Simulate flags:\n\
            --device mouse|trackpad|magic-mouse|unknown\n\
@@ -238,4 +256,40 @@ fn print_help() {
            --dx <integer>\n\
            --continuous true|false"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_i64_rejects_missing_value() {
+        assert!(parse_i64(None, "--dy").is_err());
+    }
+
+    #[test]
+    fn parse_i64_rejects_non_integer_value() {
+        assert!(parse_i64(Some(&"not-a-number".to_string()), "--dy").is_err());
+    }
+
+    #[test]
+    fn parse_i64_accepts_negative_integers() {
+        assert_eq!(parse_i64(Some(&"-7".to_string()), "--dy").unwrap(), -7);
+    }
+
+    #[test]
+    fn parse_bool_accepts_all_documented_spellings() {
+        for spelling in ["true", "yes", "1"] {
+            assert!(parse_bool(Some(&spelling.to_string()), "--continuous").unwrap());
+        }
+        for spelling in ["false", "no", "0"] {
+            assert!(!parse_bool(Some(&spelling.to_string()), "--continuous").unwrap());
+        }
+    }
+
+    #[test]
+    fn parse_bool_rejects_anything_else() {
+        assert!(parse_bool(Some(&"maybe".to_string()), "--continuous").is_err());
+        assert!(parse_bool(None, "--continuous").is_err());
+    }
 }

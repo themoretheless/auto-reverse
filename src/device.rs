@@ -26,6 +26,12 @@ impl DeviceKind {
     }
 }
 
+/// Single source of truth for describing `conservative_kind_from_continuity`
+/// to a user (e.g. in the `doctor` command), so the CLI's explanation of the
+/// classifier can't drift out of sync with what the classifier actually does.
+pub const CLASSIFIER_DESCRIPTION: &str =
+    "physical wheel = mouse, continuous scroll = trackpad-like";
+
 /// The only device classifier actually wired into the live event tap today.
 /// `IsContinuous` is the one signal CGEventTap's public API exposes, and it
 /// cannot distinguish a Magic Mouse from a trackpad - both report continuous

@@ -13,8 +13,13 @@ pub const CONFIG_VERSION: u32 = 1;
 const APP_DIR_NAME: &str = "Auto Reverse";
 const CONFIG_FILE_NAME: &str = "config.toml";
 
+// deny_unknown_fields is deliberately NOT used here: it would make
+// toml::from_str hard-fail with a generic "unknown field" parse error on
+// any config written by a newer version that added a field, before
+// validate()'s config_version check ever gets a chance to run and produce
+// the intended, actionable "unsupported config_version" message instead.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct AppConfig {
     pub config_version: u32,
     pub enabled: bool,
@@ -177,8 +182,10 @@ impl ConfigStore {
         let tmp_path = self
             .path
             .with_extension(format!("toml.{}.{}.tmp", process::id(), next_save_id()));
-        fs::write(&tmp_path, contents)
-            .map_err(|source| AppError::io("write temporary config", &tmp_path, source))?;
+        fs::write(&tmp_path, contents).map_err(|source| {
+            let _ = fs::remove_file(&tmp_path);
+            AppError::io("write temporary config", &tmp_path, source)
+        })?;
         fs::rename(&tmp_path, &self.path).map_err(|source| {
             let _ = fs::remove_file(&tmp_path);
             AppError::io("replace config", &self.path, source)
@@ -242,5 +249,45 @@ mod tests {
         };
 
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn unknown_fields_are_ignored_instead_of_hard_failing() {
+        // Regression test: a config written by a newer version with an
+        // extra field must still load, so config_version can drive
+        // compatibility decisions instead of a generic parse error.
+        let config: AppConfig = toml::from_str(
+            "config_version = 1\nenabled = true\na_field_from_the_future = true\n",
+        )
+        .unwrap();
+
+        assert!(config.enabled);
+    }
+
+    #[test]
+    fn save_can_be_called_twice_without_leaking_temp_files() {
+        let path = test_path("no-leftover-tmp");
+        let store = ConfigStore::new(&path);
+
+        store.save(&AppConfig::default()).unwrap();
+        store.save(&AppConfig::default()).unwrap();
+
+        let leftover_tmp_files: Vec<_> = fs::read_dir(env::temp_dir())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(path.file_stem().unwrap().to_string_lossy().as_ref())
+            })
+            .filter(|entry| entry.path() != path)
+            .collect();
+
+        assert!(
+            leftover_tmp_files.is_empty(),
+            "found leftover temp files: {leftover_tmp_files:?}"
+        );
+        let _ = fs::remove_file(path);
     }
 }

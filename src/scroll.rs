@@ -69,12 +69,15 @@ pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecis
 
     let should_reverse = config.should_reverse_device(event.device_kind);
 
-    if !event.continuous
-        && config.discrete_scroll_step_size > 0
-        && event.delta_vertical.unsigned_abs() == 1
-    {
-        transformed.delta_vertical *= config.discrete_scroll_step_size;
-        step_size_applied = true;
+    if !event.continuous && config.discrete_scroll_step_size > 0 {
+        if event.delta_vertical.unsigned_abs() == 1 {
+            transformed.delta_vertical *= config.discrete_scroll_step_size;
+            step_size_applied = true;
+        }
+        if event.delta_horizontal.unsigned_abs() == 1 {
+            transformed.delta_horizontal *= config.discrete_scroll_step_size;
+            step_size_applied = true;
+        }
     }
 
     if should_reverse && config.reverse_vertical {
