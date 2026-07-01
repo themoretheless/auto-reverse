@@ -47,10 +47,12 @@ cargo run -- run
 - CoreGraphics event tap для macOS.
 - Safe pass-through при disabled config.
 - Conservative classifier: physical wheel = mouse, continuous scroll = trackpad-like.
-- Source classifier по модели Scroll Reverser подготовлен для будущих gesture events.
-- Unit tests для конфига, classifier и scroll transform.
+- `doctor` реально запрашивает оба permission (Accessibility через `AXIsProcessTrustedWithOptions`, Input Monitoring через `CGRequestListenEventAccess`), а не только проверяет их.
+- Unit tests для конфига, classifier и scroll transform (24 теста, `cargo test`).
 
-Текущий важный gap: Magic Mouse и trackpad пока не разделяются на уровне реального event tap, потому что для этого нужен следующий слой gesture tracking.
+Текущие важные gaps (честно показаны в `doctor`): Magic Mouse и trackpad не разделяются на уровне реального event tap (нужен gesture tracking, которого пока нет); `reverse_unknown` недостижим вне `simulate`; пять полей конфига (`start_at_login`, `show_menu_bar_icon`, `check_for_updates`, `include_beta_updates`, `show_discrete_scroll_options`) зарезервированы под будущий menu-bar режим и пока ни на что не влияют. Подробный список найденных и исправленных проблем — в `recommendation.md`.
+
+Ранее в этом файле был экспериментальный `SourceClassifier` (touch-count/phase heuristic для различения Magic Mouse и trackpad) - он был удален: ни разу не вызывался из реального event tap (никакой источник этих данных вообще не подключен), а его собственные тесты создавали ложное ощущение, что различение уже работает.
 
 ## Пользовательский сценарий
 
