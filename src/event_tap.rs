@@ -1,7 +1,7 @@
 use core_foundation::runloop::CFRunLoop;
 use core_graphics::event::{
     CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
-    CGEventTapProxy, CGEventType, CallbackResult, EventField,
+    CGEventTapProxy, CGEventType, CallbackResult,
 };
 use std::sync::OnceLock;
 
@@ -65,12 +65,6 @@ fn handle_event(
             let Some(config) = CONFIG.get() else {
                 return CallbackResult::Keep;
             };
-
-            let source_pid =
-                event.get_integer_value_field(EventField::EVENT_SOURCE_UNIX_PROCESS_ID);
-            if config.reverse_only_raw_input && source_pid != 0 {
-                return CallbackResult::Keep;
-            }
 
             let continuous = !scroll::is_physical_mouse_wheel(event);
             let device_kind = conservative_kind_from_continuity(continuous);

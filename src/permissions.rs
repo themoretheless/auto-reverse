@@ -1,16 +1,39 @@
 // AXIsProcessTrusted is the standard public check for Accessibility trust.
-// There is no equivalent public check for the separate Input Monitoring
-// permission that CGEventTap also needs on modern macOS, so a failed tap
-// creation is the only reliable signal for that half - see
-// `event_tap::install_and_run`'s `Err` case.
+// CGPreflightListenEventAccess/CGRequestListenEventAccess (CGEvent.h, macOS
+// 10.15+) are the equivalent pair for the separate Input Monitoring
+// permission CGEventTap also needs - verified directly against this
+// machine's SDK header, not assumed.
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
     fn AXIsProcessTrusted() -> bool;
 }
 
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGPreflightListenEventAccess() -> bool;
+    fn CGRequestListenEventAccess() -> bool;
+}
+
 /// Whether the user has already granted this process Accessibility trust.
-pub fn is_trusted() -> bool {
+pub fn has_accessibility_trust() -> bool {
     unsafe { AXIsProcessTrusted() }
+}
+
+/// Whether the user has already granted this process Input Monitoring
+/// access, which CGEventTap needs independently of Accessibility trust.
+pub fn has_input_monitoring_access() -> bool {
+    unsafe { CGPreflightListenEventAccess() }
+}
+
+/// Prompts the system to show the Input Monitoring consent dialog if this
+/// process is not yet approved. A no-op if access was already granted.
+pub fn request_input_monitoring_access() -> bool {
+    unsafe { CGRequestListenEventAccess() }
+}
+
+/// Whether both permissions CGEventTap depends on are currently granted.
+pub fn is_trusted() -> bool {
+    has_accessibility_trust() && has_input_monitoring_access()
 }
 
 /// Actionable guidance for the two privacy permissions a scroll-wheel event
@@ -19,12 +42,19 @@ pub fn print_permission_help() {
     eprintln!(
         "auto-reverse needs two permissions to intercept scroll events:\n\
          \n\
-         1. System Settings > Privacy & Security > Accessibility\n\
-         2. System Settings > Privacy & Security > Input Monitoring\n\
+         1. Accessibility:    {}\n\
+         2. Input Monitoring: {}\n\
          \n\
-         Add this binary to both lists (use the \"+\" button and pick the\n\
-         compiled executable, e.g. target/debug/auto-reverse), then run it\n\
-         again. Rebuilding the binary changes its identity, so you will need\n\
-         to re-add it after every `cargo build` during development."
+         Open System Settings > Privacy & Security, add this binary to\n\
+         whichever list(s) above say \"required\" (use the \"+\" button and\n\
+         pick the compiled executable, e.g. target/debug/auto-reverse), then\n\
+         run it again. Rebuilding the binary changes its identity, so you\n\
+         will need to re-add it after every `cargo build` during development.",
+        permission_status(has_accessibility_trust()),
+        permission_status(has_input_monitoring_access()),
     );
+}
+
+fn permission_status(granted: bool) -> &'static str {
+    if granted { "granted" } else { "required" }
 }
