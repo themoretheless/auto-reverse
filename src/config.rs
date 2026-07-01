@@ -86,6 +86,12 @@ pub struct ConfigStore {
     path: PathBuf,
 }
 
+impl Default for ConfigStore {
+    fn default() -> Self {
+        Self::new(Self::default_path())
+    }
+}
+
 impl ConfigStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self { path: path.into() }
@@ -121,10 +127,6 @@ impl ConfigStore {
         }
 
         PathBuf::from(CONFIG_FILE_NAME)
-    }
-
-    pub fn default() -> Self {
-        Self::new(Self::default_path())
     }
 
     pub fn path(&self) -> &Path {
@@ -205,9 +207,11 @@ mod tests {
     fn config_round_trips_through_toml() {
         let path = test_path("roundtrip");
         let store = ConfigStore::new(&path);
-        let mut config = AppConfig::default();
-        config.reverse_horizontal = true;
-        config.reverse_trackpad = true;
+        let config = AppConfig {
+            reverse_horizontal: true,
+            reverse_trackpad: true,
+            ..AppConfig::default()
+        };
 
         store.save(&config).unwrap();
 
