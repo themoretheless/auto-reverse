@@ -1,516 +1,512 @@
 # 500 рекомендаций, проблем и улучшений
 
-Этот файл — большой backlog для Auto Reverse. Он объединяет предложения, проблемы, ошибки проектирования, UX-замечания, архитектурные решения и проверки качества. Пункты сгруппированы по темам, чтобы проект можно было разбирать маленькими кусочками.
+Список обновлен после merge ветки `worktree-rust-impl` в `master`. Он отражает текущий код: macOS event tap, TOML config, CLI, permission checks, raw-input guard, step size, 16 unit tests и открытые gaps до Scroll Reverser parity.
 
-## Feature parity
+## Итерация 1: Core Safety
 
-Отдельный чеклист фич Scroll Reverser лежит в `scroll-reverser-parity.md`. Этот список из 500 пунктов остается архитектурным backlog, а parity-документ становится product acceptance checklist: если фича есть в Scroll Reverser и технически применима, Auto Reverse должен иметь свой эквивалент.
+1. [Done] Проект уже имеет рабочий CLI вместо старого `Hello, world!`.
+2. [Done] `src/lib.rs` отделяет library facade от binary entrypoint.
+3. [Done] `src/main.rs` стал тонким CLI entrypoint.
+4. [Done] `AppConfig` хранит versioned config schema.
+5. [Done] TOML выбран как читаемый формат настроек.
+6. [Done] `ConfigStore::default_path` учитывает macOS Application Support.
+7. [Done] `AUTO_REVERSE_CONFIG` помогает безопасно тестировать конфиг.
+8. [Done] `load_or_create` делает first-run проще.
+9. [Done] Config save использует уникальный temporary file.
+10. [Problem] Config save еще не делает fsync файла и директории.
+11. [Improve] Добавить durable save для production release.
+12. [Problem] Нет backup corrupted config.
+13. [Improve] При parse error сохранять `.broken.<timestamp>.toml`.
+14. [Problem] Нет migration framework для `config_version`.
+15. [Improve] Добавить `config::migration` до schema v2.
+16. [Problem] `ConfigStore` и `AppConfig` живут в одном файле.
+17. [Improve] Разделить `config/schema.rs` и `config/store.rs`.
+18. [Problem] `config.rs` уже отвечает за schema, paths, IO и atomic save.
+19. [Improve] Оставить public facade, но вынести реализации по SRP.
+20. [Done] `DeviceKind::as_str` уменьшает DRY-дублирование.
+21. [Done] `Display` и `FromStr` используют единый device-name контракт.
+22. [Done] `DeviceKind` покрывает mouse, trackpad, Magic Mouse, unknown.
+23. [Problem] Magic Mouse пока не определяется live classifier.
+24. [Improve] Добавить отдельный gesture/HID classifier.
+25. [Problem] Continuous scroll сейчас консервативно считается trackpad.
+26. [Improve] Явно показывать этот gap в CLI и UI.
+27. [Done] Non-continuous scroll считается mouse.
+28. [Problem] Нет stable device id.
+29. [Improve] Добавить `DeviceId` и `DeviceInfo`.
+30. [Problem] Нет device registry.
+31. [Improve] Хранить known devices и last_seen metadata.
+32. [Problem] Unknown device config есть, но discovery отсутствует.
+33. [Improve] Показывать unknown devices в diagnostics.
+34. [Done] `ScrollEvent` нормализует vertical/horizontal delta.
+35. [Done] `ScrollEvent` содержит `continuous`.
+36. [Done] `ScrollEvent` содержит `synthetic`.
+37. [Done] `ScrollEvent` содержит `source_pid`.
+38. [Problem] `ScrollEvent` не содержит timestamp.
+39. [Improve] Добавить monotonic timestamp для diagnostics.
+40. [Problem] `ScrollEvent` не содержит event phase.
+41. [Improve] Добавить phase после gesture/HID spike.
+42. [Problem] `ScrollEvent` не содержит device id.
+43. [Improve] Добавить optional `device_id`.
+44. [Done] `scroll::transform_event` чисто тестируется.
+45. [Done] Disabled config делает pass-through.
+46. [Done] Synthetic event делает pass-through.
+47. [Done] Raw-input guard пропускает injected events.
+48. [Done] CLI simulate умеет задавать `source_pid`.
+49. [Improve] Добавить integration test для `simulate --source-pid`.
+50. [Done] CLI simulate умеет задавать `synthetic`.
+51. [Improve] Добавить integration test для `simulate --synthetic`.
+52. [Done] Vertical reverse включен по умолчанию.
+53. [Done] Horizontal reverse выключен по умолчанию.
+54. [Done] Mouse reverse включен по умолчанию.
+55. [Done] Trackpad reverse выключен по умолчанию.
+56. [Problem] Magic Mouse reverse включен в config, но live classifier не умеет его применить.
+57. [Improve] Временно пометить `reverse_magic_mouse` как planned в docs/UI.
+58. [Done] Step size применяется к non-continuous wheel delta.
+59. [Problem] Step size logic живет рядом с reverse logic.
+60. [Improve] Вынести wheel step в `scroll::wheel`.
+61. [Done] `discrete_scroll_step_size` валидируется диапазоном 0..=20.
+62. [Problem] Диапазон step size не объяснен в docs.
+63. [Improve] Добавить описание: 0 means system/default/no adjustment.
+64. [Done] `saturating_neg` предотвращает overflow.
+65. [Done] Step size multiplication использует `saturating_mul`.
+66. [Improve] Оставить regression test на будущий рост диапазона step size.
+67. [Done] CoreGraphics derived delta regression покрыт тестом.
+68. [Problem] CoreGraphics helpers находятся в `scroll.rs`.
+69. [Improve] Вынести CGEvent field code в `platform::macos::event_fields`.
+70. [Done] Event tap re-enables itself after disabled callbacks.
+71. [Problem] Event tap install не имеет integration smoke test.
+72. [Improve] Добавить mock listener для runtime contract tests.
+73. [Problem] `OnceLock<AppConfig>` делает event tap одноразовым в процессе.
+74. [Improve] Для будущего UI нужен runtime state с reloadable config snapshot.
+75. [Problem] Нет hot reload config.
+76. [Improve] Добавить command `reload` или runtime channel.
+77. [Problem] Нет pause без изменения config.
+78. [Improve] Различить persistent enabled и temporary paused.
+79. [Done] CLI `enable`, `disable`, `toggle` меняют config.
+80. [Problem] CLI commands не используют subcommand parser.
+81. [Improve] Для роста CLI добавить `clap`.
+82. [Problem] `main.rs` содержит ручной parsing flags.
+83. [Improve] Вынести CLI parsing в `app::command`.
+84. [Problem] `parse_bool` принимает yes/no/1/0, но help говорит true/false.
+85. [Improve] Help должен перечислять accepted bool values.
+86. [Problem] CLI errors не имеют stable error codes.
+87. [Improve] Добавить `E_CONFIG_PARSE`, `E_PERMISSION`, `E_PLATFORM`.
+88. [Done] `AppError` отделяет IO, config, platform и usage.
+89. [Problem] `AppError::InvalidConfig` хранит plain string.
+90. [Improve] Сделать structured validation errors.
+91. [Problem] `AppError::Platform` слишком общий.
+92. [Improve] Добавить enum для permission/tap/install/runtime.
+93. [Done] Accessibility check реализован.
+94. [Done] Input Monitoring preflight реализован.
+95. [Problem] `request_input_monitoring_access` не используется в CLI flow.
+96. [Improve] При missing Input Monitoring предлагать request action.
+97. [Problem] Accessibility prompt не вызывается через trusted options.
+98. [Improve] Добавить API для request Accessibility permission.
+99. [Problem] Permission docs не показывают exact binary path.
+100. [Improve] `doctor` должен печатать current executable path.
+101. [Problem] `doctor` создает config как side effect.
+102. [Improve] Разделить `doctor --no-create` и first-run init.
+103. [Done] `doctor` показывает Accessibility и Input Monitoring.
+104. [Problem] `doctor` не проверяет event tap installability.
+105. [Improve] Добавить dry install check или explicit explanation.
+106. [Problem] Нет runtime diagnostics buffer.
+107. [Improve] Добавить ring buffer для последних decisions.
+108. [Problem] Event hot path не должен логировать синхронно.
+109. [Improve] Использовать lock-free/ring buffer или sampled logging.
+110. [Problem] Нет tracing/log crate.
+111. [Improve] Ввести `tracing` только после выбора diagnostics design.
+112. [Problem] Нет benchmark hot path.
+113. [Improve] Добавить microbenchmark для `transform_event`.
+114. [Problem] Нет property tests для sign reversal.
+115. [Improve] Проверить invariant: magnitude сохраняется кроме wheel step.
+116. [Problem] Нет теста для `i64::MIN` vertical/horizontal.
+117. [Improve] Добавить regression tests для saturating behavior.
+118. [Done] Есть тест для step size 0.
+119. [Improve] Добавить CLI simulation example для step size 0 после command support.
+120. [Problem] Нет теста для `reverse_unknown`.
+121. [Improve] Добавить unknown-device transform test.
+122. [Done] Pure transform покрывает Magic Mouse config.
+123. [Improve] Live Magic Mouse distinction все еще требует gesture/HID classifier.
+124. [Problem] Live classifier не покрыт integration contract.
+125. [Improve] Добавить tests для `conservative_kind_from_continuity`.
+126. [Done] Device parse/display round-trip покрыт.
+127. [Problem] Нет serde round-trip для `DeviceKind`.
+128. [Improve] Добавить TOML test для `magic-mouse`.
+129. [Problem] Нет CLI snapshot tests.
+130. [Improve] Добавить integration tests через `assert_cmd`.
+131. [Problem] Нет golden output для `show-config`.
+132. [Improve] Зафиксировать config output или сделать формат explicit unstable.
+133. [Problem] Нет test tempdir crate.
+134. [Improve] Использовать `tempfile` вместо timestamp path helper.
+135. [Problem] Tests оставляют файл, если panic до cleanup.
+136. [Improve] `tempfile::NamedTempFile` решит cleanup.
+137. [Problem] Нет module-level docs.
+138. [Improve] Добавить краткие `//!` docs для модулей.
+139. [Problem] Публичный API слишком широк: все modules `pub`.
+140. [Improve] Экспортировать facade, скрывать platform internals.
+141. [Problem] `event_tap` публичен из lib.
+142. [Improve] После UI/runtime split сделать platform modules crate-private.
+143. [Problem] `permissions` публичен как macOS-only module.
+144. [Improve] Переехать в `platform::macos::permissions`.
+145. [Problem] Проект пока macOS-only, но docs говорят о future cross-platform.
+146. [Improve] Добавить `#[cfg(target_os = "macos")]` boundaries.
+147. [Problem] Non-macOS build behavior не определен.
+148. [Improve] Сделать graceful compile error или stub platform.
+149. [Problem] Cargo features не разделяют platform code.
+150. [Improve] Добавить feature `macos-event-tap`.
+151. [Problem] `core-graphics` dependency всегда включена.
+152. [Improve] Сделать platform dependency target-specific.
+153. [Problem] Нет MSRV.
+154. [Improve] Зафиксировать Rust version через `rust-toolchain.toml`.
+155. [Problem] Edition 2024 требует свежий toolchain.
+156. [Improve] README должен назвать required Rust version.
+157. [Problem] Нет CI.
+158. [Improve] Добавить GitHub Actions после remote setup.
+159. [Problem] Нет `cargo audit`.
+160. [Improve] Добавить audit в release checklist.
+161. [Problem] Нет license.
+162. [Improve] Выбрать MIT/Apache-2.0/другую license до публикации.
+163. [Problem] Нет changelog.
+164. [Improve] Добавить `CHANGELOG.md` с текущим first slice.
+165. [Problem] Нет ADR.
+166. [Improve] Создать ADR for event tap, config format, CLI first.
+167. [Problem] `.idea/.gitignore` висит untracked.
+168. [Improve] Решить: commit IDE ignore или добавить `.idea/` в root `.gitignore`.
+169. [Problem] Remote не настроен.
+170. [Improve] Добавить `origin`, иначе push невозможен.
 
-## Итерация 1: ядро и базовая архитектура
+## Итерация 2: Product UX and Design
 
-1. [Проблема] Сейчас программа не описывает свою цель: `Hello, world!` не помогает понять, что это reverse scrolling utility.
-2. [Улучшение] Добавить явное описание продукта в README и CLI help.
-3. [Проблема] Нет доменной модели для направления скролла.
-4. [Улучшение] Создать enum `ScrollDirection` со значениями `Natural` и `Reversed`.
-5. [Проблема] Нет единой модели устройства ввода.
-6. [Улучшение] Создать `DeviceId`, `DeviceKind` и `DeviceInfo`.
-7. [Проблема] Логика устройства и логика скролла могут смешаться, если не разделить модули сразу.
-8. [Улучшение] Вынести устройство в `device`, а правила скролла в `scroll`.
-9. [Проблема] Нет настроек по умолчанию.
-10. [Улучшение] Описать `DefaultConfig`, который безопасно ничего не ломает.
-11. [Проблема] Не определено, что делать с неизвестным устройством.
-12. [Улучшение] Ввести default rule для `Unknown`.
-13. [Проблема] Нет стратегии dry-run.
-14. [Улучшение] Добавить режим, который логирует решения без изменения системного ввода.
-15. [Проблема] Нет проверки прав доступа.
-16. [Улучшение] Сделать `PermissionChecker` отдельным interface.
-17. [Проблема] Платформенный код легко начнет протекать в core.
-18. [Улучшение] Сразу создать `platform` traits.
-19. [Проблема] Нельзя тестировать OS input без mock.
-20. [Улучшение] Создать `MockInputListener` для unit/integration tests.
-21. [Проблема] Нет единой ошибки приложения.
-22. [Улучшение] Добавить `AppError` с категориями: config, permission, platform, input, emit.
-23. [Проблема] Нет логирования решений.
-24. [Улучшение] Ввести structured local logging.
-25. [Проблема] Конфиг может стать нечитабельным.
-26. [Улучшение] Использовать human-readable config format, например TOML.
-27. [Проблема] Нет versioned schema.
-28. [Улучшение] Добавить `config_version`.
-29. [Проблема] Будущие изменения настроек могут сломать старые файлы.
-30. [Улучшение] Сразу спроектировать `config::migration`.
-31. [Проблема] Нет правила, что делать при corrupted config.
-32. [Улучшение] При ошибке чтения предлагать safe defaults и backup.
-33. [Проблема] Нет различия между mouse и trackpad.
-34. [Улучшение] Добавить classifier по device metadata.
-35. [Проблема] Device name может быть нестабильным.
-36. [Улучшение] Хранить stable id и display name отдельно.
-37. [Проблема] Bluetooth-устройства могут менять идентификаторы.
-38. [Улучшение] Добавить fallback matching по vendor/product/name.
-39. [Проблема] Нет политики для нескольких одинаковых мышей.
-40. [Улучшение] Различать device instances и device model rules.
-41. [Проблема] Скролл имеет горизонтальную и вертикальную ось.
-42. [Улучшение] Хранить `delta_x` и `delta_y` отдельно.
-43. [Проблема] Reverse только вертикальной оси может удивить пользователя.
-44. [Улучшение] Сделать настройки axis-specific.
-45. [Проблема] Нет обработки smooth scrolling.
-46. [Улучшение] Сохранять precision delta без округления.
-47. [Проблема] Нет определения event source.
-48. [Улучшение] В `InputEvent` хранить источник, timestamp и phase.
-49. [Проблема] Можно создать event loop, если перехваченные события снова попадут во вход.
-50. [Улучшение] Маркировать synthetic events и фильтровать их.
-51. [Проблема] Нет аварийного выключения.
-52. [Улучшение] Добавить global pause и CLI flag для disable.
-53. [Проблема] Нет безопасного поведения при panic.
-54. [Улучшение] На panic восстанавливать pass-through mode.
-55. [Проблема] Непонятно, где хранить пользовательские настройки.
-56. [Улучшение] Использовать OS-specific config directory.
-57. [Проблема] Нельзя понять, применилось ли правило.
-58. [Улучшение] Добавить debug trace: device -> rule -> action.
-59. [Проблема] Нет теста на idempotency.
-60. [Улучшение] Проверить, что double reverse не происходит.
-61. [Проблема] Нет теста для нулевого delta.
-62. [Улучшение] Событие с `delta=0` должно проходить без изменений.
-63. [Проблема] Нет теста для горизонтального скролла.
-64. [Улучшение] Добавить cases для `delta_x`.
-65. [Проблема] Нет теста для неизвестного устройства.
-66. [Улучшение] Покрыть `Unknown` default rule.
-67. [Проблема] Нет теста при disabled rule.
-68. [Улучшение] Disabled rule должна возвращать pass-through.
-69. [Проблема] Нет теста порядка приоритетов.
-70. [Улучшение] Rules должны иметь явный priority.
-71. [Проблема] Нет config validation.
-72. [Улучшение] Проверять дубликаты device rules.
-73. [Проблема] Нет защиты от пустого device id.
-74. [Улучшение] `DeviceId::new` должен валидировать вход.
-75. [Проблема] Нет разделения `library` и `binary`.
-76. [Улучшение] Перенести core в `src/lib.rs`, а `main.rs` оставить тонким entrypoint.
-77. [Проблема] CLI будет трудно тестировать, если логика останется в `main`.
-78. [Улучшение] `main` должен только parse args, build runtime и start.
-79. [Проблема] Нет проверки format/lint.
-80. [Улучшение] Запускать `cargo fmt`, `cargo clippy`, `cargo test` перед изменениями поведения.
-81. [Проблема] Не выбран config crate.
-82. [Улучшение] Рассмотреть `serde`, `toml`, `directories`.
-83. [Проблема] Нет стратегии dependency минимализма.
-84. [Улучшение] Добавлять зависимости только после явного use case.
-85. [Проблема] Нет feature flags для платформ.
-86. [Улучшение] Ввести `macos`, `windows`, `linux` features.
-87. [Проблема] Cross-platform код может не собираться на другой ОС.
-88. [Улучшение] Использовать `cfg(target_os = "...")` в platform adapter.
-89. [Проблема] Нет CI matrix.
-90. [Улучшение] В будущем добавить checks для macOS, Windows и Linux.
-91. [Проблема] Нет документа по ограничениям ОС.
-92. [Улучшение] Описать, какие API и permissions нужны каждой платформе.
-93. [Проблема] Не ясно, перехватывает ли программа input или меняет системную настройку.
-94. [Улучшение] Явно выбрать режим: event transform, system setting toggle или hybrid.
-95. [Проблема] System setting toggle может менять поведение всех устройств сразу.
-96. [Улучшение] Для per-device behavior нужен event-level слой.
-97. [Проблема] Event-level слой сложнее и рискованнее.
-98. [Улучшение] Начать с dry-run и mock, потом подключать реальные события.
-99. [Проблема] Нет угрозной модели.
-100. [Улучшение] Описать, какие input данные читаются и почему они не отправляются в сеть.
-101. [Проблема] Нет privacy promise.
-102. [Улучшение] Зафиксировать: telemetry локальная, network off by default.
-103. [Проблема] Логи могут случайно хранить лишние данные.
-104. [Улучшение] Не логировать текстовый ввод, только scroll metadata.
-105. [Проблема] Нет уровня логирования.
-106. [Улучшение] Добавить `error`, `warn`, `info`, `debug`, `trace`.
-107. [Проблема] Нет ротации логов.
-108. [Улучшение] Ограничить размер log-файлов.
-109. [Проблема] Нет user-facing diagnostics.
-110. [Улучшение] Сделать экран: permissions, devices, last events, config path.
-111. [Проблема] Нет repeatable reproduction.
-112. [Улучшение] Добавить кнопку export diagnostics без чувствительных данных.
-113. [Проблема] Нет build metadata.
-114. [Улучшение] Показывать version, commit hash и target OS.
-115. [Проблема] Нет uninstall story.
-116. [Улучшение] Документировать удаление launch agent/autostart/config.
-117. [Проблема] Нет auto-start настройки.
-118. [Улучшение] Сделать startup installer отдельным service.
-119. [Проблема] Auto-start может раздражать.
-120. [Улучшение] Включать auto-start только после явного согласия.
-121. [Проблема] Нет состояния paused.
-122. [Улучшение] Добавить `RuntimeState::Paused`.
-123. [Проблема] Нет состояния degraded.
-124. [Улучшение] Добавить `RuntimeState::NeedsPermission` и `RuntimeState::Error`.
-125. [Проблема] Нет central state store.
-126. [Улучшение] Runtime должен хранить read-only snapshot текущего состояния для UI.
-127. [Проблема] UI может напрямую менять runtime.
-128. [Улучшение] Использовать commands: `SetRule`, `Pause`, `Resume`, `ReloadConfig`.
-129. [Проблема] Нет separation между command и event.
-130. [Улучшение] Разделить `AppCommand` и `AppEvent`.
-131. [Проблема] Нет strategy для hot reload config.
-132. [Улучшение] Добавить safe reload с validation перед apply.
-133. [Проблема] При ошибке reload можно потерять рабочие настройки.
-134. [Улучшение] Если новый config invalid, оставить предыдущий active config.
-135. [Проблема] Нет atomic save.
-136. [Улучшение] Писать config во временный файл и atomic rename.
-137. [Проблема] Нет backup.
-138. [Улучшение] Сохранять один `.bak` перед migration.
-139. [Проблема] Нет schema docs.
-140. [Улучшение] Добавить пример конфига с комментариями.
-141. [Проблема] Нет naming convention.
-142. [Улучшение] Договориться: domain types без OS-префиксов, adapter types с OS-префиксами.
-143. [Проблема] Нет module ownership.
-144. [Улучшение] В README указать, где искать каждую ответственность.
-145. [Проблема] Нет public API boundaries.
-146. [Улучшение] Экспортировать из `lib.rs` только нужные фасады.
-147. [Проблема] Слишком ранний GUI усложнит ядро.
-148. [Улучшение] Сначала сделать CLI/dry-run, потом UI.
-149. [Проблема] Слишком ранняя cross-platform поддержка растянет работу.
-150. [Улучшение] Выбрать одну primary OS для первого реального adapter.
-151. [Проблема] Не указана primary OS.
-152. [Улучшение] Добавить решение в roadmap: например, macOS first или explicit cross-platform spike.
-153. [Проблема] Нет spike для системных API.
-154. [Улучшение] Перед production-кодом сделать маленький prototype в `examples/`.
-155. [Проблема] Prototype может остаться production-кодом.
-156. [Улучшение] Пометить spike как disposable и не смешивать с core.
-157. [Проблема] Нет performance budget.
-158. [Улучшение] Определить max latency для scroll event processing.
-159. [Проблема] Нет метрики latency.
-160. [Улучшение] В debug режиме измерять обработку события.
-161. [Проблема] Allocation на каждое событие может дать лаги.
-162. [Улучшение] Избегать лишних heap allocations в hot path.
-163. [Проблема] Логирование каждого события может тормозить.
-164. [Улучшение] Trace events включать только явно.
-165. [Проблема] Нет backpressure стратегии.
-166. [Улучшение] Если очередь переполнена, переходить в pass-through.
-167. [Проблема] Нет graceful shutdown.
-168. [Улучшение] Runtime должен завершать listener и emitter аккуратно.
-169. [Проблема] Нет signal handling.
-170. [Улучшение] CLI mode должен обрабатывать Ctrl+C.
-171. [Проблема] Нет теста shutdown.
-172. [Улучшение] Проверить, что shutdown не оставляет hook активным.
-173. [Проблема] Нет thread model.
-174. [Улучшение] Описать, какие компоненты работают в каких потоках.
-175. [Проблема] Race condition между UI и event loop возможна.
-176. [Улучшение] Использовать message passing или lock discipline.
-177. [Проблема] Shared mutable config рискованен.
-178. [Улучшение] Использовать immutable config snapshots.
-179. [Проблема] Нет audit для unsafe.
-180. [Улучшение] Если нужен `unsafe`, изолировать его в platform adapter и документировать invariant.
+171. [Problem] Нет menu bar app.
+172. [Improve] Сделать macOS status item как primary UI.
+173. [Problem] CLI не заменяет настройки для обычного пользователя.
+174. [Improve] Добавить preferences window.
+175. [Problem] Нет first-run welcome.
+176. [Improve] Показать onboarding с permissions и recommended setup.
+177. [Problem] Нет visible active/paused state.
+178. [Improve] Status icon должен отражать active, paused, blocked.
+179. [Problem] Нет temporary pause.
+180. [Improve] Добавить pause без записи config.
+181. [Problem] Right-click toggle не реализован.
+182. [Improve] Повторить Scroll Reverser: right/control click toggles app.
+183. [Problem] Option-click debug console не реализован.
+184. [Improve] Option-click открывает diagnostics/debug console.
+185. [Problem] Hide menu bar icon config есть, UI нет.
+186. [Improve] Реализовать show/hide icon с recovery через CLI.
+187. [Problem] Start at login config есть, integration нет.
+188. [Improve] Реализовать `SMAppService`/LaunchAgent flow.
+189. [Problem] Update config fields есть, updater нет.
+190. [Improve] Решить: Sparkle, manual releases или no auto-update.
+191. [Problem] Beta updates flag есть, behavior нет.
+192. [Improve] Скрыть/пометить beta flag до update strategy.
+193. [Problem] `show_discrete_scroll_options` есть, UI нет.
+194. [Improve] Показывать wheel step section после wheel event.
+195. [Problem] Нет device list.
+196. [Improve] Settings first screen должен быть device-oriented.
+197. [Problem] Нет last active device.
+198. [Improve] Diagnostics should show last source and rule.
+199. [Problem] Нет device aliases.
+200. [Improve] Позволить переименовать устройства после registry.
+201. [Problem] Нет disconnected device state.
+202. [Improve] Показывать known/disconnected devices отдельно.
+203. [Problem] Нет restore defaults.
+204. [Improve] Добавить reset with confirmation.
+205. [Problem] Нет undo для settings changes.
+206. [Improve] Добавить short undo toast для non-destructive changes.
+207. [Problem] Нет settings validation UI.
+208. [Improve] Ошибки config показывать рядом с полем.
+209. [Problem] Нет import/export config.
+210. [Improve] Export config для backup и support.
+211. [Problem] Import может принести invalid TOML.
+212. [Improve] Validate before applying imported config.
+213. [Problem] Нет permissions action buttons.
+214. [Improve] Buttons: Request Input Monitoring, Open Accessibility Settings.
+215. [Problem] Accessibility request flow сложнее Input Monitoring.
+216. [Improve] Добавить OS-specific instructions.
+217. [Problem] Permission status только в CLI.
+218. [Improve] Показывать status badges in UI.
+219. [Problem] Нет state `Degraded`.
+220. [Improve] Runtime state: Active, Paused, NeedsPermission, Degraded, Error.
+221. [Problem] Нет lightweight app runtime.
+222. [Improve] Создать `app::runtime` с channels для UI commands.
+223. [Problem] UI может напрямую дергать config store.
+224. [Improve] UI должен отправлять `AppCommand`.
+225. [Problem] Нет design tokens.
+226. [Improve] Создать tokens: spacing, color, radius, type scale.
+227. [Problem] Product может стать слишком декоративным.
+228. [Improve] Использовать native compact utility layout.
+229. [Problem] Cards могут захламить настройки.
+230. [Improve] Использовать tables/lists вместо card grid.
+231. [Problem] Первый экран может стать landing page.
+232. [Improve] Первый экран должен быть рабочей панелью.
+233. [Problem] UI labels могут быть техническими.
+234. [Improve] Использовать понятные тексты: Mouse, Trackpad, Wheel step.
+235. [Problem] `Natural` не всем понятно.
+236. [Improve] Добавить microcopy: content moves with fingers vs opposite.
+237. [Problem] Слишком много helper text перегрузит UI.
+238. [Improve] Основные пояснения в tooltip/help popover.
+239. [Problem] Tooltips недоступны keyboard-only users.
+240. [Improve] Важные permission explanations держать inline.
+241. [Problem] Цветом нельзя единственным способом показывать статус.
+242. [Improve] Добавить labels/icons for state.
+243. [Problem] Нет accessibility labels.
+244. [Improve] Все controls должны иметь accessible names.
+245. [Problem] Нет keyboard navigation plan.
+246. [Improve] Tab order должен проходить все settings.
+247. [Problem] Нет dark mode QA.
+248. [Improve] Follow system appearance and test both themes.
+249. [Problem] Иконки могут не соответствовать macOS conventions.
+250. [Improve] Использовать native symbols или аккуратные monochrome assets.
+251. [Problem] Нет retina status icon review.
+252. [Improve] Проверить icon на light/dark menu bar.
+253. [Problem] Длинные device names ломают layout.
+254. [Improve] Truncate middle with tooltip.
+255. [Problem] Compact UI может обрезать русский текст.
+256. [Improve] Проверить localization expansion 30 percent.
+257. [Problem] Нет i18n structure.
+258. [Improve] Вынести strings до добавления второго языка.
+259. [Problem] README смешивает English и Russian.
+260. [Improve] Выбрать docs language или разделить localized docs.
+261. [Problem] Русский пользователь просит русскую документацию.
+262. [Improve] Добавить `README.ru.md` или перевести основной README.
+263. [Problem] Product name не закреплен визуально.
+264. [Improve] Settings title and about panel should say Auto Reverse.
+265. [Problem] Нет about panel.
+266. [Improve] About panel: version, config path, repo, privacy.
+267. [Problem] Нет privacy UX.
+268. [Improve] Сказать: no network telemetry by default.
+269. [Problem] Update checks могут противоречить privacy.
+270. [Improve] Automatic update checks only opt-in.
+271. [Problem] Debug console может показать sensitive data.
+272. [Improve] Log only scroll metadata, never text input.
+273. [Problem] Input hooks вызывают trust concerns.
+274. [Improve] UI должен объяснять, зачем нужны permissions.
+275. [Problem] Нет recovery when icon hidden.
+276. [Improve] CLI `show-icon` или relaunch opens preferences.
+277. [Problem] Нет `open-settings` CLI.
+278. [Improve] Добавить command to open preferences when UI exists.
+279. [Problem] Нет `doctor --json`.
+280. [Improve] JSON diagnostics помогут support.
+281. [Problem] Нет diagnostics export.
+282. [Improve] Export redacted diagnostics file.
+283. [Problem] Нет copy-to-clipboard action.
+284. [Improve] Diagnostics UI: copy summary.
+285. [Problem] Нет manual test window.
+286. [Improve] Добавить scroll test area в debug console.
+287. [Problem] Test area может перехватить реальные expectations.
+288. [Improve] Clearly label it as simulation-only.
+289. [Problem] Нет visual preview of direction.
+290. [Improve] Small scroll preview can show content movement.
+291. [Problem] Preview animations могут отвлечь.
+292. [Improve] Keep animations minimal and disable-able.
+293. [Problem] Нет профилей.
+294. [Improve] Profiles можно отложить до real device registry.
+295. [Problem] App-specific rules слишком сложны.
+296. [Improve] Не делать app-specific rules до stable v1.
+297. [Problem] Нет quick reset for bad settings.
+298. [Improve] Add `auto-reverse reset-config`.
+299. [Problem] Reset может потерять useful config.
+300. [Improve] Reset should create backup first.
+301. [Problem] Нет clear disabled state in menu.
+302. [Improve] Disabled controls should show reason and re-enable action.
+303. [Problem] Нет separation persistent vs session settings.
+304. [Improve] Mark session-only controls clearly.
+305. [Problem] Нужен дизайн для error states.
+306. [Improve] Error rows: plain language, technical details hidden.
+307. [Problem] Нет loading states.
+308. [Improve] Device scan and permissions refresh need non-jumpy states.
+309. [Problem] Нет empty state.
+310. [Improve] If no devices, show permissions and "scroll to detect".
+311. [Problem] Нет menu hierarchy.
+312. [Improve] Menu: Enable, Preferences, Diagnostics, Quit.
+313. [Problem] Menu может стать слишком длинным.
+314. [Improve] Keep advanced actions inside preferences.
+315. [Problem] Нет keyboard shortcut policy.
+316. [Improve] Avoid global hotkey until conflicts are handled.
+317. [Problem] Нет native alerts strategy.
+318. [Improve] Use alerts only for destructive actions.
+319. [Problem] Нет onboarding completion state.
+320. [Improve] Store first-run flag separately from config rules.
+321. [Problem] Нет welcome copy.
+322. [Improve] Welcome: one sentence goal, two permission steps, open settings.
+323. [Problem] Нет visual hierarchy.
+324. [Improve] Status first, devices second, advanced third.
+325. [Problem] Нет responsive window sizing.
+326. [Improve] Define minimum width and resizable constraints.
+327. [Problem] Нет high-contrast review.
+328. [Improve] Test contrast in light/dark/high contrast modes.
+329. [Problem] Нет reduced motion support.
+330. [Improve] Honor reduce motion for preview animations.
+331. [Problem] Нет localization QA.
+332. [Improve] Test English/Russian strings in compact window.
+333. [Problem] Нет icon-only tooltip plan.
+334. [Improve] Every icon button needs tooltip.
+335. [Problem] Нет docs for hidden advanced flags.
+336. [Improve] `reverse_only_raw_input` needs docs and UI explanation.
+337. [Problem] Raw-input mode wording confusing.
+338. [Improve] Label it "Ignore injected/remote scroll events".
+339. [Problem] Нет support for restoring menu icon after hidden config mistake.
+340. [Improve] Document `show_menu_bar_icon = true` recovery.
 
-## Итерация 2: UX, дизайн и пользовательские сценарии
+## Итерация 3: Reliability, Release, Review
 
-181. [Проблема] Не определен первый экран.
-182. [Улучшение] Первый экран должен показывать устройства и направления скролла.
-183. [Проблема] Пользователь может не понимать термин `natural`.
-184. [Улучшение] Подписать варианты простым языком: `Like trackpad` и `Opposite`.
-185. [Проблема] Слишком технические настройки отпугнут.
-186. [Улучшение] Спрятать advanced rules в отдельную секцию.
-187. [Проблема] Нет onboarding.
-188. [Улучшение] Первый запуск должен объяснить permissions и показать статус.
-189. [Проблема] Permissions error может выглядеть как поломка.
-190. [Улучшение] Показывать `Needs permission` с кнопкой `Open Settings`.
-191. [Проблема] Нет визуального подтверждения активности.
-192. [Улучшение] Добавить status indicator: active, paused, blocked.
-193. [Проблема] Пользователь может забыть, что app меняет ввод.
-194. [Улучшение] Tray icon должен отражать active/paused state.
-195. [Проблема] Нет быстрого disable.
-196. [Улучшение] Добавить один понятный toggle `Pause Auto Reverse`.
-197. [Проблема] Нет restore defaults.
-198. [Улучшение] Добавить `Restore defaults` с confirmation.
-199. [Проблема] Confirmation для каждого действия будет раздражать.
-200. [Улучшение] Подтверждать только destructive/reset actions.
-201. [Проблема] Нет live feedback при скролле.
-202. [Улучшение] В diagnostics показать последнее устройство и направление.
-203. [Проблема] Live feedback может мигать.
-204. [Улучшение] Debounce UI updates до разумной частоты.
-205. [Проблема] Длинные имена устройств могут ломать layout.
-206. [Улучшение] Использовать truncation с tooltip.
-207. [Проблема] Неизвестное устройство может выглядеть как ошибка.
-208. [Улучшение] Показывать `Unknown device` нейтрально и предлагать rename.
-209. [Проблема] Нет пользовательских имен.
-210. [Улучшение] Разрешить alias для устройства.
-211. [Проблема] Настройки per-device могут стать громоздкими.
-212. [Улучшение] Использовать compact table/list.
-213. [Проблема] Карточки для каждого устройства могут занимать слишком много места.
-214. [Улучшение] Для системной утилиты лучше dense list с clear controls.
-215. [Проблема] Глобальный toggle и device toggles могут конфликтовать.
-216. [Улучшение] Глобальный pause должен визуально disable device controls.
-217. [Проблема] Неясно, что сильнее: global default или device rule.
-218. [Улучшение] UI должен показывать inheritance: default -> device override.
-219. [Проблема] Нет preview rule.
-220. [Улучшение] Добавить `test scroll here` area в settings.
-221. [Проблема] Test area может перехватывать весь скролл.
-222. [Улучшение] Ограничить preview только UI-областью.
-223. [Проблема] Не выбран визуальный стиль.
-224. [Улучшение] Использовать native/system aesthetic.
-225. [Проблема] Слишком яркая палитра будет неуместна.
-226. [Улучшение] Нейтральный фон, один accent, ясные warning states.
-227. [Проблема] Темная тема может быть забыта.
-228. [Улучшение] Поддержать system theme.
-229. [Проблема] Контраст может быть недостаточным.
-230. [Улучшение] Проверить WCAG contrast для текста и controls.
-231. [Проблема] Только цветом нельзя передавать состояние.
-232. [Улучшение] Добавить icon/label рядом с цветовым статусом.
-233. [Проблема] Пользователь может случайно изменить важную настройку.
-234. [Улучшение] Добавить undo toast для недеструктивных изменений.
-235. [Проблема] Toast может перекрывать controls.
-236. [Улучшение] Размещать toast в безопасной зоне окна.
-237. [Проблема] Нет keyboard navigation.
-238. [Улучшение] Все controls должны быть доступны с клавиатуры.
-239. [Проблема] Нет screen reader labels.
-240. [Улучшение] Добавить accessibility labels для toggles и icons.
-241. [Проблема] Иконка без текста в tray menu может быть неясной.
-242. [Улучшение] В меню использовать icon плюс короткий label.
-243. [Проблема] Настройки могут быть слишком техническими.
-244. [Улучшение] Advanced секция должна быть collapsed по умолчанию.
-245. [Проблема] Нет empty state.
-246. [Улучшение] Если устройств нет, показать проверку permissions и подключение мыши.
-247. [Проблема] Нет loading state.
-248. [Улучшение] Показать `Scanning devices...` без бесконечного spinner-only состояния.
-249. [Проблема] Нет error recovery state.
-250. [Улучшение] Ошибка должна иметь next action: retry, open settings, export diagnostics.
-251. [Проблема] Нет локализации.
-252. [Улучшение] Все user-facing строки держать в одном месте.
-253. [Проблема] Смешение русского и английского в UI будет выглядеть неряшливо.
-254. [Улучшение] Выбрать один основной язык UI и подготовить i18n позже.
-255. [Проблема] README может быть только для разработчика.
-256. [Улучшение] Разделить user docs и developer docs.
-257. [Проблема] Нет скриншота целевого UI.
-258. [Улучшение] Добавить mockup после выбора UI toolkit.
-259. [Проблема] Нет дизайн-токенов.
-260. [Улучшение] Создать tokens: spacing, radius, color, font sizes.
-261. [Проблема] Радиусы и отступы могут стать хаотичными.
-262. [Улучшение] Использовать шкалу spacing 4/8/12/16/24.
-263. [Проблема] Слишком крупная типографика для utility app.
-264. [Улучшение] Использовать компактные заголовки и readable body text.
-265. [Проблема] Дизайн может стать похож на landing page.
-266. [Улучшение] Первый экран должен быть рабочим интерфейсом, не hero-секцией.
-267. [Проблема] Много декоративных карточек снизит плотность.
-268. [Улучшение] Cards использовать только для modal/repeated groups, не для всего layout.
-269. [Проблема] Пользователь не поймет difference между app active и rule enabled.
-270. [Улучшение] Разделить labels: `App paused` и `Rule off`.
-271. [Проблема] Нет статуса autostart.
-272. [Улучшение] Показать toggle `Open at login`.
-273. [Проблема] Автозапуск без UI может быть тревожным.
-274. [Улучшение] После включения autostart показывать confirm state.
-275. [Проблема] Нет onboarding для первого устройства.
-276. [Улучшение] При первом scroll event подсветить найденное устройство.
-277. [Проблема] Пользователь может выбрать неправильное устройство.
-278. [Улучшение] Показывать `last active` рядом с устройством.
-279. [Проблема] Нет ручного refresh.
-280. [Улучшение] Добавить refresh devices action.
-281. [Проблема] Refresh может сбросить selection.
-282. [Улучшение] Сохранять selected device при обновлении списка.
-283. [Проблема] Нет поиска по устройствам.
-284. [Улучшение] Если устройств больше 5, добавить search/filter.
-285. [Проблема] Нет различия connected/disconnected.
-286. [Улучшение] Показывать disconnected devices отдельным состоянием.
-287. [Проблема] Старые устройства могут захламить список.
-288. [Улучшение] Добавить hide forgotten devices.
-289. [Проблема] Удаление устройства из списка может удалить настройки.
-290. [Улучшение] Разделить hide device и delete rule.
-291. [Проблема] Нет import/export настроек.
-292. [Улучшение] Добавить export config для backup.
-293. [Проблема] Import может принести invalid config.
-294. [Улучшение] Validate import до применения.
-295. [Проблема] Нет профилей.
-296. [Улучшение] Добавить profiles для work/home/gaming.
-297. [Проблема] Профили могут усложнить MVP.
-298. [Улучшение] Отложить profiles до итерации 2.
-299. [Проблема] Нет временного профиля.
-300. [Улучшение] Добавить `temporary override until app restart` позже.
-301. [Проблема] Нет hotkey для pause.
-302. [Улучшение] Добавить configurable hotkey после MVP.
-303. [Проблема] Hotkey может конфликтовать с системой.
-304. [Улучшение] Проверять конфликт и давать user warning.
-305. [Проблема] Нет command palette.
-306. [Улучшение] Для desktop app command palette не нужна в MVP.
-307. [Проблема] Нет clear hierarchy для settings.
-308. [Улучшение] Разделить tabs: Devices, General, Diagnostics, Advanced.
-309. [Проблема] Tabs могут быть лишними при малом количестве настроек.
-310. [Улучшение] В MVP использовать один экран, tabs добавить при росте.
-311. [Проблема] Нет понятного названия состояния reverse.
-312. [Улучшение] Использовать microcopy с примером: `Wheel down moves content down/up`.
-313. [Проблема] Длинные пояснения внутри UI будут мешать.
-314. [Улучшение] Пояснения держать в tooltip/help popover.
-315. [Проблема] Tooltips недоступны на touch.
-316. [Улучшение] Для важных пояснений использовать inline helper text.
-317. [Проблема] Нет safe mode.
-318. [Улучшение] Запуск с флагом `--safe-mode` должен отключать hooks.
-319. [Проблема] Нет reset через CLI.
-320. [Улучшение] Добавить `auto-reverse reset-config`.
-321. [Проблема] Нет диагностики через CLI.
-322. [Улучшение] Добавить `auto-reverse doctor`.
-323. [Проблема] `doctor` может быть слишком шумным.
-324. [Улучшение] Выводить summary first, details behind `--verbose`.
-325. [Проблема] Нет manual rule editing guidance.
-326. [Улучшение] Документировать config path и пример.
-327. [Проблема] Пользователь может испортить конфиг вручную.
-328. [Улучшение] При parse error показать line/field и backup option.
-329. [Проблема] Нет migration UX.
-330. [Улучшение] После migration писать в log, что изменилось.
-331. [Проблема] Системные разрешения отличаются по ОС.
-332. [Улучшение] UI должен показывать OS-specific instructions.
-333. [Проблема] Нельзя просить все permissions сразу без объяснения.
-334. [Улучшение] Просить только нужные permissions и объяснять зачем.
-335. [Проблема] Нет privacy page.
-336. [Улучшение] Добавить краткий privacy section: local only, no network by default.
-337. [Проблема] Нет support path.
-338. [Улучшение] Diagnostics export должен помогать bug reports.
-339. [Проблема] Нет issue template.
-340. [Улучшение] Добавить GitHub issue template после первого release.
-
-## Итерация 3: надежность, тесты, релиз и сопровождение
-
-341. [Проблема] Нет test pyramid.
-342. [Улучшение] Unit tests для domain, integration tests для runtime, manual tests для OS hooks.
-343. [Проблема] Нет property-based tests.
-344. [Улучшение] Проверять, что reverse меняет знак delta и сохраняет magnitude.
-345. [Проблема] Нет fuzzing config parser.
-346. [Улучшение] Добавить fuzz/property tests для invalid config.
-347. [Проблема] Нет snapshot тестов для diagnostics output.
-348. [Улучшение] Зафиксировать stable `doctor` output.
-349. [Проблема] Нет contract tests для platform traits.
-350. [Улучшение] Одна test suite должна проверять все implementations trait.
-351. [Проблема] Нет stress tests для большого потока событий.
-352. [Улучшение] Симулировать burst scroll events.
-353. [Проблема] Нет latency regression guard.
-354. [Улучшение] Добавить benchmark для transformer hot path.
-355. [Проблема] Benchmark может быть нестабильным в CI.
-356. [Улучшение] Использовать benchmark как локальный инструмент, не hard gate.
-357. [Проблема] Нет memory profile.
-358. [Улучшение] Проверить, что hot path не выделяет память постоянно.
-359. [Проблема] Нет crash report strategy.
-360. [Улучшение] Локально сохранять last error без отправки.
-361. [Проблема] Автоматическая отправка crash reports нарушит privacy promise.
-362. [Улучшение] Любая отправка данных должна быть opt-in.
-363. [Проблема] Нет panic hook.
-364. [Улучшение] Panic hook должен записать краткую диагностику и отключить hooks.
-365. [Проблема] Нет watchdog.
-366. [Улучшение] Если event loop завис, runtime должен перейти в safe state.
-367. [Проблема] Watchdog может ошибочно перезапускать app.
-368. [Улучшение] В MVP достаточно log warning, recovery позже.
-369. [Проблема] Нет update strategy.
-370. [Улучшение] Сначала manual releases, auto-update только после безопасности.
-371. [Проблема] Auto-update требует подписи.
-372. [Улучшение] Планировать code signing до публичного релиза.
-373. [Проблема] Нет packaging для macOS.
-374. [Улучшение] Изучить `.app`, LaunchAgent и permissions flow.
-375. [Проблема] Нет packaging для Windows.
-376. [Улучшение] Изучить installer, tray, startup task и driver/API constraints.
-377. [Проблема] Нет packaging для Linux.
-378. [Улучшение] Изучить Wayland/X11 ограничения отдельно.
-379. [Проблема] Wayland может запрещать глобальный input hook.
-380. [Улучшение] Документировать ограничения Wayland честно.
-381. [Проблема] Windows raw input может не дать нужный event transform без driver-level решений.
-382. [Улучшение] Сначала провести platform feasibility spike.
-383. [Проблема] macOS Accessibility/Input Monitoring permissions сложные.
-384. [Улучшение] Сделать отдельный permission flow для macOS.
-385. [Проблема] Изменение системных настроек может конфликтовать с app.
-386. [Улучшение] Не менять system setting silently.
-387. [Проблема] Пользовательские настройки ОС могут быть потеряны.
-388. [Улучшение] Если нужно менять system setting, сохранять original и восстанавливать.
-389. [Проблема] Нет behavior matrix.
-390. [Улучшение] Описать expected behavior для mouse, trackpad, unknown, disconnected.
-391. [Проблема] Нет edge case для high-resolution wheels.
-392. [Улучшение] Проверить devices с fractional deltas.
-393. [Проблема] Нет edge case для horizontal wheels.
-394. [Улучшение] Проверить мыши с tilt wheel.
-395. [Проблема] Нет edge case для gestures.
-396. [Улучшение] Trackpad gestures не должны ломаться из-за scroll transform.
-397. [Проблема] Pinch/zoom может ошибочно считаться scroll.
-398. [Улучшение] Различать gesture events и scroll events.
-399. [Проблема] Нет edge case для remote desktop.
-400. [Улучшение] Проверить поведение в remote sessions.
-401. [Проблема] Нет edge case для virtual machines.
-402. [Улучшение] Документировать unknown behavior в VM.
-403. [Проблема] Нет edge case для gaming mice.
-404. [Улучшение] Проверить vendor-specific drivers.
-405. [Проблема] Нет edge case для accessibility devices.
-406. [Улучшение] Не ломать assistive input devices.
-407. [Проблема] Нет allowlist/blocklist.
-408. [Улучшение] Добавить rules для ignored devices.
-409. [Проблема] Нет concept для application-specific rules.
-410. [Улучшение] Не добавлять app-specific rules до стабильного MVP.
-411. [Проблема] Application-specific rules сильно усложнят privacy и platform API.
-412. [Улучшение] Если появятся, хранить только app identifiers, не activity history.
-413. [Проблема] Нет workspace/repo hygiene.
-414. [Улучшение] Добавить `.gitignore` для Rust artifacts, если его нет.
-415. [Проблема] Нет license.
-416. [Улучшение] Выбрать license до публикации.
-417. [Проблема] Нет changelog.
-418. [Улучшение] Добавить `CHANGELOG.md` перед первым release.
-419. [Проблема] Нет contributing guide.
-420. [Улучшение] Добавить правила: fmt, clippy, tests, platform notes.
-421. [Проблема] Нет code owners.
-422. [Улучшение] Пока проект маленький, ownership можно описать в architecture docs.
-423. [Проблема] Нет release checklist.
-424. [Улучшение] Checklist: tests, manual scroll test, permissions, install/uninstall, logs.
-425. [Проблема] Нет versioning policy.
-426. [Улучшение] Использовать SemVer после первого публичного релиза.
-427. [Проблема] Нет compatibility policy для config.
-428. [Улучшение] Старые config versions мигрировать или показывать ясную ошибку.
-429. [Проблема] Нет deprecation policy.
-430. [Улучшение] Deprecated settings поддерживать минимум один minor release.
-431. [Проблема] Нет internal docs для platform quirks.
-432. [Улучшение] В `platform/<os>.md` документировать найденные ограничения.
-433. [Проблема] Нет examples.
-434. [Улучшение] Добавить examples: dry-run, config parse, mock event transform.
-435. [Проблема] Examples могут устаревать.
-436. [Улучшение] Компилировать examples в CI.
-437. [Проблема] Нет doctests.
-438. [Улучшение] Для маленьких pure functions добавить doctests.
-439. [Проблема] Нет public/private audit.
-440. [Улучшение] Держать большинство modules private, экспортировать фасад.
-441. [Проблема] Нет naming для commands.
-442. [Улучшение] Использовать глаголы: `set_rule`, `pause`, `resume`, `reload`.
-443. [Проблема] Нет telemetry naming.
-444. [Улучшение] Логи именовать по компонентам: `config`, `device`, `runtime`, `platform`.
-445. [Проблема] Нет error codes.
-446. [Улучшение] Добавить stable error codes для support.
-447. [Проблема] Error message может быть слишком техническим.
-448. [Улучшение] Разделить user message и debug details.
-449. [Проблема] Нет retry policy.
-450. [Улучшение] Permissions и device scan можно retry, invalid config нельзя silently retry.
-451. [Проблема] Нет rate limit для retry.
-452. [Улучшение] Добавить exponential backoff для repeated platform errors.
-453. [Проблема] Нет health state.
-454. [Улучшение] Runtime должен публиковать `Healthy`, `Degraded`, `Blocked`.
-455. [Проблема] Нет compatibility notes по Rust edition.
-456. [Улучшение] Указать, что crate использует Rust 2024 edition.
-457. [Проблема] Rust 2024 может требовать свежий toolchain.
-458. [Улучшение] Добавить `rust-toolchain.toml`, если нужна фиксированная версия.
-459. [Проблема] Нет MSRV.
-460. [Улучшение] Определить minimum supported Rust version перед release.
-461. [Проблема] Нет dependency audit.
-462. [Улучшение] Запускать `cargo audit` в release process.
-463. [Проблема] Нет license audit dependencies.
-464. [Улучшение] Проверять licenses перед упаковкой.
-465. [Проблема] Нет size budget.
-466. [Улучшение] Следить, чтобы маленькая utility не превратилась в тяжелое приложение.
-467. [Проблема] GUI toolkit может резко увеличить binary size.
-468. [Улучшение] Выбирать toolkit с учетом native feel и размера.
-469. [Проблема] Нет decision record.
-470. [Улучшение] Добавлять ADR для крупных решений: toolkit, platform API, config format.
-471. [Проблема] ADR могут стать бюрократией.
-472. [Улучшение] Писать короткие ADR: context, decision, consequences.
-473. [Проблема] Нет backlog priorities.
-474. [Улучшение] Пометить задачи P0/P1/P2.
-475. [Проблема] Все 500 пунктов нельзя делать сразу.
-476. [Улучшение] Начать с 12 маленьких задач из `architecture.md`.
-477. [Проблема] Нет definition of done.
-478. [Улучшение] Для каждой задачи: code, tests, docs, manual check.
-479. [Проблема] Нет manual QA script.
-480. [Улучшение] Написать сценарии: first launch, permission denied, mouse connected, pause, reset.
-481. [Проблема] Нет rollback story.
-482. [Улучшение] Новые releases должны иметь способ откатиться на предыдущую версию.
-483. [Проблема] Нет data retention policy.
-484. [Улучшение] Logs должны иметь срок/размер хранения.
-485. [Проблема] Нет security review для input hooks.
-486. [Улучшение] Проверить минимальные privileges и отсутствие network calls.
-487. [Проблема] Нет threat для malicious config.
-488. [Улучшение] Config не должен выполнять команды или загружать код.
-489. [Проблема] Нет sandbox expectations.
-490. [Улучшение] Документировать, почему программе нужны elevated/input permissions.
-491. [Проблема] Нет user trust signals.
-492. [Улучшение] Открыто показать config path, logs path, permissions status.
-493. [Проблема] Нет финальной проверочной сборки.
-494. [Улучшение] Перед каждым milestone запускать `cargo fmt`, `cargo clippy`, `cargo test`.
-495. [Проблема] Нет финального product review.
-496. [Улучшение] После итерации 3 пройти чеклист UX, architecture, reliability.
-497. [Проблема] Нет clear next step после документов.
-498. [Улучшение] Следующий шаг: создать `src/lib.rs` и первые модули domain.
-499. [Проблема] Есть риск утонуть в платформенных деталях раньше времени.
-500. [Улучшение] Держать первую реализацию маленькой: config + rules + mock events + tests.
+341. [Problem] Нет release packaging.
+342. [Improve] Decide app bundle structure.
+343. [Problem] Нет code signing.
+344. [Improve] Plan Developer ID signing before public release.
+345. [Problem] Нет notarization.
+346. [Improve] Add notarization checklist.
+347. [Problem] Нет installer/uninstaller.
+348. [Improve] Start with drag-and-drop app plus uninstall docs.
+349. [Problem] Нет LaunchAgent/SMAppService implementation.
+350. [Improve] Implement start at login in platform module.
+351. [Problem] Нет wake-from-sleep recovery.
+352. [Improve] Observe wake notifications and re-arm tap or relaunch.
+353. [Problem] Event tap can stop silently in edge cases.
+354. [Improve] Runtime health should detect no events/disabled tap.
+355. [Problem] Нет watchdog.
+356. [Improve] Add lightweight health timer after UI runtime exists.
+357. [Problem] Нет crash-safe state restoration.
+358. [Improve] Ensure failure path keeps pass-through behavior.
+359. [Problem] Panic in callback would be dangerous.
+360. [Improve] Keep callback small and panic-free; wrap risky code.
+361. [Problem] `toml::to_string_pretty` in save can fail but no recovery UX.
+362. [Improve] Surface config write errors in UI.
+363. [Problem] Нет config lock.
+364. [Improve] Consider file lock if multiple CLI/UI instances write config.
+365. [Problem] Last-writer-wins может терять settings.
+366. [Improve] Runtime should serialize config writes.
+367. [Problem] Нет single-instance behavior.
+368. [Improve] Relaunch should focus settings, not spawn second tap.
+369. [Problem] `OnceLock` blocks multiple install attempts in one process.
+370. [Improve] Runtime should own tap lifecycle explicitly.
+371. [Problem] Нет graceful shutdown tests.
+372. [Improve] Add shutdown path before UI.
+373. [Problem] Нет signal handling for CLI run.
+374. [Improve] Handle Ctrl+C gracefully.
+375. [Problem] Нет manual QA checklist in repo.
+376. [Improve] Add `QA.md`.
+377. [Problem] Нет test matrix for devices.
+378. [Improve] Matrix: wheel mouse, Magic Mouse, built-in trackpad, Magic Trackpad.
+379. [Problem] Нет remote desktop test.
+380. [Improve] Test `reverse_only_raw_input` with injected source_pid.
+381. [Problem] Нет high-resolution wheel test.
+382. [Improve] Test fractional/pixel-like fields on real devices.
+383. [Problem] Нет horizontal wheel test.
+384. [Improve] Test tilt wheel and horizontal gestures.
+385. [Problem] Нет Wacom compatibility.
+386. [Improve] Document Wacom behavior after hardware test.
+387. [Problem] Нет accessibility-device review.
+388. [Improve] Avoid breaking assistive input devices.
+389. [Problem] Нет "shake to locate cursor" regression review.
+390. [Improve] Include macOS accessibility gestures in manual QA.
+391. [Problem] Нет Notification Center/gesture edge-case QA.
+392. [Improve] Test system gestures while tap is active.
+393. [Problem] Swipe gestures not reversed.
+394. [Improve] Document limitation prominently.
+395. [Problem] Custom scroll surfaces may bypass CGEvent.
+396. [Improve] Document app-specific limitations.
+397. [Problem] iPhone Mirroring-like cases may bypass transform.
+398. [Improve] Keep limitations list updated.
+399. [Problem] Нет source attribution in docs for Scroll Reverser parity.
+400. [Improve] Keep links in `scroll-reverser-parity.md`.
+401. [Problem] Нет legal review of feature parity wording.
+402. [Improve] Avoid implying affiliation with Scroll Reverser.
+403. [Problem] Нет release version policy.
+404. [Improve] Use SemVer after first tagged release.
+405. [Problem] Нет tag workflow.
+406. [Improve] Create release tags with changelog.
+407. [Problem] Нет build reproducibility notes.
+408. [Improve] Document toolchain and target.
+409. [Problem] Нет binary size budget.
+410. [Improve] Track size before adding GUI toolkit.
+411. [Problem] GUI toolkit may dominate app size.
+412. [Improve] Prefer native AppKit or small wrapper for macOS.
+413. [Problem] Cross-platform promise could overreach.
+414. [Improve] Market as macOS-first until adapters exist.
+415. [Problem] Linux/Windows support undefined.
+416. [Improve] Add future notes, not product promise.
+417. [Problem] Нет dependency policy.
+418. [Improve] Add dependencies only for clear use cases.
+419. [Problem] Нет security policy.
+420. [Improve] Add `SECURITY.md` before public repo.
+421. [Problem] Нет contribution guide.
+422. [Improve] Add `CONTRIBUTING.md` with fmt/clippy/test rules.
+423. [Problem] Нет issue templates.
+424. [Improve] Add bug template with diagnostics fields.
+425. [Problem] Нет privacy policy.
+426. [Improve] State local-only data handling.
+427. [Problem] Update checks could send network requests.
+428. [Improve] Make network behavior explicit and opt-in.
+429. [Problem] Нет telemetry boundary tests.
+430. [Improve] Ensure no network crate enters default build without review.
+431. [Problem] Нет static analysis.
+432. [Improve] Run `cargo deny` or equivalent later.
+433. [Problem] Нет dependency license review.
+434. [Improve] Add license review to release checklist.
+435. [Problem] Нет localization pipeline.
+436. [Improve] Start with English and Russian string files.
+437. [Problem] Нет translation credit policy.
+438. [Improve] Track translator credits in changelog.
+439. [Problem] Нет screenshots.
+440. [Improve] Add real screenshots after UI exists.
+441. [Problem] Нет icon assets.
+442. [Improve] Design status icon states.
+443. [Problem] Нет app icon.
+444. [Improve] Create app icon before packaging.
+445. [Problem] Нет design review artifacts.
+446. [Improve] Add simple UI spec in architecture docs.
+447. [Problem] Нет final product review process.
+448. [Improve] Review UX, reliability, privacy before each milestone.
+449. [Problem] Нет branch strategy.
+450. [Improve] Use `codex/` branch prefix for agent work.
+451. [Problem] Current work happened on `master`.
+452. [Improve] Next tasks should branch before larger changes.
+453. [Problem] Нет remote configured.
+454. [Improve] Add `origin` before expecting push.
+455. [Problem] Push cannot complete in current repo state.
+456. [Improve] User must provide repo URL or create remote.
+457. [Problem] Merge was local only.
+458. [Improve] Push merge commit after remote setup.
+459. [Problem] `.idea/.gitignore` remains untracked.
+460. [Improve] Decide whether to ignore or commit IDE metadata.
+461. [Problem] No `.gitignore` review after merge.
+462. [Improve] Ensure `target/`, `.idea/`, temp files are ignored.
+463. [Problem] Docs use mixed Russian/English.
+464. [Improve] Split user docs by language.
+465. [Problem] README still says "target product" in English.
+466. [Improve] Translate README if primary user language is Russian.
+467. [Problem] Architecture doc is Russian-only.
+468. [Improve] Keep architecture Russian if it helps project learning.
+469. [Problem] Recommendation list can become stale quickly.
+470. [Improve] Refresh it after every milestone.
+471. [Problem] 500-item list is hard to execute directly.
+472. [Improve] Create smaller `ROADMAP.md` with P0/P1/P2.
+473. [Problem] Нет issue tracker mapping.
+474. [Improve] Convert top 20 recommendations to issues.
+475. [Problem] Нет owner per area.
+476. [Improve] Add ownership notes for config, platform, UI.
+477. [Problem] Нет acceptance criteria per task.
+478. [Improve] Every task should include tests/docs/manual check.
+479. [Problem] Нет "definition of done".
+480. [Improve] Define done: code, tests, docs, review, QA.
+481. [Problem] Нет automated review checklist.
+482. [Improve] Add checklist: bugs, risks, missing tests, UX, privacy.
+483. [Problem] Нет code review notes file.
+484. [Improve] Add `REVIEW.md` or keep review section in architecture.
+485. [Problem] Нет benchmark baseline.
+486. [Improve] Capture current transform performance.
+487. [Problem] Нет memory allocation audit.
+488. [Improve] Ensure hot path does not allocate.
+489. [Problem] Нет unsafe boundary documentation.
+490. [Improve] Document each FFI call and invariant.
+491. [Problem] FFI permissions calls are not cfg-gated.
+492. [Improve] Gate macOS FFI with target cfg.
+493. [Problem] FFI function availability depends on macOS version.
+494. [Improve] Document minimum macOS version and fallback behavior.
+495. [Problem] No app-level state machine.
+496. [Improve] Add explicit state enum before UI.
+497. [Problem] No final review commit yet for updated docs.
+498. [Improve] Commit docs and review fixes after checks pass.
+499. [Problem] No push destination exists today.
+500. [Improve] Configure remote, then push `master` with merge and docs commits.

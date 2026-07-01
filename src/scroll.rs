@@ -73,7 +73,9 @@ pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecis
         && config.discrete_scroll_step_size > 0
         && event.delta_vertical.unsigned_abs() == 1
     {
-        transformed.delta_vertical *= config.discrete_scroll_step_size;
+        transformed.delta_vertical = transformed
+            .delta_vertical
+            .saturating_mul(config.discrete_scroll_step_size);
         step_size_applied = true;
     }
 
@@ -220,6 +222,20 @@ mod tests {
     }
 
     #[test]
+    fn zero_step_size_disables_discrete_wheel_adjustment() {
+        let config = AppConfig {
+            discrete_scroll_step_size: 0,
+            ..AppConfig::default()
+        };
+        let event = ScrollEvent::new(DeviceKind::Mouse, 1, 0, false);
+
+        let decision = transform_event(&config, event);
+
+        assert_eq!(decision.transformed.delta_vertical, -1);
+        assert!(!decision.step_size_applied);
+    }
+
+    #[test]
     fn default_config_leaves_trackpad_scroll_untouched() {
         let event = ScrollEvent::new(DeviceKind::Trackpad, 4, 0, true);
 
@@ -286,6 +302,20 @@ mod tests {
         let decision = transform_event(&config, genuine);
 
         assert!(decision.reversed);
+    }
+
+    #[test]
+    fn pure_transform_honors_magic_mouse_config() {
+        let config = AppConfig {
+            reverse_magic_mouse: false,
+            ..AppConfig::default()
+        };
+        let event = ScrollEvent::new(DeviceKind::MagicMouse, 1, 0, true);
+
+        let decision = transform_event(&config, event);
+
+        assert_eq!(decision.transformed, event);
+        assert!(!decision.changed());
     }
 
     #[test]
