@@ -1,6 +1,8 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -86,6 +88,12 @@ pub struct ConfigStore {
     path: PathBuf,
 }
 
+impl Default for ConfigStore {
+    fn default() -> Self {
+        Self::new(Self::default_path())
+    }
+}
+
 impl ConfigStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self { path: path.into() }
@@ -162,19 +170,26 @@ impl ConfigStore {
         }
 
         let contents = toml::to_string_pretty(config).map_err(AppError::ConfigSerialize)?;
-        let tmp_path = self.path.with_extension("toml.tmp");
+        // Unique per call (process id + a call counter), not a fixed name -
+        // a fixed "config.toml.tmp" lets two concurrent saves (e.g. two CLI
+        // invocations racing) clobber each other's temp file, silently
+        // discarding whichever one loses the race.
+        let tmp_path = self
+            .path
+            .with_extension(format!("toml.{}.{}.tmp", process::id(), next_save_id()));
         fs::write(&tmp_path, contents)
             .map_err(|source| AppError::io("write temporary config", &tmp_path, source))?;
-        fs::rename(&tmp_path, &self.path)
-            .map_err(|source| AppError::io("replace config", &self.path, source))?;
+        fs::rename(&tmp_path, &self.path).map_err(|source| {
+            let _ = fs::remove_file(&tmp_path);
+            AppError::io("replace config", &self.path, source)
+        })?;
         Ok(())
     }
 }
 
-impl Default for ConfigStore {
-    fn default() -> Self {
-        Self::new(Self::default_path())
-    }
+fn next_save_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 #[cfg(test)]
@@ -207,9 +222,11 @@ mod tests {
     fn config_round_trips_through_toml() {
         let path = test_path("roundtrip");
         let store = ConfigStore::new(&path);
-        let mut config = AppConfig::default();
-        config.reverse_horizontal = true;
-        config.reverse_trackpad = true;
+        let config = AppConfig {
+            reverse_horizontal: true,
+            reverse_trackpad: true,
+            ..AppConfig::default()
+        };
 
         store.save(&config).unwrap();
 

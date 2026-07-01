@@ -25,11 +25,14 @@ pub fn is_physical_mouse_wheel(event: &CGEvent) -> bool {
 
 /// Negates the scroll delta on both axes in place. macOS derives the
 /// fixed-point and pixel delta fields from these automatically, so only
-/// these two need to be written.
+/// these two need to be written. Uses `saturating_neg` because `-i64::MIN`
+/// overflows; an event actually reporting that delta is physically
+/// impossible, but a panic in an OS-level event callback is worse than a
+/// clamped value.
 pub fn reverse_in_place(event: &CGEvent) {
     for field in DELTA_FIELDS {
         let value = event.get_integer_value_field(field);
-        event.set_integer_value_field(field, -value);
+        event.set_integer_value_field(field, value.saturating_neg());
     }
 }
 
@@ -53,7 +56,9 @@ pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecis
     let mut reversed = false;
     let mut step_size_applied = false;
 
-    if !config.enabled || event.synthetic {
+    let skip_as_injected = config.reverse_only_raw_input && event.source_pid != 0;
+
+    if !config.enabled || event.synthetic || skip_as_injected {
         return TransformDecision {
             original: event,
             transformed,
@@ -64,19 +69,21 @@ pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecis
 
     let should_reverse = config.should_reverse_device(event.device_kind);
 
-    if !event.continuous && config.discrete_scroll_step_size > 0 && event.delta_vertical.abs() == 1
+    if !event.continuous
+        && config.discrete_scroll_step_size > 0
+        && event.delta_vertical.unsigned_abs() == 1
     {
         transformed.delta_vertical *= config.discrete_scroll_step_size;
         step_size_applied = true;
     }
 
     if should_reverse && config.reverse_vertical {
-        transformed.delta_vertical = -transformed.delta_vertical;
+        transformed.delta_vertical = transformed.delta_vertical.saturating_neg();
         reversed = true;
     }
 
     if should_reverse && config.reverse_horizontal {
-        transformed.delta_horizontal = -transformed.delta_horizontal;
+        transformed.delta_horizontal = transformed.delta_horizontal.saturating_neg();
         reversed = true;
     }
 
@@ -96,6 +103,7 @@ pub fn event_from_cg_event(event: &CGEvent, device_kind: DeviceKind) -> ScrollEv
             .get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2),
         continuous: !is_physical_mouse_wheel(event),
         synthetic: false,
+        source_pid: event.get_integer_value_field(EventField::EVENT_SOURCE_UNIX_PROCESS_ID),
     }
 }
 
@@ -248,6 +256,36 @@ mod tests {
 
         assert_eq!(decision.transformed, event);
         assert!(!decision.changed());
+    }
+
+    #[test]
+    fn reverse_only_raw_input_skips_events_injected_by_another_process() {
+        let config = AppConfig {
+            reverse_only_raw_input: true,
+            ..AppConfig::default()
+        };
+        let injected = ScrollEvent {
+            source_pid: 4242,
+            ..ScrollEvent::new(DeviceKind::Mouse, 1, 0, false)
+        };
+
+        let decision = transform_event(&config, injected);
+
+        assert_eq!(decision.transformed, injected);
+        assert!(!decision.changed());
+    }
+
+    #[test]
+    fn reverse_only_raw_input_still_reverses_genuine_hardware_events() {
+        let config = AppConfig {
+            reverse_only_raw_input: true,
+            ..AppConfig::default()
+        };
+        let genuine = ScrollEvent::new(DeviceKind::Mouse, 1, 0, false);
+
+        let decision = transform_event(&config, genuine);
+
+        assert!(decision.reversed);
     }
 
     #[test]

@@ -73,16 +73,22 @@ fn doctor() -> AppResult<()> {
     println!("settings: {}", config_summary(&config));
     println!(
         "accessibility permission: {}",
-        if permissions::is_trusted() {
-            "granted"
-        } else {
-            "required"
-        }
+        permission_word(permissions::has_accessibility_trust())
     );
-    println!("input monitoring permission: checked when installing the event tap");
+    println!(
+        "input monitoring permission: {}",
+        permission_word(permissions::has_input_monitoring_access())
+    );
     println!("current macOS classifier: physical wheel = mouse, continuous scroll = trackpad-like");
-    println!("known gap: Magic Mouse and trackpad are not separated until gesture tracking lands");
+    println!(
+        "known gap: reverse_magic_mouse has no effect yet - the classifier above cannot tell a \
+         Magic Mouse apart from a trackpad, so continuous scroll is always treated as trackpad"
+    );
     Ok(())
+}
+
+fn permission_word(granted: bool) -> &'static str {
+    if granted { "granted" } else { "required" }
 }
 
 fn init_config() -> AppResult<()> {
@@ -171,8 +177,8 @@ fn simulate(args: &[String]) -> AppResult<()> {
     let event = ScrollEvent::new(device_kind, delta_vertical, delta_horizontal, continuous);
     let decision = scroll::transform_event(&config, event);
 
-    println!("original:    {:?}", decision.original);
-    println!("transformed: {:?}", decision.transformed);
+    println!("original:    {}", decision.original);
+    println!("transformed: {}", decision.transformed);
     println!("changed:     {}", decision.changed());
     println!("reversed:    {}", decision.reversed);
     println!("step_size:   {}", decision.step_size_applied);

@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::device::DeviceKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7,6 +9,12 @@ pub struct ScrollEvent {
     pub delta_horizontal: i64,
     pub continuous: bool,
     pub synthetic: bool,
+    /// The owning process id CGEvent reported for this event
+    /// (`kCGEventSourceUnixProcessID`). A genuine hardware scroll observed
+    /// through the event tap reports 0; a nonzero value means some other
+    /// process posted/injected this event (e.g. a remote-desktop tool or an
+    /// automation script), which `reverse_only_raw_input` can opt out of.
+    pub source_pid: i64,
 }
 
 impl ScrollEvent {
@@ -22,6 +30,20 @@ impl ScrollEvent {
             delta_horizontal,
             continuous,
             synthetic: false,
+            source_pid: 0,
         }
+    }
+}
+
+impl fmt::Display for ScrollEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} scroll, vertical={} horizontal={}{}",
+            self.device_kind,
+            self.delta_vertical,
+            self.delta_horizontal,
+            if self.continuous { ", continuous" } else { "" }
+        )
     }
 }

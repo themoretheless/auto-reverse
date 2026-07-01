@@ -13,11 +13,25 @@ pub enum DeviceKind {
 }
 
 impl DeviceKind {
-    pub fn is_mouse_like(self) -> bool {
-        matches!(self, Self::Mouse | Self::MagicMouse)
+    /// Canonical lowercase, hyphenated name - the single source of truth
+    /// `Display` and `FromStr` both build on, instead of each hand-rolling
+    /// its own copy of the same four strings.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Mouse => "mouse",
+            Self::Trackpad => "trackpad",
+            Self::MagicMouse => "magic-mouse",
+            Self::Unknown => "unknown",
+        }
     }
 }
 
+/// The only device classifier actually wired into the live event tap today.
+/// `IsContinuous` is the one signal CGEventTap's public API exposes, and it
+/// cannot distinguish a Magic Mouse from a trackpad - both report continuous
+/// scrolling identically - so continuous scroll is conservatively treated as
+/// Trackpad. See recommendation.md for why `reverse_magic_mouse` currently
+/// has no effect in practice.
 pub fn conservative_kind_from_continuity(continuous: bool) -> DeviceKind {
     if continuous {
         DeviceKind::Trackpad
@@ -28,12 +42,7 @@ pub fn conservative_kind_from_continuity(continuous: bool) -> DeviceKind {
 
 impl fmt::Display for DeviceKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Mouse => write!(f, "mouse"),
-            Self::Trackpad => write!(f, "trackpad"),
-            Self::MagicMouse => write!(f, "magic-mouse"),
-            Self::Unknown => write!(f, "unknown"),
-        }
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -53,114 +62,32 @@ impl FromStr for DeviceKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScrollPhase {
-    Normal,
-    Momentum,
-    Start,
-    End,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceObservation {
-    pub continuous: bool,
-    pub touching: Option<u8>,
-    pub touch_elapsed_ms: Option<u64>,
-    pub phase: ScrollPhase,
-}
-
-impl SourceObservation {
-    pub fn from_continuity(continuous: bool) -> Self {
-        Self {
-            continuous,
-            touching: None,
-            touch_elapsed_ms: None,
-            phase: ScrollPhase::Unknown,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SourceClassifier {
-    last_source: DeviceKind,
-}
-
-impl Default for SourceClassifier {
-    fn default() -> Self {
-        Self {
-            last_source: DeviceKind::Mouse,
-        }
-    }
-}
-
-impl SourceClassifier {
-    pub fn classify(&mut self, observation: SourceObservation) -> DeviceKind {
-        let source = if !observation.continuous {
-            DeviceKind::Mouse
-        } else if observation.touching.unwrap_or(0) >= 2
-            && observation
-                .touch_elapsed_ms
-                .is_some_and(|elapsed| elapsed < 222)
-        {
-            DeviceKind::Trackpad
-        } else if observation.phase == ScrollPhase::Normal
-            && observation
-                .touch_elapsed_ms
-                .is_some_and(|elapsed| elapsed > 333)
-        {
-            DeviceKind::Mouse
-        } else {
-            self.last_source
-        };
-
-        self.last_source = source;
-        source
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn non_continuous_scroll_is_mouse() {
-        let mut classifier = SourceClassifier::default();
-
-        assert_eq!(
-            classifier.classify(SourceObservation::from_continuity(false)),
-            DeviceKind::Mouse
-        );
+        assert_eq!(conservative_kind_from_continuity(false), DeviceKind::Mouse);
     }
 
     #[test]
-    fn recent_two_finger_continuous_scroll_is_trackpad() {
-        let mut classifier = SourceClassifier::default();
-
+    fn continuous_scroll_is_trackpad() {
         assert_eq!(
-            classifier.classify(SourceObservation {
-                continuous: true,
-                touching: Some(2),
-                touch_elapsed_ms: Some(100),
-                phase: ScrollPhase::Normal,
-            }),
+            conservative_kind_from_continuity(true),
             DeviceKind::Trackpad
         );
     }
 
     #[test]
-    fn ambiguous_continuous_scroll_uses_previous_source() {
-        let mut classifier = SourceClassifier::default();
-        classifier.classify(SourceObservation {
-            continuous: true,
-            touching: Some(2),
-            touch_elapsed_ms: Some(100),
-            phase: ScrollPhase::Normal,
-        });
-
-        assert_eq!(
-            classifier.classify(SourceObservation::from_continuity(true)),
-            DeviceKind::Trackpad
-        );
+    fn display_and_from_str_round_trip_for_every_variant() {
+        for kind in [
+            DeviceKind::Mouse,
+            DeviceKind::Trackpad,
+            DeviceKind::MagicMouse,
+            DeviceKind::Unknown,
+        ] {
+            assert_eq!(kind.to_string().parse::<DeviceKind>().unwrap(), kind);
+        }
     }
 }
