@@ -192,6 +192,8 @@ fn simulate(args: &[String]) -> AppResult<()> {
     let mut delta_vertical = 1;
     let mut delta_horizontal = 0;
     let mut continuous = false;
+    let mut synthetic = false;
+    let mut source_pid = 0;
 
     let mut index = 0;
     while index < args.len() {
@@ -215,6 +217,14 @@ fn simulate(args: &[String]) -> AppResult<()> {
                 index += 1;
                 continuous = parse_bool(args.get(index), "--continuous")?;
             }
+            "--synthetic" => {
+                index += 1;
+                synthetic = parse_bool(args.get(index), "--synthetic")?;
+            }
+            "--source-pid" => {
+                index += 1;
+                source_pid = parse_i64(args.get(index), "--source-pid")?;
+            }
             flag => {
                 return Err(AppError::Usage(format!(
                     "unknown simulate flag `{flag}`; run `auto-reverse help`"
@@ -225,7 +235,11 @@ fn simulate(args: &[String]) -> AppResult<()> {
     }
 
     let config = ConfigStore::default().load_or_create()?;
-    let event = ScrollEvent::new(device_kind, delta_vertical, delta_horizontal, continuous);
+    let event = ScrollEvent {
+        synthetic,
+        source_pid,
+        ..ScrollEvent::new(device_kind, delta_vertical, delta_horizontal, continuous)
+    };
     let decision = scroll::transform_event(&config, event);
 
     println!("original:    {}", decision.original);
@@ -297,7 +311,9 @@ fn print_help() {
            --device mouse|trackpad|magic-mouse|unknown\n\
            --dy <integer>\n\
            --dx <integer>\n\
-           --continuous true|false"
+           --continuous true|false\n\
+           --synthetic true|false\n\
+           --source-pid <integer>"
     );
 }
 

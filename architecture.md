@@ -1,176 +1,40 @@
 # Архитектура Auto Reverse
 
-Документ описывает, как разложить Rust binary crate в понятную программу для reverse scrolling. Первый рабочий срез уже реализован: macOS event tap, конфиг, rule resolver, transformer, step size и CLI-диагностика. Ниже остается целевая архитектура, дизайн-решения и 3 итерации разработки.
+Auto Reverse - системная Rust-утилита для reverse scrolling в стиле Scroll Reverser. Проект уже не scaffold: в `master` влиты последние локальные изменения из `worktree-rust-impl`, есть macOS event tap, TOML-конфиг, CLI, rule resolver, step size, permission checks, raw-input guard и unit tests.
 
-Файл называется `architecture.md`, чтобы имя совпадало с общепринятым написанием.
+## Текущее состояние
+
+Реализовано:
+
+- `src/main.rs` - тонкий CLI entrypoint: `run`, `doctor`, `init`, `enable`, `disable`, `toggle`, `config-path`, `show-config`, `simulate`.
+- `src/lib.rs` - публичный фасад модулей.
+- `src/config.rs` - versioned `AppConfig`, TOML store, atomic-ish save через уникальный temp file.
+- `src/device.rs` - `DeviceKind` и conservative classifier: non-continuous scroll = mouse, continuous scroll = trackpad.
+- `src/input.rs` - нормализованный `ScrollEvent` с `source_pid`.
+- `src/scroll.rs` - чистая трансформация scroll delta, step size, raw-input skip, saturating negation.
+- `src/permissions.rs` - Accessibility и Input Monitoring checks.
+- `src/event_tap.rs` - macOS `CGEventTap` и recovery при disabled tap.
+- `recommendation.md` - 500 актуальных пунктов backlog/review.
+- `scroll-reverser-parity.md` - parity-чеклист Scroll Reverser.
+
+Главный текущий gap: Magic Mouse и trackpad пока не различаются в live event tap. Оба дают continuous scroll, поэтому live classifier безопасно считает continuous scroll trackpad-like. Поле `reverse_magic_mouse` есть в config, но пока не имеет практического эффекта без gesture/HID слоя.
 
 ## Цель продукта
 
-Auto Reverse — маленькая системная утилита, которая автоматически меняет направление скролла по правилам пользователя. Базовый сценарий: трекпад остается в natural scrolling, а внешняя мышь получает обратное направление, либо наоборот.
+Auto Reverse должен повторить пользовательские возможности Scroll Reverser, но остаться маленьким, проверяемым и понятным Rust-проектом:
 
-Целевая функциональность: повторить возможности Scroll Reverser для macOS как feature parity, но реализовать их своим кодом и с Rust-архитектурой. Подробный чеклист лежит в `scroll-reverser-parity.md`.
-
-Хороший результат:
-
-- пользователь понимает состояние программы за 3 секунды;
-- настройка занимает меньше минуты;
-- программа не ломает системный ввод;
-- каждое устройство можно настроить отдельно;
-- есть понятный аварийный выход;
-- код разложен маленькими модулями по SOLID и DRY.
-
-## Feature parity со Scroll Reverser
-
-Auto Reverse должен покрыть основные фичи Scroll Reverser:
-
-- глобальное включение и выключение reverse scrolling;
-- независимые настройки для mouse, trackpad и Magic Mouse;
-- отдельные toggles для vertical и horizontal scrolling;
-- step size control для scroll wheel;
-- автоматический показ step size только после wheel/non-continuous scroll;
-- menu bar/tray utility вместо большого постоянного окна;
-- settings window с разделами `Scrolling`, `App`, `Permissions`;
-- first-run welcome/onboarding;
-- статусы Accessibility/Input Monitoring permissions;
-- кнопки request/open system permission settings;
-- start at login;
-- show/hide menu bar icon;
-- right-click/control-click по иконке для быстрого toggle;
-- Option-click по иконке для debug console;
-- efficient debug log без тяжелого логирования в hot path;
-- relaunch/recover после wake from sleep;
-- remote desktop/raw input mode;
-- AppleScript/automation equivalent для включения и выключения;
-- update flow: check now, automatic checks, beta updates;
-- dark mode, native icon/status icon, аккуратный system UI;
-- локализация, включая русский язык;
-- честно задокументированные ограничения: swipe gestures, custom gesture scrolling, Calendar/iPhone Mirroring-like cases.
-
-Это не означает копирование реализации Scroll Reverser. Это означает совместимый пользовательский набор возможностей, а внутренние модули остаются разделенными на domain, platform, runtime и UI.
-
-## Что сейчас сделано плохо
-
-Текущее состояние уже лучше scaffold, но для parity с Scroll Reverser еще не хватает нескольких крупных частей:
-
-- нет menu bar/tray UI;
-- нет preferences window;
-- нет полноценного gesture tracking для разделения Magic Mouse и trackpad;
-- нет debug console с ring buffer;
-- нет start at login integration;
-- нет show/hide menu bar icon;
-- нет AppleScript/automation integration;
-- нет update flow;
-- нет localization workflow;
-- нет packaging/release-плана.
-
-## Три итерации
-
-### Итерация 1: минимальное ядро
-
-Цель: доказать, что программа может безопасно читать настройки, определять устройство и принимать решение о направлении скролла.
-
-Состав:
-
-- CLI-запуск без GUI;
-- конфиг в локальном файле;
-- доменная модель `ScrollDirection`;
-- правила для устройств;
-- trait для платформенного adapter;
-- mock adapter для тестов;
-- unit tests для правил;
-- parity checklist из `scroll-reverser-parity.md` подключен к roadmap;
-- понятные ошибки через единый `AppError`.
-
-Критерий готовности: можно запустить `cargo test`, увидеть покрытие логики правил и выполнить dry-run без системного перехвата ввода.
-
-### Итерация 2: пользовательский продукт
-
-Цель: сделать программу понятной обычному пользователю.
-
-Состав:
-
-- tray/menu bar состояние;
-- экран настроек;
-- список устройств;
-- переключатели направления;
-- onboarding по правам доступа;
-- быстрый disable/pause;
+- reverse mouse wheel при сохранении natural trackpad;
+- независимые настройки vertical/horizontal axes;
+- независимые настройки mouse/trackpad/Magic Mouse/unknown;
 - step size для wheel mouse;
-- hide/show tray icon;
-- start at login;
+- permissions onboarding;
+- menu bar utility с settings;
 - debug console;
-- профили: default, mouse, trackpad;
-- локальные логи для диагностики.
-
-Критерий готовности: пользователь может включить/выключить reverse scroll без чтения документации.
-
-### Итерация 3: надежность и релиз
-
-Цель: довести утилиту до состояния, где ей можно доверять каждый день.
-
-Состав:
-
-- integration tests;
-- property-based tests для правил;
-- стресс-тест событий;
-- macOS/Windows/Linux packaging;
-- migration для конфигов;
-- crash recovery;
-- versioned config schema;
-- release checklist;
-- privacy/security review.
-- localization/update/release flow.
-
-Критерий готовности: есть стабильный build, инструкции установки, тесты и понятная диагностика проблем.
-
-## Предлагаемая структура
-
-```text
-src/
-  main.rs
-  app/
-    mod.rs
-    runtime.rs
-    lifecycle.rs
-  config/
-    mod.rs
-    schema.rs
-    store.rs
-    migration.rs
-  device/
-    mod.rs
-    id.rs
-    classifier.rs
-    registry.rs
-  input/
-    mod.rs
-    event.rs
-    listener.rs
-    normalizer.rs
-  scroll/
-    mod.rs
-    direction.rs
-    transformer.rs
-    rules.rs
-  platform/
-    mod.rs
-    macos.rs
-    windows.rs
-    linux.rs
-  ui/
-    mod.rs
-    tray.rs
-    settings.rs
-    theme.rs
-  telemetry/
-    mod.rs
-    logging.rs
-  error.rs
-tests/
-  rules_tests.rs
-  config_tests.rs
-  device_tests.rs
-```
+- start at login;
+- hide/show menu icon;
+- raw-input mode для remote desktop;
+- локальная диагностика без сетевой телеметрии;
+- аккуратный native macOS UX.
 
 ## SOLID-разделение
 
@@ -178,162 +42,270 @@ tests/
 
 Каждый модуль должен иметь одну причину для изменения:
 
-- `config` меняется из-за формата настроек;
-- `device` меняется из-за определения устройств;
-- `input` меняется из-за получения событий;
-- `scroll` меняется из-за правил преобразования;
-- `platform` меняется из-за системных API;
-- `ui` меняется из-за интерфейса;
-- `telemetry` меняется из-за логирования.
+- `config` меняется из-за схемы настроек, storage, migration.
+- `device` меняется из-за классификации устройств.
+- `input` меняется из-за формы нормализованного события.
+- `scroll` меняется из-за правил reverse/step-size.
+- `permissions` меняется из-за системных privacy checks.
+- `event_tap` меняется из-за macOS hook/runtime.
+- `ui` появится отдельно и не должен менять domain-логику.
+- `telemetry` появится отдельно и не должен жить в hot path.
 
 ### Open/Closed
 
-Новые платформы, правила и UI-оболочки добавляются через traits и новые implementations, а не через переписывание ядра.
+Новые платформы, UI и classifiers должны добавляться через traits и adapter-модули, а не через переписывание `scroll::transform_event`.
 
-Пример:
+Целевые traits:
 
 ```rust
-pub trait PlatformInput {
-    fn listen(&mut self, sink: &mut dyn InputSink) -> Result<(), AppError>;
+pub trait InputListener {
+    fn run(&mut self, sink: &mut dyn InputSink) -> AppResult<()>;
+}
+
+pub trait PermissionChecker {
+    fn status(&self) -> PermissionStatus;
+}
+
+pub trait StartupInstaller {
+    fn set_start_at_login(&self, enabled: bool) -> AppResult<()>;
 }
 ```
 
 ### Liskov Substitution
 
-`MockPlatformInput`, `MacOsInput`, `WindowsInput` и `LinuxInput` должны быть взаимозаменяемы на уровне runtime. Тесты обязаны проверять одну и ту же контрактную логику для mock и реального adapter там, где это возможно.
+`MockInputListener`, `MacOsEventTapListener` и будущие adapters должны иметь один контракт: принимать normalized events и отдавать decisions без скрытых side effects в domain layer.
 
 ### Interface Segregation
 
-Не нужно делать один большой trait `Platform`. Лучше маленькие interfaces:
+Не нужен большой trait `Platform`. Нужны маленькие интерфейсы:
 
-- `DeviceProvider`;
+- `DeviceClassifier`;
 - `InputListener`;
 - `ScrollEmitter`;
 - `PermissionChecker`;
-- `StartupInstaller`.
+- `StartupInstaller`;
+- `MenuBarController`;
+- `DiagnosticsSink`.
 
 ### Dependency Inversion
 
-Core-логика не должна импортировать `macos.rs`, `windows.rs` или GUI. Направление зависимости:
+Желаемое направление зависимостей:
 
 ```text
-UI / CLI / Platform -> App Runtime -> Domain Rules
+CLI / UI / macOS adapter
+  -> app runtime
+    -> config / input / device / scroll / error
 ```
 
-Домен ничего не знает о конкретной ОС.
+Domain modules не должны импортировать CoreGraphics, UI framework или конкретный storage. Сейчас `scroll.rs` еще содержит CoreGraphics helpers рядом с чистой логикой; это допустимо для первого среза, но следующая итерация должна разделить `scroll::transformer` и `platform::macos::event_fields`.
 
 ## DRY-источники правды
 
 Один источник правды нужен для:
 
-- схемы конфига;
-- списка поддержанных направлений;
-- device id normalization;
-- названий профилей;
-- текстов ошибок;
-- дизайн-токенов UI;
-- release version;
-- permission state;
-- logging categories;
-- keyboard shortcuts.
+- `DeviceKind::as_str`;
+- `AppConfig` defaults;
+- config schema version;
+- permission labels;
+- CLI command names;
+- parity checklist;
+- design tokens;
+- error codes;
+- diagnostics field names;
+- release checklist.
 
-Если одна и та же строка или enum появляются в 3 местах, это почти всегда будущая ошибка.
+Если строка или enum-кейс повторяется в CLI, UI и docs, его надо вынести в явный helper или reference table.
 
-## Доменная модель
+## Текущая структура
 
-Минимальные типы:
-
-```rust
-pub enum ScrollDirection {
-    Natural,
-    Reversed,
-}
-
-pub enum DeviceKind {
-    Mouse,
-    Trackpad,
-    Unknown,
-}
-
-pub struct DeviceId(String);
-
-pub struct ScrollRule {
-    pub device_match: DeviceMatch,
-    pub direction: ScrollDirection,
-    pub enabled: bool,
-}
+```text
+src/
+  lib.rs
+  main.rs
+  config.rs
+  device.rs
+  input.rs
+  scroll.rs
+  permissions.rs
+  event_tap.rs
+  error.rs
 ```
 
-Важная мысль: направление скролла — это доменное решение, а не UI checkbox. UI только меняет конфиг.
+## Целевая структура
+
+```text
+src/
+  app/
+    runtime.rs
+    command.rs
+    state.rs
+  config/
+    schema.rs
+    store.rs
+    migration.rs
+  device/
+    kind.rs
+    classifier.rs
+    registry.rs
+  input/
+    event.rs
+    source.rs
+  scroll/
+    transformer.rs
+    wheel.rs
+    decision.rs
+  platform/
+    macos/
+      event_tap.rs
+      permissions.rs
+      event_fields.rs
+      startup.rs
+    mock.rs
+  ui/
+    menu_bar.rs
+    settings.rs
+    diagnostics.rs
+    theme.rs
+  telemetry/
+    ring_buffer.rs
+    diagnostics.rs
+  error.rs
+```
 
 ## Runtime-поток
 
 ```text
 start
-  -> load config
-  -> check permissions
-  -> discover devices
-  -> start input listener
-  -> normalize event
-  -> resolve matching rule
-  -> transform scroll delta
-  -> emit event
-  -> log decision if debug mode
+  -> load_or_create config
+  -> validate config
+  -> check Accessibility/Input Monitoring
+  -> install event tap
+  -> normalize CGEvent into ScrollEvent
+  -> classify source
+  -> transform event by AppConfig
+  -> write changed delta fields
+  -> keep/pass-through if disabled, synthetic, injected, or unsupported
 ```
 
-## UX-дизайн
+## Дизайн продукта
 
-Главный интерфейс должен быть не лендингом, а рабочей поверхностью:
+Auto Reverse должен выглядеть как тихая системная утилита, а не как landing page.
 
-- верхняя строка: статус `Active`, `Paused`, `Needs Permission`;
-- список устройств: имя, тип, последнее событие, направление;
-- быстрый переключатель для каждого устройства;
-- глобальный pause;
-- кнопка диагностики;
-- короткие состояния ошибок без технической стены текста;
-- спокойная системная палитра, без декоративного шума;
-- на macOS — menu bar utility, на Windows/Linux — tray app.
+Первый экран settings:
 
-## Визуальный язык
+- верхняя строка: `Active`, `Paused`, `Needs Permission`, `Degraded`;
+- compact device list;
+- per-device direction controls;
+- vertical/horizontal controls;
+- wheel step size slider;
+- permissions panel;
+- diagnostics panel;
+- restore defaults;
+- no nested cards;
+- native spacing, typography and icon language.
 
-Продукт системный, поэтому дизайн должен быть тихим и точным:
+Menu bar:
 
-- компактная плотность информации;
-- четкая иерархия;
-- neutral background;
-- один accent color для активного состояния;
-- предупреждения только там, где есть риск;
-- icons для pause, settings, diagnostics;
-- без огромных hero-блоков;
-- без маркетинговых карточек;
-- без декоративных градиентов.
+- left click opens menu/settings;
+- right click toggles active state;
+- option click opens debug console;
+- icon reflects active/paused/blocked;
+- hide icon has a recovery route via CLI.
 
-## Маленькие кусочки для изучения
+Visual system:
 
-Рекомендуемый порядок разработки:
+- neutral native background;
+- one restrained accent color;
+- no decorative gradients;
+- no oversized hero;
+- text fits compact controls;
+- icon buttons for common commands;
+- labels for permission and error states;
+- dark/light theme follows system.
 
-1. `scroll::direction` — enum и тесты.
-2. `scroll::rules` — выбор правила.
-3. `device::id` — нормализация ID.
-4. `config::schema` — структура настроек.
-5. `config::store` — чтение/запись.
-6. `input::event` — единая модель события.
-7. `scroll::transformer` — изменение delta.
-8. `platform::mod` — traits.
-9. `platform::<os>` — реальная интеграция.
-10. `app::runtime` — сборка всех частей.
-11. `ui::tray` — быстрый контроль.
-12. `ui::settings` — полноценные настройки.
+## Три итерации
 
-Так проект можно читать слоями, не прыгая между системными API, GUI и бизнес-логикой.
+### Итерация 1: Core Safety
 
-## Минимальный backlog
+Status: mostly done.
 
-- Создать README с ясной целью.
-- Добавить `AppError`.
-- Создать domain modules.
-- Добавить config schema.
-- Написать первые unit tests.
-- Добавить mock platform.
-- Реализовать dry-run режим.
-- Потом уже подключать реальные OS API.
+Done:
+
+- CLI commands;
+- config schema;
+- event transform;
+- step size;
+- raw-input skip;
+- permission checks;
+- unit tests;
+- saturating negation;
+- unique temp config saves.
+
+Remaining:
+
+- split CoreGraphics helpers out of `scroll.rs`;
+- add tests for corrupt config backup;
+- add CLI `--source-pid` simulation;
+- add event tap install smoke guard;
+- document exact config path behavior.
+
+### Итерация 2: Product UX
+
+Goal: usable daily app, not only CLI.
+
+Scope:
+
+- menu bar app;
+- preferences window;
+- permission onboarding;
+- debug console backed by ring buffer;
+- start at login;
+- show/hide menu bar icon;
+- restore defaults;
+- manual diagnostics export;
+- native settings layout.
+
+Acceptance:
+
+- user can configure mouse reversed and trackpad natural without reading docs;
+- missing permissions show clear next action;
+- app can be paused and resumed quickly;
+- no event hot path logging slowdown.
+
+### Итерация 3: Reliability and Release
+
+Goal: trusted release candidate.
+
+Scope:
+
+- gesture/HID classifier for Magic Mouse vs trackpad;
+- wake from sleep recovery;
+- config migration;
+- packaging and signing;
+- update strategy;
+- localization;
+- release checklist;
+- privacy/security review;
+- manual QA matrix.
+
+Acceptance:
+
+- `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`, `cargo check` pass;
+- first-launch, permission-denied, mouse-only, trackpad-only and remote-desktop scenarios are manually tested;
+- known limitations are visible in README and settings.
+
+## Review Notes
+
+Issues fixed after the latest merge:
+
+- merge conflict in `src/config.rs` resolved without losing unique temp save IDs;
+- stale docs updated to match current CLI/core reality;
+- old "Hello, world" recommendations replaced with current audit.
+
+Known risks still open:
+
+- no remote configured, so push cannot complete until `origin` is added;
+- no menu bar UI yet;
+- no real Magic Mouse distinction yet;
+- no config migration yet;
+- no packaging/signing yet.
