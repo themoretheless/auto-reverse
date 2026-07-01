@@ -84,6 +84,7 @@ fn doctor() -> AppResult<()> {
 
     println!("Auto Reverse doctor");
     println!("status: {status}");
+    println!("what it's doing: {}", plain_english_summary(&config));
     println!();
     println!("version: {}", env!("CARGO_PKG_VERSION"));
     println!("config: {}", store.path().display());
@@ -98,10 +99,47 @@ fn doctor() -> AppResult<()> {
     );
     println!("device classifier: {}", device::CLASSIFIER_DESCRIPTION);
     println!(
-        "known gap: reverse_magic_mouse has no effect yet - the classifier above cannot tell a \
-         Magic Mouse apart from a trackpad, so continuous scroll is always treated as trackpad"
+        "known gap: reverse_magic_mouse and reverse_unknown have no effect yet - the classifier \
+         above can only ever produce Mouse or Trackpad, so a real Magic Mouse is governed by \
+         reverse_trackpad and DeviceKind::Unknown is unreachable outside `simulate`"
     );
+    println!(
+        "known gap: start_at_login, show_menu_bar_icon, check_for_updates, \
+         include_beta_updates, and show_discrete_scroll_options are reserved for a future \
+         menu-bar app and have no effect in this CLI-only build"
+    );
+
+    if !accessibility || !input_monitoring {
+        println!();
+        permissions::print_permission_help();
+    }
+
     Ok(())
+}
+
+fn plain_english_summary(config: &AppConfig) -> String {
+    if !config.enabled {
+        return "not reversing anything right now (disabled)".to_string();
+    }
+
+    let mut targets = Vec::new();
+    if config.reverse_mouse {
+        targets.push("a physical mouse wheel");
+    }
+    if config.reverse_trackpad {
+        targets.push("trackpad scrolling (this also covers a real Magic Mouse - see below)");
+    }
+    if targets.is_empty() {
+        return "enabled, but no device is currently set to reverse".to_string();
+    }
+
+    let axes = match (config.reverse_vertical, config.reverse_horizontal) {
+        (true, true) => "vertical and horizontal",
+        (true, false) => "vertical",
+        (false, true) => "horizontal",
+        (false, false) => "no axis - nothing will actually flip",
+    };
+    format!("reversing {axes} scroll for {}", targets.join(" and "))
 }
 
 fn init_config() -> AppResult<()> {
@@ -217,15 +255,20 @@ fn parse_bool(value: Option<&String>, flag: &str) -> AppResult<bool> {
 }
 
 fn config_summary(config: &AppConfig) -> String {
+    // Field labels intentionally match AppConfig's real field names exactly
+    // (not shortened) so this line can be grepped/cross-referenced against
+    // config.rs and the "known gap" notes above without a mental rename.
     format!(
-        "enabled={}, vertical={}, horizontal={}, mouse={}, trackpad={}, magic_mouse={}, \
-         step_size={}, raw_input_only={}",
+        "enabled={}, reverse_vertical={}, reverse_horizontal={}, reverse_mouse={}, \
+         reverse_trackpad={}, reverse_magic_mouse={}, reverse_unknown={}, \
+         discrete_scroll_step_size={}, reverse_only_raw_input={}",
         config.enabled,
         config.reverse_vertical,
         config.reverse_horizontal,
         config.reverse_mouse,
         config.reverse_trackpad,
         config.reverse_magic_mouse,
+        config.reverse_unknown,
         config.discrete_scroll_step_size,
         config.reverse_only_raw_input,
     )

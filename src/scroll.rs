@@ -69,7 +69,11 @@ pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecis
 
     let should_reverse = config.should_reverse_device(event.device_kind);
 
-    if !event.continuous && config.discrete_scroll_step_size > 0 {
+    // Gated on should_reverse too: step size is an accompaniment to
+    // reversal for this device, not an independent global multiplier - a
+    // device with its own reversal toggle off should be left untouched,
+    // not just left un-reversed but still amplified.
+    if should_reverse && !event.continuous && config.discrete_scroll_step_size > 0 {
         if event.delta_vertical.unsigned_abs() == 1 {
             transformed.delta_vertical *= config.discrete_scroll_step_size;
             step_size_applied = true;
@@ -245,6 +249,22 @@ mod tests {
 
         assert_eq!(default_decision.transformed.delta_horizontal, 7);
         assert_eq!(horizontal_decision.transformed.delta_horizontal, -7);
+    }
+
+    #[test]
+    fn step_size_does_not_apply_when_the_devices_own_reversal_is_off() {
+        let config = AppConfig {
+            reverse_mouse: false,
+            discrete_scroll_step_size: 3,
+            ..AppConfig::default()
+        };
+        let event = ScrollEvent::new(DeviceKind::Mouse, 1, 0, false);
+
+        let decision = transform_event(&config, event);
+
+        assert_eq!(decision.transformed, event);
+        assert!(!decision.step_size_applied);
+        assert!(!decision.changed());
     }
 
     #[test]

@@ -9,10 +9,17 @@ use core_foundation::string::{CFString, CFStringRef};
 // CGPreflightListenEventAccess/CGRequestListenEventAccess (CGEvent.h,
 // macOS 10.15+) are the equivalent pair for Input Monitoring. All four
 // verified directly against this machine's SDK headers, not assumed.
+// The AX functions return the Carbon-era `Boolean` (a plain `unsigned char`,
+// per CFBase.h - any nonzero byte is a valid "true"), not the two-valued C99
+// `bool` the CoreGraphics functions below use. Declaring these `-> bool`
+// would be unsound: Rust's `bool` has a hard 0x00/0x01 validity invariant,
+// so a real implementation returning e.g. 0xFF for true would be undefined
+// behavior the moment it crosses the FFI boundary. Bind them as `u8` and
+// compare explicitly instead.
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
-    fn AXIsProcessTrusted() -> bool;
-    fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
+    fn AXIsProcessTrusted() -> u8;
+    fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> u8;
     static kAXTrustedCheckOptionPrompt: CFStringRef;
 }
 
@@ -24,7 +31,7 @@ unsafe extern "C" {
 
 /// Whether the user has already granted this process Accessibility trust.
 pub fn has_accessibility_trust() -> bool {
-    unsafe { AXIsProcessTrusted() }
+    unsafe { AXIsProcessTrusted() != 0 }
 }
 
 /// Whether the user has already granted this process Input Monitoring
@@ -39,7 +46,7 @@ pub fn request_accessibility_trust() -> bool {
     unsafe {
         let prompt_key: CFString = TCFType::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
         let options = CFDictionary::from_CFType_pairs(&[(prompt_key, CFBoolean::true_value())]);
-        AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef())
+        AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) != 0
     }
 }
 
