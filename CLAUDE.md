@@ -13,9 +13,10 @@ untouched. It is layered so pure logic never touches OS frameworks:
   (paths, TOML I/O, atomic save), re-exported through `mod.rs`
 - `src/platform/macos/` - ALL unsafe/FFI code: `scroll_events.rs` (CGEvent
   field mapping), `permissions.rs` (Accessibility + Input Monitoring TCC),
-  `event_tap.rs` (tap runtime)
+  `startup.rs` (LaunchAgent start-at-login), `event_tap.rs` (tap runtime)
 - `src/main.rs` - CLI (`run`, `doctor`, `enable`, `disable`, `toggle`,
-  `init`, `config-path`, `show-config`, `simulate`, `help`)
+  `enable-startup`, `disable-startup`, `startup-status`, `init`,
+  `config-path`, `show-config`, `simulate`, `help`)
 
 The macOS crates are target-specific dependencies; `cargo check --lib`
 builds on any OS, the binary is macOS-only (explicit `compile_error!`).
@@ -34,10 +35,13 @@ Key invariants, both empirically verified - do not "fix" them backwards:
 Known accepted limitations (documented in `doctor` output and
 `recommendation.md`): a Magic Mouse cannot be distinguished from the
 trackpad through the public CGEventTap API, so `reverse_magic_mouse` and
-`reverse_unknown` currently have no effect; five config fields
-(`start_at_login`, `show_menu_bar_icon`, `check_for_updates`,
-`include_beta_updates`, `show_discrete_scroll_options`) are reserved for a
-future menu-bar app.
+`reverse_unknown` currently have no effect; four config fields
+(`show_menu_bar_icon`, `check_for_updates`, `include_beta_updates`,
+`show_discrete_scroll_options`) are reserved for a future menu-bar app.
+`start_at_login` IS implemented (per-user LaunchAgent via
+`enable-startup`/`disable-startup`; `startup.rs` writes the plist, boots
+the running instance out on disable, and logs the agent's output to
+~/Library/Logs/auto-reverse.log).
 
 See `readme.md` (overview + module map), `architecture.md` (target
 architecture, SOLID/DRY layering), `recommendation.md` (backlog + verified

@@ -176,5 +176,5 @@ This should feel like a compact native utility:
 ## Documents
 
 - `architecture.md` - current and target architecture, SOLID/DRY split, UX direction.
-- `recommendation.md` - 500 updated recommendations, problems and improvements.
+- `recommendation.md` - 560 recommendations, problems and improvements (500 base items + N01-N60 added after the startup feature).
 - `scroll-reverser-parity.md` - Scroll Reverser feature parity checklist.

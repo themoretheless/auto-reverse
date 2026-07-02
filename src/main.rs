@@ -85,7 +85,12 @@ fn doctor() -> AppResult<()> {
 
     let accessibility = permissions::has_accessibility_trust();
     let input_monitoring = permissions::has_input_monitoring_access();
-    let startup_status = startup::status_for_current_executable()?;
+    // Deliberately not `?`: an unreadable LaunchAgent must not suppress the
+    // rest of the diagnostics - permissions are what doctor exists to show.
+    let startup_summary = match startup::status_for_current_executable() {
+        Ok(status) => status.summary(),
+        Err(error) => format!("could not determine ({error})"),
+    };
     let status = if !config.enabled {
         "OFF (disabled in config)"
     } else if !accessibility || !input_monitoring {
@@ -103,8 +108,7 @@ fn doctor() -> AppResult<()> {
     println!("settings: {}", config_summary(&config));
     println!(
         "start at login: {} (config start_at_login={})",
-        startup_status.summary(),
-        config.start_at_login
+        startup_summary, config.start_at_login
     );
     println!(
         "accessibility permission: {}",
@@ -204,15 +208,43 @@ fn set_startup_enabled(enabled: bool) -> AppResult<()> {
     };
 
     let store = ConfigStore::default();
-    let mut config = store.load_or_create()?;
-    config.start_at_login = enabled;
-    store.save(&config)?;
+    let config_result = store.load_or_create().and_then(|mut config| {
+        config.start_at_login = enabled;
+        store.save(&config)
+    });
+    if let Err(error) = config_result {
+        // The launch agent was already changed above; without this note the
+        // user has no way to know config and agent now disagree.
+        eprintln!(
+            "auto-reverse: the launch agent was updated, but saving the config failed; \
+             rerun this command to bring them back in sync"
+        );
+        return Err(error);
+    }
 
     println!("start at login: {}", status.summary());
     if enabled {
         println!("auto-reverse will start on the next login using the current binary path");
+        warn_if_dev_tree_binary();
     }
     Ok(())
+}
+
+/// A LaunchAgent pointing into target/ is fragile: every rebuild changes
+/// the binary's identity, so the TCC grants stop matching and the login
+/// launch fails (see the log file the agent writes). Warn instead of
+/// refusing - it is still the right workflow for trying the feature out.
+fn warn_if_dev_tree_binary() {
+    if let Ok(exe) = startup::current_executable() {
+        let path = exe.display().to_string();
+        if path.contains("/target/debug/") || path.contains("/target/release/") {
+            println!(
+                "warning: this is a build-tree binary; every rebuild invalidates its \
+                 Accessibility/Input Monitoring approval, so the login launch will fail \
+                 until re-approved. Consider installing a stable copy outside target/."
+            );
+        }
+    }
 }
 
 fn startup_status() -> AppResult<()> {
@@ -226,7 +258,7 @@ fn startup_status() -> AppResult<()> {
 
     println!("start at login: {}", status.summary());
     println!("config start_at_login={config_start_at_login}");
-    if config_start_at_login != status.enabled {
+    if config_start_at_login != status.installed {
         println!(
             "warning: config and LaunchAgent state differ; run enable-startup or disable-startup"
         );

@@ -1,4 +1,4 @@
-# 500 рекомендаций, проблем и улучшений
+# 560 рекомендаций, проблем и улучшений (500 базовых + N01-N60 после автозапуска)
 
 Список обновлен после merge ветки `worktree-rust-impl` в `master`. Он отражает текущий код: macOS event tap, TOML config, CLI, permission checks, raw-input guard, step size, LaunchAgent start at login, 27 unit tests и открытые gaps до Scroll Reverser parity.
 
