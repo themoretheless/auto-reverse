@@ -312,6 +312,8 @@ Issues fixed after the latest merge:
 - merge conflict in `src/config.rs` resolved without losing unique temp save IDs;
 - stale docs updated to match current CLI/core reality;
 - old "Hello, world" recommendations replaced with current audit.
+- repeated review fixed the recommendation counter so exactly 500 backlog items are counted;
+- `.idea/` is ignored at repository root, keeping IDE metadata out of commits.
 
 Known risks still open:
 

@@ -103,9 +103,9 @@ impl ConfigStore {
         // a fixed "config.toml.tmp" lets two concurrent saves (e.g. two CLI
         // invocations racing) clobber each other's temp file, silently
         // discarding whichever one loses the race.
-        let tmp_path = self
-            .path
-            .with_extension(format!("toml.{}.{}.tmp", process::id(), next_save_id()));
+        let tmp_path =
+            self.path
+                .with_extension(format!("toml.{}.{}.tmp", process::id(), next_save_id()));
         fs::write(&tmp_path, contents).map_err(|source| {
             let _ = fs::remove_file(&tmp_path);
             AppError::io("write temporary config", &tmp_path, source)

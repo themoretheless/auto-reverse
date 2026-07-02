@@ -15,7 +15,7 @@ Implemented:
 - raw-input guard through `source_pid`;
 - Accessibility and Input Monitoring checks;
 - CLI diagnostics and simulation;
-- 26 unit tests after merging Claude's 3 review iterations back in (previously 16).
+- 25 unit tests after merging Claude's 3 review iterations back in (previously 16).
 
 Still missing:
 

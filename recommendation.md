@@ -1,6 +1,6 @@
 # 500 рекомендаций, проблем и улучшений
 
-Список обновлен после merge ветки `worktree-rust-impl` в `master`. Он отражает текущий код: macOS event tap, TOML config, CLI, permission checks, raw-input guard, step size, 26 unit tests и открытые gaps до Scroll Reverser parity.
+Список обновлен после merge ветки `worktree-rust-impl` в `master`. Он отражает текущий код: macOS event tap, TOML config, CLI, permission checks, raw-input guard, step size, 25 unit tests и открытые gaps до Scroll Reverser parity.
 
 ## Верифицированные находки из 3 реальных итераций ревью (rust-impl worktree)
 
@@ -16,37 +16,37 @@
 
 ### Итерация 1 - 10 находок, все исправлены
 
-1. **[Архитектура]** `event_tap.rs` сам читал `EVENT_SOURCE_UNIX_PROCESS_ID` и применял `reverse_only_raw_input` вместо того, чтобы делегировать это `scroll.rs`, которому принадлежит вся остальная трансляция CGEvent -> domain. Исправлено: добавлено поле `ScrollEvent::source_pid`, вся логика перенесена в `scroll::transform_event`.
-2. **[Мертвый код]** `SourceClassifier`/`SourceObservation`/`ScrollPhase` в `device.rs` никогда не вызывались из реального event tap - только из собственных тестов, создавая ложную уверенность в покрытии классификации устройств. Удалены.
-3. **[Мертвый код]** `DeviceKind::is_mouse_like` не имел ни одного вызова нигде в проекте. Удален.
-4. **[DRY]** Строковое представление `DeviceKind` было продублировано в `Display` и `FromStr` независимо. Унифицировано через `DeviceKind::as_str()`.
-5. **[Честность]** `reverse_magic_mouse` недостижим из реального event tap (классификатор никогда не возвращает `MagicMouse`), но нигде не было отмечено, что это известное ограничение.
-6. **[macOS API]** Комментарий в `permissions.rs` утверждал, что нет публичной проверки Input Monitoring - неверно: `CGPreflightListenEventAccess`/`CGRequestListenEventAccess` существуют именно для этого (проверено напрямую по заголовку `CGEvent.h` в реальном macOS SDK на этой машине). Добавлены обе функции.
-7. **[Надежность]** `OnceLock<AppConfig>` в `event_tap.rs` не имеет пути перезагрузки - при повторном вызове в одном процессе всегда возвращает ошибку до попытки установить tap.
-8. **[Race condition]** `ConfigStore::save` использовал фиксированное имя временного файла - два параллельных сохранения могли столкнуться и тихо затереть друг друга. Исправлено: уникальное имя на основе PID + монотонный счетчик.
-9. **[Паника]** Инверсия `i64` дельт (`-value`) паникует в debug-сборке на `i64::MIN`. Исправлено на `saturating_neg()`/`unsigned_abs()`.
-10. **[UX]** `simulate` печатал сырой Rust `{:?}` вместо читаемого текста. Добавлен `impl Display for ScrollEvent`.
+V01. **[Архитектура]** `event_tap.rs` сам читал `EVENT_SOURCE_UNIX_PROCESS_ID` и применял `reverse_only_raw_input` вместо того, чтобы делегировать это `scroll.rs`, которому принадлежит вся остальная трансляция CGEvent -> domain. Исправлено: добавлено поле `ScrollEvent::source_pid`, вся логика перенесена в `scroll::transform_event`.
+V02. **[Мертвый код]** `SourceClassifier`/`SourceObservation`/`ScrollPhase` в `device.rs` никогда не вызывались из реального event tap - только из собственных тестов, создавая ложную уверенность в покрытии классификации устройств. Удалены.
+V03. **[Мертвый код]** `DeviceKind::is_mouse_like` не имел ни одного вызова нигде в проекте. Удален.
+V04. **[DRY]** Строковое представление `DeviceKind` было продублировано в `Display` и `FromStr` независимо. Унифицировано через `DeviceKind::as_str()`.
+V05. **[Честность]** `reverse_magic_mouse` недостижим из реального event tap (классификатор никогда не возвращает `MagicMouse`), но нигде не было отмечено, что это известное ограничение.
+V06. **[macOS API]** Комментарий в `permissions.rs` утверждал, что нет публичной проверки Input Monitoring - неверно: `CGPreflightListenEventAccess`/`CGRequestListenEventAccess` существуют именно для этого (проверено напрямую по заголовку `CGEvent.h` в реальном macOS SDK на этой машине). Добавлены обе функции.
+V07. **[Надежность]** `OnceLock<AppConfig>` в `event_tap.rs` не имеет пути перезагрузки - при повторном вызове в одном процессе всегда возвращает ошибку до попытки установить tap.
+V08. **[Race condition]** `ConfigStore::save` использовал фиксированное имя временного файла - два параллельных сохранения могли столкнуться и тихо затереть друг друга. Исправлено: уникальное имя на основе PID + монотонный счетчик.
+V09. **[Паника]** Инверсия `i64` дельт (`-value`) паникует в debug-сборке на `i64::MIN`. Исправлено на `saturating_neg()`/`unsigned_abs()`.
+V10. **[UX]** `simulate` печатал сырой Rust `{:?}` вместо читаемого текста. Добавлен `impl Display for ScrollEvent`.
 
 ### Итерация 2 - 17 находок, все исправлены
 
-11. **[macOS API]** Приложение только пассивно проверяло Accessibility/Input Monitoring, но никогда не вызывало `AXIsProcessTrustedWithOptions`/`CGRequestListenEventAccess`, чтобы реально показать системный диалог согласия пользователю при первом запуске.
-12. **[Надежность]** `deny_unknown_fields` на `AppConfig` ломал именно ту совместимость, ради которой существует `config_version`: конфиг от будущей версии с новым полем падал с общей ошибкой парсинга раньше, чем `validate()` успевал показать понятное сообщение о версии. Убран.
-13. **[Баг]** `discrete_scroll_step_size` масштабировал только `delta_vertical`, никогда `delta_horizontal`, хотя горизонтальный reversal полностью поддерживается.
-14. **[DRY]** `permission_word` (main.rs) и `permission_status` (permissions.rs) - побайтово идентичные приватные функции в двух модулях.
-15. **[DRY]** Описание классификатора в `doctor()` было отдельной строкой, продублированной с реальной логикой в `device::conservative_kind_from_continuity`.
-16. **[Утечка]** `config.rs::save` очищал временный файл при ошибке `fs::rename`, но не при ошибке `fs::write`.
-17. **[Честность]** `reverse_only_raw_input` не показывался нигде в `doctor`/`run`, хотя может тихо остановить реверс скролла над remote desktop.
-18-24. **[Тесты]** Добавлены недостающие тесты: `reverse_only_raw_input`, устойчивость к незнакомым TOML-полям, отсутствие утечки temp-файлов при повторном `save`, и полное покрытие CLI-парсинга (`parse_i64`/`parse_bool`), которое отсутствовало вовсе.
+V11. **[macOS API]** Приложение только пассивно проверяло Accessibility/Input Monitoring, но никогда не вызывало `AXIsProcessTrustedWithOptions`/`CGRequestListenEventAccess`, чтобы реально показать системный диалог согласия пользователю при первом запуске.
+V12. **[Надежность]** `deny_unknown_fields` на `AppConfig` ломал именно ту совместимость, ради которой существует `config_version`: конфиг от будущей версии с новым полем падал с общей ошибкой парсинга раньше, чем `validate()` успевал показать понятное сообщение о версии. Убран.
+V13. **[Баг]** `discrete_scroll_step_size` масштабировал только `delta_vertical`, никогда `delta_horizontal`, хотя горизонтальный reversal полностью поддерживается.
+V14. **[DRY]** `permission_word` (main.rs) и `permission_status` (permissions.rs) - побайтово идентичные приватные функции в двух модулях.
+V15. **[DRY]** Описание классификатора в `doctor()` было отдельной строкой, продублированной с реальной логикой в `device::conservative_kind_from_continuity`.
+V16. **[Утечка]** `config.rs::save` очищал временный файл при ошибке `fs::rename`, но не при ошибке `fs::write`.
+V17. **[Честность]** `reverse_only_raw_input` не показывался нигде в `doctor`/`run`, хотя может тихо остановить реверс скролла над remote desktop.
+V18-V24. **[Тесты]** Добавлены недостающие тесты: `reverse_only_raw_input`, устойчивость к незнакомым TOML-полям, отсутствие утечки temp-файлов при повторном `save`, и полное покрытие CLI-парсинга (`parse_i64`/`parse_bool`), которое отсутствовало вовсе.
 
 ### Итерация 3 (финальная) - 7 находок, все исправлены
 
-25. **[Soundness]** `AXIsProcessTrusted`/`AXIsProcessTrustedWithOptions` были объявлены как возвращающие Rust `bool`, но реальный тип SDK - Carbon `Boolean` (`unsigned char`, где валиден любой ненулевой байт). У Rust `bool` жесткий инвариант 0x00/0x01 - это potential UB. Исправлено на `u8` + явное сравнение `!= 0`.
-26. **[Баг]** `discrete_scroll_step_size` применялся, даже если реверс для этого устройства выключен (`reverse_mouse = false`) - масштабировал скорость скролла, не переворачивая направление. Теперь оба эффекта зависят от одного и того же условия.
-27. **[Честность]** `reverse_unknown` - того же класса мертвый код, что и `reverse_magic_mouse`, но не был отмечен как известный gap.
-28. **[Честность]** 5 полей конфига (`start_at_login`, `show_menu_bar_icon`, `check_for_updates`, `include_beta_updates`, `show_discrete_scroll_options`) - GUI/updater заглушки без единой строчки реализации где-либо в проекте, и `doctor` никак это не показывал.
-29. **[UX]** `doctor` показывал сырые имена полей конфига (`vertical=`, `magic_mouse=`) без единого понятного предложения о том, что реально происходит. Добавлена строка "what it's doing" на понятном языке.
-30. **[Консистентность]** `magic_mouse=` в выводе `config_summary` не совпадало с `reverse_magic_mouse` в тексте про known gap - те же имена полей теперь используются везде.
-31. **[UX]** Статус `NEEDS PERMISSION` в `doctor` не показывал, что именно делать - теперь `doctor` печатает ту же actionable-инструкцию, что и `run`.
+V25. **[Soundness]** `AXIsProcessTrusted`/`AXIsProcessTrustedWithOptions` были объявлены как возвращающие Rust `bool`, но реальный тип SDK - Carbon `Boolean` (`unsigned char`, где валиден любой ненулевой байт). У Rust `bool` жесткий инвариант 0x00/0x01 - это potential UB. Исправлено на `u8` + явное сравнение `!= 0`.
+V26. **[Баг]** `discrete_scroll_step_size` применялся, даже если реверс для этого устройства выключен (`reverse_mouse = false`) - масштабировал скорость скролла, не переворачивая направление. Теперь оба эффекта зависят от одного и того же условия.
+V27. **[Честность]** `reverse_unknown` - того же класса мертвый код, что и `reverse_magic_mouse`, но не был отмечен как известный gap.
+V28. **[Честность]** 5 полей конфига (`start_at_login`, `show_menu_bar_icon`, `check_for_updates`, `include_beta_updates`, `show_discrete_scroll_options`) - GUI/updater заглушки без единой строчки реализации где-либо в проекте, и `doctor` никак это не показывал.
+V29. **[UX]** `doctor` показывал сырые имена полей конфига (`vertical=`, `magic_mouse=`) без единого понятного предложения о том, что реально происходит. Добавлена строка "what it's doing" на понятном языке.
+V30. **[Консистентность]** `magic_mouse=` в выводе `config_summary` не совпадало с `reverse_magic_mouse` в тексте про known gap - те же имена полей теперь используются везде.
+V31. **[UX]** Статус `NEEDS PERMISSION` в `doctor` не показывал, что именно делать - теперь `doctor` печатает ту же actionable-инструкцию, что и `run`.
 
 ### Методологическое примечание
 
@@ -227,8 +227,8 @@
 164. [Improve] Добавить `CHANGELOG.md` с текущим first slice.
 165. [Problem] Нет ADR.
 166. [Improve] Создать ADR for event tap, config format, CLI first.
-167. [Problem] `.idea/.gitignore` висит untracked.
-168. [Improve] Решить: commit IDE ignore или добавить `.idea/` в root `.gitignore`.
+167. [Done] `.idea/` добавлен в root `.gitignore`.
+168. [Improve] IDE metadata остается локальным и не попадает в commit.
 169. [Problem] Remote не настроен.
 170. [Improve] Добавить `origin`, иначе push невозможен.
 
@@ -525,10 +525,10 @@
 456. [Improve] User must provide repo URL or create remote.
 457. [Problem] Merge was local only.
 458. [Improve] Push merge commit after remote setup.
-459. [Problem] `.idea/.gitignore` remains untracked.
-460. [Improve] Decide whether to ignore or commit IDE metadata.
-461. [Problem] No `.gitignore` review after merge.
-462. [Improve] Ensure `target/`, `.idea/`, temp files are ignored.
+459. [Done] `.idea/` is ignored at repository root.
+460. [Improve] Keep IDE metadata local unless the project intentionally standardizes IDE settings.
+461. [Done] `.gitignore` was reviewed after merge.
+462. [Improve] Later add patterns for generated release artifacts when packaging exists.
 463. [Problem] Docs use mixed Russian/English.
 464. [Improve] Split user docs by language.
 465. [Problem] README still says "target product" in English.
