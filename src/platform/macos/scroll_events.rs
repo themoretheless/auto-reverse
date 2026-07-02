@@ -3,43 +3,18 @@
 //! [`ScrollEvent`], and which fields to write to apply a
 //! [`TransformDecision`] back. No policy lives here - that's `crate::scroll`.
 
-use core_graphics::event::{CGEvent, CGEventField, EventField};
+use core_graphics::event::{CGEvent, EventField};
 
 use crate::config::AppConfig;
 use crate::device::DeviceKind;
 use crate::input::ScrollEvent;
 use crate::scroll::{self, TransformDecision};
 
-// Only the plain integer Delta fields are negated directly. Empirically
-// (verified against a live CGEvent, not assumed) writing DeltaAxis1/2 makes
-// macOS recompute FixedPtDeltaAxis1/2 and PointDeltaAxis1/2 from the new
-// value automatically. Negating those derived fields ourselves afterward
-// would negate them a second time and silently restore the original,
-// un-reversed direction for any pixel-precise consumer - so they must be
-// left untouched.
-const DELTA_FIELDS: [CGEventField; 2] = [
-    EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1,
-    EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2,
-];
-
 /// True for a discrete-notch wheel (a physical mouse). False for continuous
 /// scrolling, which covers trackpads and, indistinguishably, Apple's Magic
 /// Mouse - see the limitations note in recommendation.md.
 pub fn is_physical_mouse_wheel(event: &CGEvent) -> bool {
     event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS) == 0
-}
-
-/// Negates the scroll delta on both axes in place. macOS derives the
-/// fixed-point and pixel delta fields from these automatically, so only
-/// these two need to be written. Uses `saturating_neg` because `-i64::MIN`
-/// overflows; an event actually reporting that delta is physically
-/// impossible, but a panic in an OS-level event callback is worse than a
-/// clamped value.
-pub fn reverse_in_place(event: &CGEvent) {
-    for field in DELTA_FIELDS {
-        let value = event.get_integer_value_field(field);
-        event.set_integer_value_field(field, value.saturating_neg());
-    }
 }
 
 pub fn event_from_cg_event(event: &CGEvent, device_kind: DeviceKind) -> ScrollEvent {
@@ -54,6 +29,15 @@ pub fn event_from_cg_event(event: &CGEvent, device_kind: DeviceKind) -> ScrollEv
     }
 }
 
+/// Runs the pure policy over the event and writes any changed deltas back.
+///
+/// Only the plain integer DeltaAxis1/2 fields are ever written. Empirically
+/// (verified against a live CGEvent, not assumed) writing DeltaAxis1/2
+/// makes macOS recompute FixedPtDeltaAxis1/2 and PointDeltaAxis1/2 from the
+/// new value automatically. Writing those derived fields ourselves
+/// afterward would apply the change a second time and silently restore the
+/// original, un-reversed direction for any pixel-precise consumer - so they
+/// must be left untouched. See the regression test below.
 pub fn apply_config_in_place(
     event: &CGEvent,
     config: &AppConfig,
@@ -106,28 +90,11 @@ mod tests {
     }
 
     #[test]
-    fn reverse_in_place_negates_delta_on_both_axes() {
-        let event = new_test_event();
-        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1, 3);
-        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2, -5);
-
-        reverse_in_place(&event);
-
-        assert_eq!(
-            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1),
-            -3
-        );
-        assert_eq!(
-            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2),
-            5
-        );
-    }
-
-    #[test]
-    fn reversing_delta_also_flips_the_derived_pixel_and_fixed_point_fields() {
+    fn writing_delta_also_flips_the_derived_pixel_and_fixed_point_fields() {
         // Regression test for the double-negation bug: macOS derives
         // FixedPtDelta and PointDelta from Delta the moment Delta is
-        // written, so reverse_in_place must NOT touch them separately.
+        // written, so apply_config_in_place must ONLY write the Delta
+        // fields and never touch the derived ones.
         let event = new_test_event();
         event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1, 3);
         let original_fixed_pt =
@@ -139,7 +106,7 @@ mod tests {
             "test assumption broken: macOS did not derive a pixel delta from Delta"
         );
 
-        reverse_in_place(&event);
+        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1, -3);
 
         assert_eq!(
             event.get_double_value_field(EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1),

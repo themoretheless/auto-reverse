@@ -76,10 +76,10 @@
 13. [Improve] При parse error сохранять `.broken.<timestamp>.toml`.
 14. [Problem] Нет migration framework для `config_version`.
 15. [Improve] Добавить `config::migration` до schema v2.
-16. [Problem] `ConfigStore` и `AppConfig` живут в одном файле.
-17. [Improve] Разделить `config/schema.rs` и `config/store.rs`.
-18. [Problem] `config.rs` уже отвечает за schema, paths, IO и atomic save.
-19. [Improve] Оставить public facade, но вынести реализации по SRP.
+16. [Done] `ConfigStore` и `AppConfig` разделены: `config/schema.rs` и `config/store.rs`.
+17. [Done] Разделение `config/schema.rs` / `config/store.rs` выполнено.
+18. [Done] Монолитный `config.rs` удален; ответственности разнесены по SRP.
+19. [Done] `config/mod.rs` реэкспортирует `AppConfig`/`ConfigStore` как public facade.
 20. [Done] `DeviceKind::as_str` уменьшает DRY-дублирование.
 21. [Done] `Display` и `FromStr` используют единый device-name контракт.
 22. [Done] `DeviceKind` покрывает mouse, trackpad, Magic Mouse, unknown.
@@ -128,8 +128,8 @@
 65. [Done] Step size multiplication использует `saturating_mul`.
 66. [Improve] Оставить regression test на будущий рост диапазона step size.
 67. [Done] CoreGraphics derived delta regression покрыт тестом.
-68. [Problem] CoreGraphics helpers находятся в `scroll.rs`.
-69. [Improve] Вынести CGEvent field code в `platform::macos::event_fields`.
+68. [Done] CoreGraphics helpers вынесены из `scroll.rs`; он теперь чистая политика.
+69. [Done] CGEvent field code живет в `platform/macos/scroll_events.rs`.
 70. [Done] Event tap re-enables itself after disabled callbacks.
 71. [Problem] Event tap install не имеет integration smoke test.
 72. [Improve] Добавить mock listener для runtime contract tests.
@@ -203,16 +203,16 @@
 140. [Improve] Экспортировать facade, скрывать platform internals.
 141. [Problem] `event_tap` публичен из lib.
 142. [Improve] После UI/runtime split сделать platform modules crate-private.
-143. [Problem] `permissions` публичен как macOS-only module.
-144. [Improve] Переехать в `platform::macos::permissions`.
+143. [Done] `permissions` переехал под platform-слой.
+144. [Done] Модуль живет в `src/platform/macos/permissions.rs`.
 145. [Problem] Проект пока macOS-only, но docs говорят о future cross-platform.
-146. [Improve] Добавить `#[cfg(target_os = "macos")]` boundaries.
+146. [Done] `src/platform/mod.rs` cfg-gate'ит `macos`; бинарь дает понятный compile_error! вне macOS.
 147. [Problem] Non-macOS build behavior не определен.
 148. [Improve] Сделать graceful compile error или stub platform.
 149. [Problem] Cargo features не разделяют platform code.
 150. [Improve] Добавить feature `macos-event-tap`.
-151. [Problem] `core-graphics` dependency всегда включена.
-152. [Improve] Сделать platform dependency target-specific.
+151. [Done] `core-graphics`/`core-foundation` стали target-specific dependencies.
+152. [Done] Cargo.toml: `[target.'cfg(target_os = "macos")'.dependencies]`.
 153. [Problem] Нет MSRV.
 154. [Improve] Зафиксировать Rust version через `rust-toolchain.toml`.
 155. [Problem] Edition 2024 требует свежий toolchain.
@@ -557,8 +557,8 @@
 488. [Improve] Ensure hot path does not allocate.
 489. [Problem] Нет unsafe boundary documentation.
 490. [Improve] Document each FFI call and invariant.
-491. [Problem] FFI permissions calls are not cfg-gated.
-492. [Improve] Gate macOS FFI with target cfg.
+491. [Done] FFI permissions компилируются только под `#[cfg(target_os = "macos")]` через platform/mod.rs.
+492. [Done] Весь macOS FFI живет за cfg-gated `platform::macos`.
 493. [Problem] FFI function availability depends on macOS version.
 494. [Improve] Document minimum macOS version and fallback behavior.
 495. [Problem] No app-level state machine.

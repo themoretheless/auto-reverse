@@ -166,7 +166,7 @@ src/
     macos/
       event_tap.rs
       permissions.rs
-      event_fields.rs
+      scroll_events.rs
       startup.rs
     mock.rs
   ui/

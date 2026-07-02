@@ -8,6 +8,7 @@ use crate::error::{AppError, AppResult};
 
 use super::schema::AppConfig;
 
+#[cfg(target_os = "macos")]
 const APP_DIR_NAME: &str = "Auto Reverse";
 const CONFIG_FILE_NAME: &str = "config.toml";
 

@@ -1,3 +1,12 @@
+// The library's pure core builds on any OS (cargo check --lib), but this
+// binary drives a CGEventTap and is macOS-only. Without this guard a
+// non-macOS build dies on a bare E0432 unresolved-import error; with it,
+// the failure explains itself.
+#[cfg(not(target_os = "macos"))]
+compile_error!(
+    "the auto-reverse binary is macOS-only; on other platforms build just the library with --lib"
+);
+
 use std::env;
 use std::process;
 
@@ -270,7 +279,8 @@ fn parse_bool(value: Option<&String>, flag: &str) -> AppResult<bool> {
 fn config_summary(config: &AppConfig) -> String {
     // Field labels intentionally match AppConfig's real field names exactly
     // (not shortened) so this line can be grepped/cross-referenced against
-    // config.rs and the "known gap" notes above without a mental rename.
+    // config/schema.rs and the "known gap" notes above without a mental
+    // rename.
     format!(
         "enabled={}, reverse_vertical={}, reverse_horizontal={}, reverse_mouse={}, \
          reverse_trackpad={}, reverse_magic_mouse={}, reverse_unknown={}, \

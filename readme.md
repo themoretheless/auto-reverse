@@ -52,7 +52,7 @@ For safe checks without installing the event tap, use `doctor`, `show-config`, a
 
 ## Config
 
-`doctor` actually triggers both OS consent dialogs now (`AXIsProcessTrustedWithOptions` for Accessibility, `CGRequestListenEventAccess` for Input Monitoring), not just passive checks. An earlier experimental `SourceClassifier` (a touch-count/phase heuristic meant to separate Magic Mouse from trackpad) was removed as dead code: it was never wired into the real event tap (nothing in the codebase feeds it real touch data), and its own passing tests created false confidence that the distinction already worked. See `recommendation.md` for the full list of verified findings and fixes across 3 review iterations.
+`run` actually triggers both OS consent dialogs now (`AXIsProcessTrustedWithOptions` for Accessibility, `CGRequestListenEventAccess` for Input Monitoring), not just passive checks; `doctor` reports both permission states without prompting and prints the fix instructions when something is missing. An earlier experimental `SourceClassifier` (a touch-count/phase heuristic meant to separate Magic Mouse from trackpad) was removed as dead code: it was never wired into the real event tap (nothing in the codebase feeds it real touch data), and its own passing tests created false confidence that the distinction already worked. See `recommendation.md` for the full list of verified findings and fixes across 3 review iterations.
 
 Default path on macOS:
 
