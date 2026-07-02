@@ -9,8 +9,8 @@
 //! - [`scroll`]: the pure reversal policy - config + event in, decision
 //!   out. No OS types anywhere.
 //! - [`platform`]: everything OS-specific and unsafe. `platform::macos`
-//!   holds the CGEvent field mapping, the TCC permission calls, and the
-//!   CGEventTap runtime.
+//!   holds the CGEvent field mapping, the TCC permission calls, LaunchAgent
+//!   startup, and the CGEventTap runtime.
 
 pub mod config;
 pub mod device;

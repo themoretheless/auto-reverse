@@ -3,7 +3,9 @@
 //!   Monitoring) a scroll event tap depends on - checking and prompting.
 //! - `scroll_events`: reading/writing scroll data on raw CGEvents.
 //! - `event_tap`: the CGEventTap runtime loop that ties it all together.
+//! - `startup`: per-user LaunchAgent start-at-login support for the CLI.
 
 pub mod event_tap;
 pub mod permissions;
 pub mod scroll_events;
+pub mod startup;

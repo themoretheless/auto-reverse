@@ -15,7 +15,7 @@ use auto_reverse::device;
 use auto_reverse::device::DeviceKind;
 use auto_reverse::error::{AppError, AppResult};
 use auto_reverse::input::ScrollEvent;
-use auto_reverse::platform::macos::{event_tap, permissions};
+use auto_reverse::platform::macos::{event_tap, permissions, startup};
 use auto_reverse::scroll;
 
 fn main() {
@@ -34,6 +34,9 @@ fn run() -> AppResult<()> {
         Some("enable") => set_enabled(true),
         Some("disable") => set_enabled(false),
         Some("toggle") => toggle_enabled(),
+        Some("enable-startup") => set_startup_enabled(true),
+        Some("disable-startup") => set_startup_enabled(false),
+        Some("startup-status") => startup_status(),
         Some("config-path") => {
             println!("{}", ConfigStore::default_path().display());
             Ok(())
@@ -82,6 +85,7 @@ fn doctor() -> AppResult<()> {
 
     let accessibility = permissions::has_accessibility_trust();
     let input_monitoring = permissions::has_input_monitoring_access();
+    let startup_status = startup::status_for_current_executable()?;
     let status = if !config.enabled {
         "OFF (disabled in config)"
     } else if !accessibility || !input_monitoring {
@@ -98,6 +102,11 @@ fn doctor() -> AppResult<()> {
     println!("config: {}", store.path().display());
     println!("settings: {}", config_summary(&config));
     println!(
+        "start at login: {} (config start_at_login={})",
+        startup_status.summary(),
+        config.start_at_login
+    );
+    println!(
         "accessibility permission: {}",
         permissions::permission_status(accessibility)
     );
@@ -112,9 +121,9 @@ fn doctor() -> AppResult<()> {
          reverse_trackpad and DeviceKind::Unknown is unreachable outside `simulate`"
     );
     println!(
-        "known gap: start_at_login, show_menu_bar_icon, check_for_updates, \
-         include_beta_updates, and show_discrete_scroll_options are reserved for a future \
-         menu-bar app and have no effect in this CLI-only build"
+        "known gap: show_menu_bar_icon, check_for_updates, include_beta_updates, and \
+         show_discrete_scroll_options are reserved for a future menu-bar app and have no effect \
+         in this CLI-only build"
     );
 
     if !accessibility || !input_monitoring {
@@ -184,6 +193,44 @@ fn toggle_enabled() -> AppResult<()> {
         "auto-reverse is now {}",
         if enabled { "enabled" } else { "disabled" }
     );
+    Ok(())
+}
+
+fn set_startup_enabled(enabled: bool) -> AppResult<()> {
+    let status = if enabled {
+        startup::enable_for_current_executable()?
+    } else {
+        startup::disable()?
+    };
+
+    let store = ConfigStore::default();
+    let mut config = store.load_or_create()?;
+    config.start_at_login = enabled;
+    store.save(&config)?;
+
+    println!("start at login: {}", status.summary());
+    if enabled {
+        println!("auto-reverse will start on the next login using the current binary path");
+    }
+    Ok(())
+}
+
+fn startup_status() -> AppResult<()> {
+    let store = ConfigStore::default();
+    let config_start_at_login = if store.exists() {
+        store.load()?.start_at_login
+    } else {
+        AppConfig::default().start_at_login
+    };
+    let status = startup::status_for_current_executable()?;
+
+    println!("start at login: {}", status.summary());
+    println!("config start_at_login={config_start_at_login}");
+    if config_start_at_login != status.enabled {
+        println!(
+            "warning: config and LaunchAgent state differ; run enable-startup or disable-startup"
+        );
+    }
     Ok(())
 }
 
@@ -284,7 +331,7 @@ fn config_summary(config: &AppConfig) -> String {
     format!(
         "enabled={}, reverse_vertical={}, reverse_horizontal={}, reverse_mouse={}, \
          reverse_trackpad={}, reverse_magic_mouse={}, reverse_unknown={}, \
-         discrete_scroll_step_size={}, reverse_only_raw_input={}",
+         discrete_scroll_step_size={}, start_at_login={}, reverse_only_raw_input={}",
         config.enabled,
         config.reverse_vertical,
         config.reverse_horizontal,
@@ -293,6 +340,7 @@ fn config_summary(config: &AppConfig) -> String {
         config.reverse_magic_mouse,
         config.reverse_unknown,
         config.discrete_scroll_step_size,
+        config.start_at_login,
         config.reverse_only_raw_input,
     )
 }
@@ -306,6 +354,9 @@ fn print_help() {
            enable                      Turn scroll reversing on\n\
            disable                     Turn scroll reversing off\n\
            toggle                      Flip scroll reversing on/off\n\
+           enable-startup              Start Auto Reverse at login\n\
+           disable-startup             Stop starting Auto Reverse at login\n\
+           startup-status              Show LaunchAgent startup status\n\
            doctor                      Show status, config, and permissions\n\
            help                        Show this help\n\
          \n\

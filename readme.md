@@ -14,14 +14,14 @@ Implemented:
 - wheel step size;
 - raw-input guard through `source_pid`;
 - Accessibility and Input Monitoring checks;
+- LaunchAgent start at login via `enable-startup`/`disable-startup`;
 - CLI diagnostics and simulation;
-- 25 unit tests after merging Claude's 3 review iterations back in (previously 16).
+- 27 unit tests after adding LaunchAgent startup support (previously 25).
 
 Still missing:
 
 - menu bar UI;
 - preferences window;
-- start at login;
 - hide/show menu bar icon;
 - debug console;
 - gesture/HID classifier for Magic Mouse vs trackpad;
@@ -37,6 +37,9 @@ cargo run -- simulate --device mouse --dy 1 --dx 2 --continuous false
 cargo run -- enable
 cargo run -- disable
 cargo run -- toggle
+cargo run -- enable-startup
+cargo run -- disable-startup
+cargo run -- startup-status
 cargo run -- run
 cargo test
 cargo fmt
@@ -83,6 +86,16 @@ reverse_only_raw_input = false
 
 Current limitation: `reverse_magic_mouse` is present for parity, but the live classifier cannot distinguish Magic Mouse from trackpad yet because both report continuous scroll through the current public event-tap signal.
 
+## Start At Login
+
+`enable-startup` installs a per-user LaunchAgent:
+
+```text
+~/Library/LaunchAgents/com.auto-reverse.agent.plist
+```
+
+That agent starts the current executable with the `run` argument on the next login. This works for the CLI build today. A future packaged `.app` can switch to `SMAppService`, but LaunchAgent keeps the feature real before the GUI exists.
+
 ## Architecture
 
 Current modules, layered from pure logic down to platform code. Read them
@@ -103,6 +116,7 @@ src/platform/mod.rs                  cfg-gated platform adapters
 src/platform/macos/mod.rs            macOS integration overview
 src/platform/macos/scroll_events.rs  CGEvent field mapping (read event, write decision)
 src/platform/macos/permissions.rs    Accessibility + Input Monitoring TCC calls
+src/platform/macos/startup.rs        LaunchAgent start-at-login support
 src/platform/macos/event_tap.rs      CGEventTap runtime loop
 ```
 
@@ -134,7 +148,6 @@ Build the app surface:
 - settings window;
 - permission onboarding;
 - debug console;
-- start at login;
 - hide/show icon.
 
 ### Iteration 3: Release Quality
