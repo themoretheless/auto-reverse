@@ -224,7 +224,7 @@ doctor --no-create
 startup-status --json
   -> read LaunchAgent and config state
   -> do not create config
-  -> print machine-readable enabled/config/in_sync fields
+  -> print machine-readable installed/config/in_sync fields
 ```
 
 ## Дизайн продукта

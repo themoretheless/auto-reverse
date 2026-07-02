@@ -147,6 +147,21 @@ impl AppConfig {
             targets.push("trackpad scrolling (this also covers a real Magic Mouse)");
         }
         if targets.is_empty() {
+            // Per-device rules can turn a device ON even when every
+            // per-kind flag is off - exactly the config the GUI builds when
+            // the user unchecks Mouse/Trackpad and pins one device to
+            // "Reverse". Without this branch both doctor and the GUI would
+            // claim nothing is reversed while the tap reverses that device.
+            let pinned_on = self
+                .device_rules
+                .iter()
+                .filter(|rule| rule.reverse)
+                .count();
+            if pinned_on > 0 {
+                return format!(
+                    "reversing only {pinned_on} specific device(s) pinned by per-device rules"
+                );
+            }
             return "enabled, but no device is currently set to reverse".to_string();
         }
 
@@ -224,6 +239,48 @@ mod tests {
         assert!(config.should_reverse(DeviceKind::Mouse, Some(razer)));
         // Unknown hardware falls back to the kind flag too.
         assert!(config.should_reverse(DeviceKind::Mouse, None));
+    }
+
+    #[test]
+    fn summary_reports_rule_only_reversal_when_all_kind_flags_are_off() {
+        // Regression test for a merge-created contradiction: with every
+        // per-kind flag off but one rule pinning a device ON, the summary
+        // used to say "no device is currently set to reverse" while the
+        // tap genuinely reversed that device.
+        let config = AppConfig {
+            reverse_mouse: false,
+            reverse_trackpad: false,
+            device_rules: vec![DeviceRule {
+                vendor_id: 0x046d,
+                product_id: 0xc52b,
+                name: None,
+                reverse: true,
+            }],
+            ..AppConfig::default()
+        };
+
+        assert_eq!(
+            config.plain_english_summary(),
+            "reversing only 1 specific device(s) pinned by per-device rules"
+        );
+
+        // A do-not-reverse-only rule set really does reverse nothing, so
+        // the old wording stays correct there.
+        let exempt_only = AppConfig {
+            reverse_mouse: false,
+            reverse_trackpad: false,
+            device_rules: vec![DeviceRule {
+                vendor_id: 0x046d,
+                product_id: 0xc52b,
+                name: None,
+                reverse: false,
+            }],
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            exempt_only.plain_english_summary(),
+            "enabled, but no device is currently set to reverse"
+        );
     }
 
     #[test]
