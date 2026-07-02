@@ -15,8 +15,9 @@ Implemented:
 - raw-input guard through `source_pid`;
 - Accessibility and Input Monitoring checks;
 - LaunchAgent start at login via `enable-startup`/`disable-startup`;
-- CLI diagnostics and simulation;
-- 27 unit tests after adding LaunchAgent startup support (previously 25).
+- CLI diagnostics, JSON startup status and simulation;
+- separated CLI parser in `src/cli.rs`;
+- 33 unit tests after the SOLID/DRY follow-up pass.
 
 Still missing:
 
@@ -32,6 +33,7 @@ Still missing:
 ```bash
 cargo build
 cargo run -- doctor
+cargo run -- doctor --no-create
 cargo run -- show-config
 cargo run -- simulate --device mouse --dy 1 --dx 2 --continuous false
 cargo run -- enable
@@ -40,6 +42,7 @@ cargo run -- toggle
 cargo run -- enable-startup
 cargo run -- disable-startup
 cargo run -- startup-status
+cargo run -- startup-status --json
 cargo run -- run
 cargo test
 cargo fmt
@@ -51,7 +54,7 @@ cargo clippy -- -D warnings
 - System Settings -> Privacy & Security -> Accessibility;
 - System Settings -> Privacy & Security -> Input Monitoring.
 
-For safe checks without installing the event tap, use `doctor`, `show-config`, and `simulate`.
+For safe checks without installing the event tap, use `doctor`, `startup-status`, `show-config`, and `simulate`. `doctor --no-create` reports defaults without creating the config file.
 
 ## Config
 
@@ -96,6 +99,8 @@ Current limitation: `reverse_magic_mouse` is present for parity, but the live cl
 
 That agent starts the current executable with the `run` argument on the next login. This works for the CLI build today. A future packaged `.app` can switch to `SMAppService`, but LaunchAgent keeps the feature real before the GUI exists.
 
+`startup-status --json` prints the LaunchAgent state, config path, config `start_at_login` value, and whether both are in sync. It does not create a config file just to report status.
+
 ## Architecture
 
 Current modules, layered from pure logic down to platform code. Read them
@@ -103,7 +108,8 @@ top to bottom to learn the project in small pieces - each file has one
 reason to change, and nothing above `platform/` imports an OS framework:
 
 ```text
-src/main.rs                          CLI entrypoint and command dispatch
+src/main.rs                          CLI entrypoint and command orchestration
+src/cli.rs                           command/flag parser and CLI option structs
 src/lib.rs                           library facade documenting the layering
 src/error.rs                         shared AppError / AppResult
 src/device.rs                        DeviceKind + conservative classifier
