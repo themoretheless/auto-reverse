@@ -15,8 +15,11 @@ Implemented:
 - raw-input guard through `source_pid`;
 - Accessibility and Input Monitoring checks;
 - LaunchAgent start at login via `enable-startup`/`disable-startup`;
+- per-device rules: `[[device_rules]]` pins one exact mouse (vendor/product
+  ID) on or off, attributed via an IOHIDManager wheel monitor; `devices`
+  lists connected pointing devices with their IDs;
 - CLI diagnostics and simulation;
-- 27 unit tests after adding LaunchAgent startup support (previously 25).
+- 37 unit tests (25 before the startup and per-device features).
 
 Still missing:
 
@@ -32,8 +35,10 @@ Still missing:
 ```bash
 cargo build
 cargo run -- doctor
+cargo run -- devices
 cargo run -- show-config
 cargo run -- simulate --device mouse --dy 1 --dx 2 --continuous false
+cargo run -- simulate --device mouse --dy 1 --vendor-id 0x046d --product-id 0xc54d
 cargo run -- enable
 cargo run -- disable
 cargo run -- toggle
@@ -82,6 +87,15 @@ reverse_magic_mouse = true
 reverse_unknown = false
 discrete_scroll_step_size = 3
 reverse_only_raw_input = false
+
+# Optional: pin one exact device regardless of the per-kind flags above.
+# Find the IDs with `auto-reverse devices`. Discrete wheels only - trackpad
+# and Magic Mouse continuous scrolling cannot be attributed to a device.
+[[device_rules]]
+vendor_id = 0x046d
+product_id = 0xc54d
+name = "Logitech receiver"  # optional, display only
+reverse = false
 ```
 
 Current limitation: `reverse_magic_mouse` is present for parity, but the live classifier cannot distinguish Magic Mouse from trackpad yet because both report continuous scroll through the current public event-tap signal.

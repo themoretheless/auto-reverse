@@ -6,7 +6,7 @@
 use core_graphics::event::{CGEvent, EventField};
 
 use crate::config::AppConfig;
-use crate::device::DeviceKind;
+use crate::device::{DeviceKind, HardwareId};
 use crate::input::ScrollEvent;
 use crate::scroll::{self, TransformDecision};
 
@@ -17,7 +17,11 @@ pub fn is_physical_mouse_wheel(event: &CGEvent) -> bool {
     event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS) == 0
 }
 
-pub fn event_from_cg_event(event: &CGEvent, device_kind: DeviceKind) -> ScrollEvent {
+pub fn event_from_cg_event(
+    event: &CGEvent,
+    device_kind: DeviceKind,
+    hardware: Option<HardwareId>,
+) -> ScrollEvent {
     ScrollEvent {
         device_kind,
         delta_vertical: event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1),
@@ -26,6 +30,7 @@ pub fn event_from_cg_event(event: &CGEvent, device_kind: DeviceKind) -> ScrollEv
         continuous: !is_physical_mouse_wheel(event),
         synthetic: false,
         source_pid: event.get_integer_value_field(EventField::EVENT_SOURCE_UNIX_PROCESS_ID),
+        hardware,
     }
 }
 
@@ -42,8 +47,10 @@ pub fn apply_config_in_place(
     event: &CGEvent,
     config: &AppConfig,
     device_kind: DeviceKind,
+    hardware: Option<HardwareId>,
 ) -> TransformDecision {
-    let decision = scroll::transform_event(config, event_from_cg_event(event, device_kind));
+    let decision =
+        scroll::transform_event(config, event_from_cg_event(event, device_kind, hardware));
 
     if decision.original.delta_vertical != decision.transformed.delta_vertical {
         event.set_integer_value_field(
@@ -128,7 +135,7 @@ mod tests {
             reverse_horizontal: true,
             ..AppConfig::default()
         };
-        let decision = apply_config_in_place(&event, &config, DeviceKind::Mouse);
+        let decision = apply_config_in_place(&event, &config, DeviceKind::Mouse, None);
 
         assert!(decision.changed());
         assert_eq!(

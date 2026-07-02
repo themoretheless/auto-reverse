@@ -38,7 +38,7 @@ pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecis
         };
     }
 
-    let should_reverse = config.should_reverse_device(event.device_kind);
+    let should_reverse = config.should_reverse(event.device_kind, event.hardware);
 
     // Gated on should_reverse too: step size is an accompaniment to
     // reversal for this device, not an independent global multiplier - a
@@ -193,6 +193,42 @@ mod tests {
         let decision = transform_event(&config, genuine);
 
         assert!(decision.reversed);
+    }
+
+    #[test]
+    fn device_rule_pins_a_specific_mouse_off_while_other_mice_still_reverse() {
+        use crate::config::DeviceRule;
+        use crate::device::HardwareId;
+
+        let config = AppConfig {
+            device_rules: vec![DeviceRule {
+                vendor_id: 0x046d,
+                product_id: 0xc52b,
+                name: None,
+                reverse: false,
+            }],
+            ..AppConfig::default()
+        };
+        let ruled_mouse = ScrollEvent {
+            hardware: Some(HardwareId {
+                vendor_id: 0x046d,
+                product_id: 0xc52b,
+            }),
+            ..ScrollEvent::new(DeviceKind::Mouse, 1, 0, false)
+        };
+        let other_mouse = ScrollEvent {
+            hardware: Some(HardwareId {
+                vendor_id: 0x1532,
+                product_id: 0x0067,
+            }),
+            ..ScrollEvent::new(DeviceKind::Mouse, 1, 0, false)
+        };
+
+        let ruled = transform_event(&config, ruled_mouse);
+        let other = transform_event(&config, other_mouse);
+
+        assert!(!ruled.changed());
+        assert!(other.reversed);
     }
 
     #[test]

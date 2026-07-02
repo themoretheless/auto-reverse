@@ -12,6 +12,25 @@ pub enum DeviceKind {
     Unknown,
 }
 
+/// Identity of a specific physical HID device, as reported by IOKit.
+/// Vendor and product IDs are the stable pair a user can target with a
+/// per-device config rule ("this exact Logitech, not mice in general").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HardwareId {
+    pub vendor_id: u32,
+    pub product_id: u32,
+}
+
+impl fmt::Display for HardwareId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "vendor_id=0x{:04x} product_id=0x{:04x}",
+            self.vendor_id, self.product_id
+        )
+    }
+}
+
 impl DeviceKind {
     /// Canonical lowercase, hyphenated name - the single source of truth
     /// `Display` and `FromStr` both build on, instead of each hand-rolling

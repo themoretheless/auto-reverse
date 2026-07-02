@@ -4,12 +4,19 @@ use core_graphics::event::{
     CGEventTapProxy, CGEventType, CallbackResult,
 };
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use crate::config::AppConfig;
 use crate::device::conservative_kind_from_continuity;
 use crate::error::{AppError, AppResult};
 
-use super::scroll_events;
+use super::{hid, scroll_events};
+
+/// How recently a HID wheel tick must have arrived for a discrete CGEvent
+/// to be attributed to that device. Both callbacks share one run loop
+/// thread, so in practice the HID value lands immediately before the tap
+/// event; the window only needs to absorb run-loop scheduling jitter.
+const WHEEL_ATTRIBUTION_WINDOW: Duration = Duration::from_millis(500);
 
 // The `core-graphics` crate only exposes `CGEventTapEnable` on an owned,
 // already-installed `CGEventTap`, but the tap-disabled recovery path in
@@ -30,6 +37,24 @@ static CONFIG: OnceLock<AppConfig> = OnceLock::new();
 /// forever. Returns `Err(())` if macOS refused to create the tap, which is
 /// almost always a missing Input Monitoring / Accessibility permission.
 pub fn install_and_run(config: AppConfig) -> AppResult<()> {
+    // Per-device rules need the HID wheel monitor; without rules it would
+    // only burn cycles, so it stays off. Failure degrades gracefully to
+    // per-kind behavior instead of aborting - the tap itself still works.
+    if config.device_rules.is_empty() {
+        println!("auto-reverse: no device_rules in config; per-device attribution is off");
+    } else {
+        match hid::start_wheel_monitor() {
+            Ok(()) => println!(
+                "auto-reverse: HID wheel monitor started for {} device rule(s)",
+                config.device_rules.len()
+            ),
+            Err(error) => eprintln!(
+                "auto-reverse: device_rules are configured but the HID wheel monitor failed \
+                 ({error}); falling back to per-kind flags only"
+            ),
+        }
+    }
+
     CONFIG
         .set(config)
         .map_err(|_| AppError::Platform("event tap config was already initialized".to_string()))?;
@@ -69,7 +94,14 @@ fn handle_event(
 
             let continuous = !scroll_events::is_physical_mouse_wheel(event);
             let device_kind = conservative_kind_from_continuity(continuous);
-            scroll_events::apply_config_in_place(event, config, device_kind);
+            // Only discrete wheels can be attributed: continuous scrolling
+            // (trackpad, Magic Mouse) never produces HID wheel values.
+            let hardware = if continuous {
+                None
+            } else {
+                hid::recent_wheel_device(WHEEL_ATTRIBUTION_WINDOW)
+            };
+            scroll_events::apply_config_in_place(event, config, device_kind, hardware);
         }
         _ => {}
     }

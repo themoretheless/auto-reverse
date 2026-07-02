@@ -13,10 +13,20 @@ untouched. It is layered so pure logic never touches OS frameworks:
   (paths, TOML I/O, atomic save), re-exported through `mod.rs`
 - `src/platform/macos/` - ALL unsafe/FFI code: `scroll_events.rs` (CGEvent
   field mapping), `permissions.rs` (Accessibility + Input Monitoring TCC),
-  `startup.rs` (LaunchAgent start-at-login), `event_tap.rs` (tap runtime)
+  `hid.rs` (IOHIDManager wheel monitor attributing discrete scrolls to a
+  specific vendor/product ID), `startup.rs` (LaunchAgent start-at-login),
+  `event_tap.rs` (tap runtime)
 - `src/main.rs` - CLI (`run`, `doctor`, `enable`, `disable`, `toggle`,
-  `enable-startup`, `disable-startup`, `startup-status`, `init`,
-  `config-path`, `show-config`, `simulate`, `help`)
+  `enable-startup`, `disable-startup`, `startup-status`, `devices`,
+  `init`, `config-path`, `show-config`, `simulate`, `help`)
+
+Per-device rules: `[[device_rules]]` config blocks (vendor_id/product_id/
+reverse) pin one exact physical device's direction; an exact rule wins over
+the per-kind flags. Attribution correlates IOHIDManager wheel values with
+tap events on the same run loop thread and works for DISCRETE wheels only -
+continuous scrolling (trackpad, Magic Mouse) is synthesized from touch data
+and never appears as a HID wheel value, so rules cannot target it. `devices`
+lists connected pointing devices with their IDs.
 
 The macOS crates are target-specific dependencies; `cargo check --lib`
 builds on any OS, the binary is macOS-only (explicit `compile_error!`).

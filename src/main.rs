@@ -15,7 +15,8 @@ use auto_reverse::device;
 use auto_reverse::device::DeviceKind;
 use auto_reverse::error::{AppError, AppResult};
 use auto_reverse::input::ScrollEvent;
-use auto_reverse::platform::macos::{event_tap, permissions, startup};
+use auto_reverse::device::HardwareId;
+use auto_reverse::platform::macos::{event_tap, hid, permissions, startup};
 use auto_reverse::scroll;
 
 fn main() {
@@ -37,6 +38,7 @@ fn run() -> AppResult<()> {
         Some("enable-startup") => set_startup_enabled(true),
         Some("disable-startup") => set_startup_enabled(false),
         Some("startup-status") => startup_status(),
+        Some("devices") => list_devices(),
         Some("config-path") => {
             println!("{}", ConfigStore::default_path().display());
             Ok(())
@@ -266,6 +268,66 @@ fn startup_status() -> AppResult<()> {
     Ok(())
 }
 
+fn list_devices() -> AppResult<()> {
+    let config = ConfigStore::default().load_or_create()?;
+    let devices = hid::list_pointing_devices()?;
+
+    if devices.is_empty() {
+        println!("no mouse-usage HID devices found");
+    } else {
+        println!("connected pointing devices:");
+        for device in &devices {
+            let rule = config
+                .device_rules
+                .iter()
+                .find(|rule| rule.matches(device.hardware));
+            let rule_note = match rule {
+                Some(rule) if rule.reverse => "  [rule: reverse]",
+                Some(_) => "  [rule: do not reverse]",
+                None => "",
+            };
+            println!(
+                "  {}  {}{}{}",
+                device.hardware,
+                device.name.as_deref().unwrap_or("(unnamed)"),
+                device
+                    .transport
+                    .as_deref()
+                    .map(|t| format!(" via {t}"))
+                    .unwrap_or_default(),
+                rule_note,
+            );
+        }
+    }
+
+    println!();
+    if config.device_rules.is_empty() {
+        println!(
+            "no device_rules configured; add a [[device_rules]] block with vendor_id/product_id \
+             from the list above to pin one device's direction"
+        );
+    } else {
+        println!("configured device rules:");
+        for rule in &config.device_rules {
+            println!(
+                "  vendor_id=0x{:04x} product_id=0x{:04x} reverse={}{}",
+                rule.vendor_id,
+                rule.product_id,
+                rule.reverse,
+                rule.name
+                    .as_deref()
+                    .map(|n| format!("  # {n}"))
+                    .unwrap_or_default(),
+            );
+        }
+    }
+    println!(
+        "note: rules apply to discrete wheel scrolling only - trackpad and Magic Mouse \
+         continuous scrolling cannot be attributed to a specific device"
+    );
+    Ok(())
+}
+
 fn show_config() -> AppResult<()> {
     let store = ConfigStore::default();
     let config = store.load_or_create()?;
@@ -281,6 +343,8 @@ fn simulate(args: &[String]) -> AppResult<()> {
     let mut continuous = false;
     let mut synthetic = false;
     let mut source_pid = 0;
+    let mut vendor_id: Option<u32> = None;
+    let mut product_id: Option<u32> = None;
 
     let mut index = 0;
     while index < args.len() {
@@ -312,6 +376,14 @@ fn simulate(args: &[String]) -> AppResult<()> {
                 index += 1;
                 source_pid = parse_i64(args.get(index), "--source-pid")?;
             }
+            "--vendor-id" => {
+                index += 1;
+                vendor_id = Some(parse_u32(args.get(index), "--vendor-id")?);
+            }
+            "--product-id" => {
+                index += 1;
+                product_id = Some(parse_u32(args.get(index), "--product-id")?);
+            }
             flag => {
                 return Err(AppError::Usage(format!(
                     "unknown simulate flag `{flag}`; run `auto-reverse help`"
@@ -321,10 +393,24 @@ fn simulate(args: &[String]) -> AppResult<()> {
         index += 1;
     }
 
+    let hardware = match (vendor_id, product_id) {
+        (Some(vendor_id), Some(product_id)) => Some(HardwareId {
+            vendor_id,
+            product_id,
+        }),
+        (None, None) => None,
+        _ => {
+            return Err(AppError::Usage(
+                "--vendor-id and --product-id must be given together".to_string(),
+            ));
+        }
+    };
+
     let config = ConfigStore::default().load_or_create()?;
     let event = ScrollEvent {
         synthetic,
         source_pid,
+        hardware,
         ..ScrollEvent::new(device_kind, delta_vertical, delta_horizontal, continuous)
     };
     let decision = scroll::transform_event(&config, event);
@@ -342,6 +428,17 @@ fn parse_i64(value: Option<&String>, flag: &str) -> AppResult<i64> {
         .ok_or_else(|| AppError::Usage(format!("{flag} needs a value")))?
         .parse()
         .map_err(|_| AppError::Usage(format!("{flag} must be an integer")))
+}
+
+/// Accepts both decimal and 0x-prefixed hex, since `devices` prints IDs in
+/// hex and lsusb-style docs quote them that way.
+fn parse_u32(value: Option<&String>, flag: &str) -> AppResult<u32> {
+    let value = value.ok_or_else(|| AppError::Usage(format!("{flag} needs a value")))?;
+    let parsed = match value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+        Some(hex) => u32::from_str_radix(hex, 16),
+        None => value.parse(),
+    };
+    parsed.map_err(|_| AppError::Usage(format!("{flag} must be an integer like 1133 or 0x046d")))
 }
 
 fn parse_bool(value: Option<&String>, flag: &str) -> AppResult<bool> {
@@ -393,6 +490,7 @@ fn print_help() {
            help                        Show this help\n\
          \n\
          Advanced commands:\n\
+           devices                     List connected pointing devices and per-device rules\n\
            init                        Create the default config if it does not exist\n\
            config-path                 Print the config file path\n\
            show-config                 Print the current config as TOML\n\
@@ -405,7 +503,9 @@ fn print_help() {
            --dx <integer>\n\
            --continuous true|false\n\
            --synthetic true|false\n\
-           --source-pid <integer>"
+           --source-pid <integer>\n\
+           --vendor-id <integer|0xHEX>   (with --product-id: test a device rule)\n\
+           --product-id <integer|0xHEX>"
     );
 }
 

@@ -7,5 +7,5 @@
 mod schema;
 mod store;
 
-pub use schema::{AppConfig, CONFIG_VERSION};
+pub use schema::{AppConfig, CONFIG_VERSION, DeviceRule};
 pub use store::ConfigStore;

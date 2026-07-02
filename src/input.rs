@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::device::DeviceKind;
+use crate::device::{DeviceKind, HardwareId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScrollEvent {
@@ -15,6 +15,11 @@ pub struct ScrollEvent {
     /// process posted/injected this event (e.g. a remote-desktop tool or an
     /// automation script), which `reverse_only_raw_input` can opt out of.
     pub source_pid: i64,
+    /// Which specific physical device produced this scroll, when the HID
+    /// wheel monitor could attribute it (discrete mouse wheels only - the
+    /// CGEvent itself carries no device identity). None means "unknown
+    /// hardware", and per-device rules simply don't apply.
+    pub hardware: Option<HardwareId>,
 }
 
 impl ScrollEvent {
@@ -31,6 +36,7 @@ impl ScrollEvent {
             continuous,
             synthetic: false,
             source_pid: 0,
+            hardware: None,
         }
     }
 }
@@ -44,6 +50,10 @@ impl fmt::Display for ScrollEvent {
             self.delta_vertical,
             self.delta_horizontal,
             if self.continuous { ", continuous" } else { "" }
-        )
+        )?;
+        if let Some(hardware) = self.hardware {
+            write!(f, " [{hardware}]")?;
+        }
+        Ok(())
     }
 }
