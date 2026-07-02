@@ -130,6 +130,45 @@ impl AppConfig {
             DeviceKind::Unknown => self.reverse_unknown,
         }
     }
+
+    /// One plain-English sentence describing what this config actually does.
+    /// Shared by `doctor` and the settings window so the two can never
+    /// drift apart in how they explain the same state.
+    pub fn plain_english_summary(&self) -> String {
+        if !self.enabled {
+            return "not reversing anything right now (disabled)".to_string();
+        }
+
+        let mut targets = Vec::new();
+        if self.reverse_mouse {
+            targets.push("a physical mouse wheel");
+        }
+        if self.reverse_trackpad {
+            targets.push("trackpad scrolling (this also covers a real Magic Mouse)");
+        }
+        if targets.is_empty() {
+            return "enabled, but no device is currently set to reverse".to_string();
+        }
+
+        let axes = match (self.reverse_vertical, self.reverse_horizontal) {
+            (true, true) => "vertical and horizontal",
+            (true, false) => "vertical",
+            (false, true) => "horizontal",
+            (false, false) => "no axis - nothing will actually flip",
+        };
+        let base = format!("reversing {axes} scroll for {}", targets.join(" and "));
+        if self.device_rules.is_empty() {
+            base
+        } else {
+            // Rules can flip the outcome for specific devices, so the
+            // summary must not claim the per-kind behavior is the whole
+            // story.
+            format!(
+                "{base}, with {} per-device rule(s) overriding specific mice",
+                self.device_rules.len()
+            )
+        }
+    }
 }
 
 #[cfg(test)]

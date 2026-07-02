@@ -89,12 +89,13 @@ discrete_scroll_step_size = 3
 reverse_only_raw_input = false
 
 # Optional: pin one exact device regardless of the per-kind flags above.
-# Find the IDs with `auto-reverse devices`. Discrete wheels only - trackpad
-# and Magic Mouse continuous scrolling cannot be attributed to a device.
+# Run `auto-reverse devices` to see YOUR devices' IDs and paste them here -
+# the values below are placeholders, not real hardware. Discrete wheels
+# only; trackpad and Magic Mouse continuous scrolling cannot be attributed.
 [[device_rules]]
-vendor_id = 0x046d
-product_id = 0xc54d
-name = "Logitech receiver"  # optional, display only
+vendor_id = 0x1234       # from `auto-reverse devices`
+product_id = 0x5678      # from `auto-reverse devices`
+name = "My mouse"        # optional, display only
 reverse = false
 ```
 
@@ -130,8 +131,10 @@ src/platform/mod.rs                  cfg-gated platform adapters
 src/platform/macos/mod.rs            macOS integration overview
 src/platform/macos/scroll_events.rs  CGEvent field mapping (read event, write decision)
 src/platform/macos/permissions.rs    Accessibility + Input Monitoring TCC calls
+src/platform/macos/hid.rs            IOHIDManager wheel monitor (per-device attribution)
 src/platform/macos/startup.rs        LaunchAgent start-at-login support
 src/platform/macos/event_tap.rs      CGEventTap runtime loop
+src/ui.rs                            egui settings window (gui feature)
 ```
 
 The macOS framework crates (`core-foundation`, `core-graphics`) are

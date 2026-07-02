@@ -94,9 +94,14 @@ fn handle_event(
 
             let continuous = !scroll_events::is_physical_mouse_wheel(event);
             let device_kind = conservative_kind_from_continuity(continuous);
-            // Only discrete wheels can be attributed: continuous scrolling
-            // (trackpad, Magic Mouse) never produces HID wheel values.
-            let hardware = if continuous {
+            // Attribute only genuine hardware wheel ticks: discrete
+            // (continuous scrolling never produces HID wheel values) AND
+            // originating from the HID system (source_pid == 0). An event
+            // some other process injected did not come from a real device,
+            // so pinning it to whatever mouse scrolled last would be wrong -
+            // it could inherit that device's rule purely by wall-clock luck.
+            let from_hid = scroll_events::event_source_pid(event) == 0;
+            let hardware = if continuous || !from_hid {
                 None
             } else {
                 hid::recent_wheel_device(WHEEL_ATTRIBUTION_WINDOW)

@@ -39,6 +39,7 @@ fn run() -> AppResult<()> {
         Some("disable-startup") => set_startup_enabled(false),
         Some("startup-status") => startup_status(),
         Some("devices") => list_devices(),
+        Some("ui") => launch_ui(),
         Some("config-path") => {
             println!("{}", ConfigStore::default_path().display());
             Ok(())
@@ -103,7 +104,7 @@ fn doctor() -> AppResult<()> {
 
     println!("Auto Reverse doctor");
     println!("status: {status}");
-    println!("what it's doing: {}", plain_english_summary(&config));
+    println!("what it's doing: {}", config.plain_english_summary());
     println!();
     println!("version: {}", env!("CARGO_PKG_VERSION"));
     println!("config: {}", store.path().display());
@@ -138,31 +139,6 @@ fn doctor() -> AppResult<()> {
     }
 
     Ok(())
-}
-
-fn plain_english_summary(config: &AppConfig) -> String {
-    if !config.enabled {
-        return "not reversing anything right now (disabled)".to_string();
-    }
-
-    let mut targets = Vec::new();
-    if config.reverse_mouse {
-        targets.push("a physical mouse wheel");
-    }
-    if config.reverse_trackpad {
-        targets.push("trackpad scrolling (this also covers a real Magic Mouse - see below)");
-    }
-    if targets.is_empty() {
-        return "enabled, but no device is currently set to reverse".to_string();
-    }
-
-    let axes = match (config.reverse_vertical, config.reverse_horizontal) {
-        (true, true) => "vertical and horizontal",
-        (true, false) => "vertical",
-        (false, true) => "horizontal",
-        (false, false) => "no axis - nothing will actually flip",
-    };
-    format!("reversing {axes} scroll for {}", targets.join(" and "))
 }
 
 fn init_config() -> AppResult<()> {
@@ -328,6 +304,18 @@ fn list_devices() -> AppResult<()> {
     Ok(())
 }
 
+#[cfg(feature = "gui")]
+fn launch_ui() -> AppResult<()> {
+    auto_reverse::ui::run_settings_window().map_err(AppError::Platform)
+}
+
+#[cfg(not(feature = "gui"))]
+fn launch_ui() -> AppResult<()> {
+    Err(AppError::Usage(
+        "this build has no GUI; rebuild without --no-default-features to enable `ui`".to_string(),
+    ))
+}
+
 fn show_config() -> AppResult<()> {
     let store = ConfigStore::default();
     let config = store.load_or_create()?;
@@ -406,6 +394,20 @@ fn simulate(args: &[String]) -> AppResult<()> {
         }
     };
 
+    // The live tap can never attribute a continuous event to a device, so
+    // simulating that combination would let the debugging tool imply device
+    // rules work for trackpad/Magic Mouse scrolling. Drop the hardware and
+    // say so, rather than producing a decision that cannot happen for real.
+    let hardware = if continuous && hardware.is_some() {
+        println!(
+            "note: ignoring --vendor-id/--product-id because --continuous true; the real tap \
+             cannot attribute continuous scrolling to a device"
+        );
+        None
+    } else {
+        hardware
+    };
+
     let config = ConfigStore::default().load_or_create()?;
     let event = ScrollEvent {
         synthetic,
@@ -460,7 +462,8 @@ fn config_summary(config: &AppConfig) -> String {
     format!(
         "enabled={}, reverse_vertical={}, reverse_horizontal={}, reverse_mouse={}, \
          reverse_trackpad={}, reverse_magic_mouse={}, reverse_unknown={}, \
-         discrete_scroll_step_size={}, start_at_login={}, reverse_only_raw_input={}",
+         discrete_scroll_step_size={}, start_at_login={}, reverse_only_raw_input={}, \
+         device_rules={}",
         config.enabled,
         config.reverse_vertical,
         config.reverse_horizontal,
@@ -471,6 +474,7 @@ fn config_summary(config: &AppConfig) -> String {
         config.discrete_scroll_step_size,
         config.start_at_login,
         config.reverse_only_raw_input,
+        config.device_rules.len(),
     )
 }
 
@@ -480,6 +484,7 @@ fn print_help() {
          \n\
          Everyday commands:\n\
            run                         Start the macOS scroll event tap\n\
+           ui                          Open the settings window\n\
            enable                      Turn scroll reversing on\n\
            disable                     Turn scroll reversing off\n\
            toggle                      Flip scroll reversing on/off\n\

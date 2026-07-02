@@ -3,9 +3,22 @@ name = "auto-reverse"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["gui"]
+# The settings window (`auto-reverse ui`). Off => a lean CLI-only build:
+# cargo build --no-default-features
+gui = ["dep:eframe"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+# glow instead of the default wgpu renderer: much lighter to build, and a
+# settings panel needs no GPU compute pipeline.
+eframe = { version = "0.35", default-features = false, features = [
+    "glow",
+    "default_fonts",
+    "accesskit",
+], optional = true }
 
 # Only platform/macos touches these; the pure core (config, device, input,
 # scroll) compiles without any OS framework.

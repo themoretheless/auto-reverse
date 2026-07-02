@@ -59,8 +59,12 @@ const KEY_PRODUCT_ID: &str = "ProductID";
 const KEY_PRODUCT: &str = "Product";
 const KEY_TRANSPORT: &str = "Transport";
 
-type ValueCallback =
-    extern "C-unwind" fn(*mut c_void, IOReturn, *mut c_void, IOHIDValueRef);
+// Plain extern "C", NOT "C-unwind": IOHIDManager invokes this from C
+// dispatch inside a CFRunLoop callout. A Rust panic must not unwind across
+// those C frames (undefined behavior); extern "C" turns a panic into a
+// clean, deterministic abort instead. Nothing above the callback could
+// catch an unwind anyway, so "C-unwind" would buy nothing.
+type ValueCallback = extern "C" fn(*mut c_void, IOReturn, *mut c_void, IOHIDValueRef);
 
 #[link(name = "IOKit", kind = "framework")]
 unsafe extern "C" {
@@ -72,6 +76,11 @@ unsafe extern "C" {
         context: *mut c_void,
     );
     fn IOHIDManagerScheduleWithRunLoop(
+        manager: IOHIDManagerRef,
+        run_loop: CFRunLoopRef,
+        mode: CFStringRef,
+    );
+    fn IOHIDManagerUnscheduleFromRunLoop(
         manager: IOHIDManagerRef,
         run_loop: CFRunLoopRef,
         mode: CFStringRef,
@@ -94,8 +103,8 @@ static LAST_WHEEL: Mutex<Option<(HardwareId, Instant)>> = Mutex::new(None);
 
 /// Starts a mouse-matching HID monitor on the CURRENT thread's run loop.
 /// Must be called on the same thread that will run the event tap loop,
-/// before entering it. The manager intentionally lives for the rest of the
-/// process (a `run` invocation never returns), so it is never released.
+/// before entering it. On success the manager intentionally lives for the
+/// rest of the process; on failure it is cleaned up before returning.
 pub fn start_wheel_monitor() -> AppResult<()> {
     unsafe {
         let manager = IOHIDManagerCreate(ptr::null(), KIOHID_OPTIONS_TYPE_NONE);
@@ -105,22 +114,27 @@ pub fn start_wheel_monitor() -> AppResult<()> {
             ));
         }
 
+        let run_loop = CFRunLoop::get_current().as_concrete_TypeRef();
         let matching = mouse_matching_dictionary();
         IOHIDManagerSetDeviceMatching(manager, matching.as_concrete_TypeRef());
         IOHIDManagerRegisterInputValueCallback(manager, wheel_value_callback, ptr::null_mut());
-        IOHIDManagerScheduleWithRunLoop(
-            manager,
-            CFRunLoop::get_current().as_concrete_TypeRef(),
-            kCFRunLoopDefaultMode,
-        );
+        IOHIDManagerScheduleWithRunLoop(manager, run_loop, kCFRunLoopDefaultMode);
 
         let status = IOHIDManagerOpen(manager, KIOHID_OPTIONS_TYPE_NONE);
         if status != KIO_RETURN_SUCCESS {
+            // Undo the scheduling and release the manager: on this error path
+            // (usually a denied Input Monitoring grant) the caller keeps
+            // running in degraded per-kind mode, so a dead manager left
+            // attached to the run loop would leak for the whole process.
+            IOHIDManagerUnscheduleFromRunLoop(manager, run_loop, kCFRunLoopDefaultMode);
+            CFRelease(manager as CFTypeRef);
             return Err(AppError::Platform(format!(
                 "IOHIDManagerOpen failed with IOReturn {status:#010x}; Input Monitoring \
                  permission is the usual cause"
             )));
         }
+        // Success: the manager intentionally lives for the rest of the
+        // process (a `run` invocation never returns), so it is not released.
     }
     Ok(())
 }
@@ -132,7 +146,7 @@ pub fn recent_wheel_device(max_age: Duration) -> Option<HardwareId> {
         .map(|(id, _)| id)
 }
 
-extern "C-unwind" fn wheel_value_callback(
+extern "C" fn wheel_value_callback(
     _context: *mut c_void,
     result: IOReturn,
     _sender: *mut c_void,

@@ -18,3 +18,5 @@ pub mod error;
 pub mod input;
 pub mod platform;
 pub mod scroll;
+#[cfg(all(feature = "gui", target_os = "macos"))]
+pub mod ui;

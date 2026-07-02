@@ -17,6 +17,13 @@ pub fn is_physical_mouse_wheel(event: &CGEvent) -> bool {
     event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS) == 0
 }
 
+/// The posting process id (`kCGEventSourceUnixProcessID`). 0 for a genuine
+/// hardware event observed at the HID tap; nonzero when another process
+/// injected the event.
+pub fn event_source_pid(event: &CGEvent) -> i64 {
+    event.get_integer_value_field(EventField::EVENT_SOURCE_UNIX_PROCESS_ID)
+}
+
 pub fn event_from_cg_event(
     event: &CGEvent,
     device_kind: DeviceKind,
