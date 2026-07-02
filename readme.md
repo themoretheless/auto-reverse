@@ -14,12 +14,14 @@ Implemented:
 - wheel step size;
 - raw-input guard through `source_pid`;
 - Accessibility and Input Monitoring checks;
+- local headless macOS `.app` bundle for Privacy & Security;
 - LaunchAgent start at login via `enable-startup`/`disable-startup`;
 - per-device rules: `[[device_rules]]` pins one exact mouse (vendor/product
   ID) on or off, attributed via an IOHIDManager wheel monitor; `devices`
   lists connected pointing devices with their IDs;
-- CLI diagnostics and simulation;
-- 37 unit tests (25 before the startup and per-device features).
+- egui settings window (`ui`, default `gui` feature);
+- CLI diagnostics, JSON startup status and simulation;
+- separated CLI parser in `src/cli.rs`.
 
 Still missing:
 
@@ -34,8 +36,11 @@ Still missing:
 
 ```bash
 cargo build
+scripts/build-app-bundle.sh
 cargo run -- doctor
+cargo run -- doctor --no-create
 cargo run -- devices
+cargo run -- ui
 cargo run -- show-config
 cargo run -- simulate --device mouse --dy 1 --dx 2 --continuous false
 cargo run -- simulate --device mouse --dy 1 --vendor-id 0x046d --product-id 0xc54d
@@ -45,6 +50,7 @@ cargo run -- toggle
 cargo run -- enable-startup
 cargo run -- disable-startup
 cargo run -- startup-status
+cargo run -- startup-status --json
 cargo run -- run
 cargo test
 cargo fmt
@@ -56,7 +62,38 @@ cargo clippy -- -D warnings
 - System Settings -> Privacy & Security -> Accessibility;
 - System Settings -> Privacy & Security -> Input Monitoring.
 
-For safe checks without installing the event tap, use `doctor`, `show-config`, and `simulate`.
+For safe checks without installing the event tap, use `doctor`, `startup-status`, `show-config`, and `simulate`. `doctor --no-create` reports defaults without creating the config file.
+
+## App Bundle
+
+Build a local bundle:
+
+```bash
+scripts/build-app-bundle.sh
+```
+
+Default output:
+
+```text
+target/debug/Auto Reverse.app
+```
+
+Use that `.app` in macOS:
+
+- System Settings -> Privacy & Security -> Accessibility -> add `target/debug/Auto Reverse.app`;
+- System Settings -> Privacy & Security -> Input Monitoring -> add `target/debug/Auto Reverse.app`.
+
+Then launch the bundled app:
+
+```bash
+open "target/debug/Auto Reverse.app"
+```
+
+The bundle is headless today: it starts the scroll event tap, but it does not show a settings window yet. For terminal diagnostics through the bundled identity:
+
+```bash
+"target/debug/Auto Reverse.app/Contents/MacOS/auto-reverse" doctor --no-create
+```
 
 ## Config
 
@@ -111,6 +148,8 @@ Current limitation: `reverse_magic_mouse` is present for parity, but the live cl
 
 That agent starts the current executable with the `run` argument on the next login. This works for the CLI build today. A future packaged `.app` can switch to `SMAppService`, but LaunchAgent keeps the feature real before the GUI exists.
 
+`startup-status --json` prints the LaunchAgent state, config path, config `start_at_login` value, and whether both are in sync. It does not create a config file just to report status.
+
 ## Architecture
 
 Current modules, layered from pure logic down to platform code. Read them
@@ -118,7 +157,8 @@ top to bottom to learn the project in small pieces - each file has one
 reason to change, and nothing above `platform/` imports an OS framework:
 
 ```text
-src/main.rs                          CLI entrypoint and command dispatch
+src/main.rs                          CLI entrypoint and command orchestration
+src/cli.rs                           command/flag parser and CLI option structs
 src/lib.rs                           library facade documenting the layering
 src/error.rs                         shared AppError / AppResult
 src/device.rs                        DeviceKind + conservative classifier

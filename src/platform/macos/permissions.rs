@@ -82,12 +82,13 @@ pub fn print_permission_help() {
          2. Input Monitoring: {}\n\
          \n\
          If macOS just showed a permission dialog, approve it and re-run.\n\
-         Otherwise open System Settings > Privacy & Security, add this\n\
-         binary to whichever list(s) above say \"required\" (use the \"+\"\n\
-         button and pick the compiled executable, e.g.\n\
-         target/debug/auto-reverse), then run it again. Rebuilding the\n\
-         binary changes its identity, so you will need to re-add it after\n\
-         every `cargo build` during development.",
+         Otherwise open System Settings > Privacy & Security, add Auto\n\
+         Reverse.app to whichever list(s) above say \"required\". Build it\n\
+         with `scripts/build-app-bundle.sh`, then use the \"+\" button and\n\
+         pick `target/debug/Auto Reverse.app`. If you are running the raw\n\
+         CLI instead of the app bundle, add that exact executable path.\n\
+         Rebuilding can change the code identity, so remove and re-add the\n\
+         app/binary if macOS keeps denying access.",
         permission_status(has_accessibility_trust()),
         permission_status(has_input_monitoring_access()),
     );
