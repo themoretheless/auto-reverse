@@ -1,12 +1,13 @@
 # Архитектура Auto Reverse
 
-Auto Reverse - системная Rust-утилита для reverse scrolling в стиле Scroll Reverser. Проект уже не scaffold: в `master` влиты последние локальные изменения из `worktree-rust-impl`, есть macOS event tap, TOML-конфиг, CLI, rule resolver, step size, permission checks, raw-input guard, LaunchAgent start at login и unit tests.
+Auto Reverse - системная Rust-утилита для reverse scrolling в стиле Scroll Reverser. Проект уже не scaffold: в `master` влиты последние локальные изменения из `worktree-rust-impl`, есть macOS event tap, TOML-конфиг, CLI, отдельный parser команд, rule resolver, step size, permission checks, raw-input guard, LaunchAgent start at login и unit tests.
 
 ## Текущее состояние
 
 Реализовано:
 
-- `src/main.rs` - тонкий CLI entrypoint: `run`, `doctor`, `init`, `enable`, `disable`, `toggle`, `config-path`, `show-config`, `simulate`.
+- `src/main.rs` - тонкий CLI entrypoint/orchestrator: запускает команды, но не парсит флаги вручную.
+- `src/cli.rs` - маленький parser команд и флагов: `run`, `doctor --no-create`, `init`, `enable`, `disable`, `toggle`, `enable-startup`, `disable-startup`, `startup-status --json`, `config-path`, `show-config`, `simulate`.
 - `src/lib.rs` - публичный фасад с документацией слоев.
 - `src/config/` - разделен по ответственности: `schema.rs` (какие настройки ЕСТЬ: поля, defaults, validation, per-device policy) и `store.rs` (где они ЖИВУТ: пути, TOML I/O, atomic save через уникальный temp file). `mod.rs` реэкспортирует `AppConfig`/`ConfigStore`, так что вызывающий код не зависит от внутреннего разбиения.
 - `src/device.rs` - `DeviceKind` и conservative classifier: non-continuous scroll = mouse, continuous scroll = trackpad.
@@ -43,6 +44,7 @@ Auto Reverse должен повторить пользовательские в
 Каждый модуль должен иметь одну причину для изменения:
 
 - `config` меняется из-за схемы настроек, storage, migration.
+- `cli` меняется из-за команд, флагов и форматов вывода.
 - `device` меняется из-за классификации устройств.
 - `input` меняется из-за формы нормализованного события.
 - `scroll` меняется из-за правил reverse/step-size.
@@ -107,7 +109,7 @@ Domain modules не должны импортировать CoreGraphics, UI fra
 - `AppConfig` defaults;
 - config schema version;
 - permission labels;
-- CLI command names;
+- CLI command names and accepted flag values in `src/cli.rs`;
 - parity checklist;
 - design tokens;
 - error codes;
@@ -121,7 +123,8 @@ Domain modules не должны импортировать CoreGraphics, UI fra
 ```text
 src/
   lib.rs                           фасад и документация слоев
-  main.rs                          CLI
+  main.rs                          CLI orchestration
+  cli.rs                           command/flag parser, options, parser tests
   error.rs                         AppError / AppResult
   device.rs                        DeviceKind + conservative classifier
   input.rs                         ScrollEvent
@@ -200,6 +203,16 @@ enable-startup
   -> write ~/Library/LaunchAgents/com.auto-reverse.agent.plist
   -> set config.start_at_login = true
   -> report whether LaunchAgent points at this binary
+
+doctor --no-create
+  -> use defaults if config is missing
+  -> do not write a config file as a side effect
+  -> print binary path, config state, permissions, startup status and known gaps
+
+startup-status --json
+  -> read LaunchAgent and config state
+  -> do not create config
+  -> print machine-readable enabled/config/in_sync fields
 ```
 
 ## Дизайн продукта
@@ -251,6 +264,9 @@ Done:
 - event transform;
 - step size;
 - LaunchAgent start at login;
+- CLI parser split into `src/cli.rs`;
+- `doctor --no-create`;
+- `startup-status --json`;
 - raw-input skip;
 - permission checks;
 - unit tests;
@@ -322,6 +338,7 @@ Issues fixed after the latest merge:
 - old "Hello, world" recommendations replaced with current audit.
 - repeated review fixed the recommendation counter so exactly 500 backlog items are counted;
 - `.idea/` is ignored at repository root, keeping IDE metadata out of commits.
+- SOLID/DRY follow-up split CLI parsing from `main.rs`, added no-side-effect diagnostics, and added machine-readable startup status.
 
 Known risks still open:
 
