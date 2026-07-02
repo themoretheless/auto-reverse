@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  scripts/build-app-bundle.sh [--debug|--release]
+
+Builds a local macOS app bundle:
+  target/debug/Auto Reverse.app
+  target/release/Auto Reverse.app
+
+The bundle is intentionally headless for now. It gives macOS Privacy &
+Security a stable .app target for Accessibility and Input Monitoring while
+the real settings UI is still future work.
+USAGE
+}
+
+profile="debug"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --debug)
+      profile="debug"
+      ;;
+    --release)
+      profile="release"
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "$script_dir/.." && pwd)"
+cd "$repo_root"
+
+if [[ "$profile" == "release" ]]; then
+  cargo build --release
+else
+  cargo build
+fi
+
+version="$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n 1)"
+binary="target/$profile/auto-reverse"
+app="target/$profile/Auto Reverse.app"
+contents="$app/Contents"
+macos="$contents/MacOS"
+resources="$contents/Resources"
+
+if [[ ! -x "$binary" ]]; then
+  echo "built binary is missing or not executable: $binary" >&2
+  exit 1
+fi
+
+rm -rf "$app"
+mkdir -p "$macos" "$resources"
+cp "$binary" "$macos/auto-reverse"
+chmod 0755 "$macos/auto-reverse"
+
+cat > "$contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>Auto Reverse</string>
+  <key>CFBundleExecutable</key>
+  <string>auto-reverse</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.auto-reverse.app</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Auto Reverse</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$version</string>
+  <key>CFBundleVersion</key>
+  <string>$version</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.utilities</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>10.13</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+
+if command -v codesign >/dev/null 2>&1; then
+  codesign --force --deep --sign - "$app" >/dev/null
+  sign_note="ad-hoc signed"
+else
+  sign_note="not signed: codesign not found"
+fi
+
+echo "Built $app ($sign_note)"
+echo
+echo "Add this app in:"
+echo "  System Settings > Privacy & Security > Accessibility"
+echo "  System Settings > Privacy & Security > Input Monitoring"
+echo
+echo "Launch it with:"
+echo "  open \"$repo_root/$app\""
+echo
+echo "For terminal diagnostics through the bundled executable:"
+echo "  \"$repo_root/$macos/auto-reverse\" doctor --no-create"

@@ -1,6 +1,6 @@
 # 500 рекомендаций, проблем и улучшений
 
-Список обновлен после merge ветки `worktree-rust-impl` в `master` и повторного SOLID/DRY follow-up. Он отражает текущий код: macOS event tap, TOML config, отдельный CLI parser, permission checks, raw-input guard, step size, LaunchAgent start at login, JSON startup diagnostics, 33 unit tests и открытые gaps до Scroll Reverser parity.
+Список обновлен после merge ветки `worktree-rust-impl`, повторного SOLID/DRY follow-up и локального app-bundle slice. Он отражает текущий код: macOS event tap, TOML config, отдельный CLI parser, permission checks, raw-input guard, step size, LaunchAgent start at login, JSON startup diagnostics, headless `.app` bundle, 33 unit tests и открытые gaps до Scroll Reverser parity.
 
 ## Верифицированные находки из 3 реальных итераций ревью (rust-impl worktree)
 
@@ -474,14 +474,14 @@ N60. [Done] Добавить warning if LaunchAgent exists but config says start
 
 ## Итерация 3: Reliability, Release, Review
 
-341. [Problem] Нет release packaging.
-342. [Improve] Decide app bundle structure.
+341. [Improve] Release packaging все еще не готов, но local dev `.app` bundle уже есть.
+342. [Done] Local app bundle structure выбран: `target/<profile>/Auto Reverse.app`.
 343. [Problem] Нет code signing.
 344. [Improve] Plan Developer ID signing before public release.
 345. [Problem] Нет notarization.
 346. [Improve] Add notarization checklist.
 347. [Problem] Нет installer/uninstaller.
-348. [Improve] Start with drag-and-drop app plus uninstall docs.
+348. [Done] Первый шаг packaging сделан: headless drag-and-run `.app` для Privacy & Security.
 349. [Done] LaunchAgent implementation добавлен в `platform/macos/startup.rs`.
 350. [Improve] Add `SMAppService` path when the app bundle exists.
 351. [Problem] Нет wake-from-sleep recovery.

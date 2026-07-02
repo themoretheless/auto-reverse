@@ -14,6 +14,7 @@ Implemented:
 - wheel step size;
 - raw-input guard through `source_pid`;
 - Accessibility and Input Monitoring checks;
+- local headless macOS `.app` bundle for Privacy & Security;
 - LaunchAgent start at login via `enable-startup`/`disable-startup`;
 - CLI diagnostics, JSON startup status and simulation;
 - separated CLI parser in `src/cli.rs`;
@@ -32,6 +33,7 @@ Still missing:
 
 ```bash
 cargo build
+scripts/build-app-bundle.sh
 cargo run -- doctor
 cargo run -- doctor --no-create
 cargo run -- show-config
@@ -55,6 +57,37 @@ cargo clippy -- -D warnings
 - System Settings -> Privacy & Security -> Input Monitoring.
 
 For safe checks without installing the event tap, use `doctor`, `startup-status`, `show-config`, and `simulate`. `doctor --no-create` reports defaults without creating the config file.
+
+## App Bundle
+
+Build a local bundle:
+
+```bash
+scripts/build-app-bundle.sh
+```
+
+Default output:
+
+```text
+target/debug/Auto Reverse.app
+```
+
+Use that `.app` in macOS:
+
+- System Settings -> Privacy & Security -> Accessibility -> add `target/debug/Auto Reverse.app`;
+- System Settings -> Privacy & Security -> Input Monitoring -> add `target/debug/Auto Reverse.app`.
+
+Then launch the bundled app:
+
+```bash
+open "target/debug/Auto Reverse.app"
+```
+
+The bundle is headless today: it starts the scroll event tap, but it does not show a settings window yet. For terminal diagnostics through the bundled identity:
+
+```bash
+"target/debug/Auto Reverse.app/Contents/MacOS/auto-reverse" doctor --no-create
+```
 
 ## Config
 
