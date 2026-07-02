@@ -8,7 +8,8 @@ use std::sync::OnceLock;
 use crate::config::AppConfig;
 use crate::device::conservative_kind_from_continuity;
 use crate::error::{AppError, AppResult};
-use crate::scroll;
+
+use super::scroll_events;
 
 // The `core-graphics` crate only exposes `CGEventTapEnable` on an owned,
 // already-installed `CGEventTap`, but the tap-disabled recovery path in
@@ -66,9 +67,9 @@ fn handle_event(
                 return CallbackResult::Keep;
             };
 
-            let continuous = !scroll::is_physical_mouse_wheel(event);
+            let continuous = !scroll_events::is_physical_mouse_wheel(event);
             let device_kind = conservative_kind_from_continuity(continuous);
-            scroll::apply_config_in_place(event, config, device_kind);
+            scroll_events::apply_config_in_place(event, config, device_kind);
         }
         _ => {}
     }

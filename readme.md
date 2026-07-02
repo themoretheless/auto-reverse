@@ -85,24 +85,32 @@ Current limitation: `reverse_magic_mouse` is present for parity, but the live cl
 
 ## Architecture
 
-Current modules:
+Current modules, layered from pure logic down to platform code. Read them
+top to bottom to learn the project in small pieces - each file has one
+reason to change, and nothing above `platform/` imports an OS framework:
 
 ```text
-src/main.rs          CLI entrypoint
-src/lib.rs           library facade
-src/config.rs        config schema and storage
-src/device.rs        device kind and conservative classifier
-src/input.rs         normalized scroll event
-src/scroll.rs        transform rules and CoreGraphics field helpers
-src/permissions.rs   macOS permission checks
-src/event_tap.rs     macOS event tap runtime
-src/error.rs         shared errors
+src/main.rs                          CLI entrypoint and command dispatch
+src/lib.rs                           library facade documenting the layering
+src/error.rs                         shared AppError / AppResult
+src/device.rs                        DeviceKind + conservative classifier
+src/input.rs                         normalized ScrollEvent
+src/scroll.rs                        pure reversal policy (no CoreGraphics)
+src/config/mod.rs                    facade re-exporting AppConfig/ConfigStore
+src/config/schema.rs                 what the settings ARE: fields, defaults, validation
+src/config/store.rs                  where they LIVE: paths, TOML I/O, atomic save
+src/platform/mod.rs                  cfg-gated platform adapters
+src/platform/macos/mod.rs            macOS integration overview
+src/platform/macos/scroll_events.rs  CGEvent field mapping (read event, write decision)
+src/platform/macos/permissions.rs    Accessibility + Input Monitoring TCC calls
+src/platform/macos/event_tap.rs      CGEventTap runtime loop
 ```
 
-Next target split:
+The macOS framework crates (`core-foundation`, `core-graphics`) are
+target-specific dependencies: the pure core compiles without them.
 
-- move CoreGraphics field helpers out of `scroll.rs`;
-- introduce `platform/macos`;
+Next target split (future, GUI phase):
+
 - introduce `app/runtime`;
 - introduce `ui/menu_bar`, `ui/settings`, `ui/diagnostics`;
 - introduce `telemetry/ring_buffer`.

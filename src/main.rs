@@ -5,9 +5,8 @@ use auto_reverse::config::{AppConfig, ConfigStore};
 use auto_reverse::device;
 use auto_reverse::device::DeviceKind;
 use auto_reverse::error::{AppError, AppResult};
-use auto_reverse::event_tap;
 use auto_reverse::input::ScrollEvent;
-use auto_reverse::permissions;
+use auto_reverse::platform::macos::{event_tap, permissions};
 use auto_reverse::scroll;
 
 fn main() {
