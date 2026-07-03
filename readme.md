@@ -94,6 +94,11 @@ open "target/debug/Auto Reverse.app"
 
 Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and both permissions are granted, sharing one live config with the window so changes apply immediately with no restart. A menu-bar icon (Open Settings / Quit) stays up for as long as the process runs; closing the window hides it rather than quitting. An exclusive lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. For terminal diagnostics through the bundled identity:
 
+The bundle uses the real Mach-O binary as `CFBundleExecutable`
+(`Contents/MacOS/auto-reverse`) rather than a shell launcher. With no
+arguments, that binary detects it is running inside `.app` and opens `ui`;
+explicit CLI arguments still work through the same bundled executable.
+
 ```bash
 "target/debug/Auto Reverse.app/Contents/MacOS/auto-reverse" doctor --no-create
 ```

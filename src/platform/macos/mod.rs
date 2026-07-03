@@ -13,7 +13,7 @@
 //!   login-item registration for the bundled GUI app. Deliberately separate
 //!   from `startup` (see recommendation.md risk #6): two mechanisms for two
 //!   different binaries/use cases, not meant to be unified.
-//! - `tray` (gui only): menu-bar `tray-icon` setup for the merged
+//! - `tray` (gui only): native AppKit menu-bar item for the merged
 //!   settings-window + event-tap process.
 
 pub mod daemon_lock;

@@ -4,7 +4,7 @@
 //! ServiceManagement framework, macOS 13+), which registers the *current
 //! app bundle itself* as a login item - the whole bundle relaunches at
 //! login exactly as if the user opened it, with whatever argv/behavior its
-//! `Info.plist` or launcher script already gives it. Deliberately NOT
+//! `Info.plist` and binary entrypoint already give it. Deliberately NOT
 //! `agentServiceWithPlistName`: that variant needs a plist baked into
 //! `Contents/Library/LaunchAgents/<label>.plist` inside the bundle at build
 //! time, which `scripts/build-app-bundle.sh` does not do, and adding that

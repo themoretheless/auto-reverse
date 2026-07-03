@@ -10,6 +10,7 @@ compile_error!(
 mod cli;
 
 use std::env;
+use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::path::Path;
 use std::process;
@@ -32,7 +33,12 @@ fn main() {
 
 fn run() -> AppResult<()> {
     let args: Vec<String> = env::args().skip(1).collect();
-    match cli::parse_args(&args)? {
+    let command = match env::current_exe() {
+        Ok(executable) => command_for_launch(&args, &executable)?,
+        Err(_) => cli::parse_args(&args)?,
+    };
+
+    match command {
         Command::Run => run_event_tap(),
         Command::Doctor(options) => doctor(options),
         Command::Init => init_config(),
@@ -55,6 +61,31 @@ fn run() -> AppResult<()> {
             Ok(())
         }
     }
+}
+
+fn command_for_launch(args: &[String], executable: &Path) -> AppResult<Command> {
+    if launched_from_app_bundle_without_args(args, executable) {
+        return Ok(Command::Ui);
+    }
+
+    cli::parse_args(args)
+}
+
+fn launched_from_app_bundle_without_args(args: &[String], executable: &Path) -> bool {
+    args.is_empty() && is_app_bundle_executable(executable)
+}
+
+fn is_app_bundle_executable(executable: &Path) -> bool {
+    let components: Vec<_> = executable
+        .components()
+        .map(|component| component.as_os_str())
+        .collect();
+
+    components.windows(3).any(|window| {
+        window[0].to_string_lossy().ends_with(".app")
+            && window[1] == OsStr::new("Contents")
+            && window[2] == OsStr::new("MacOS")
+    })
 }
 
 fn run_event_tap() -> AppResult<()> {
@@ -609,5 +640,37 @@ mod tests {
 
         assert!(report.in_sync());
         assert_eq!(report.sync_warning(), None);
+    }
+
+    #[test]
+    fn app_bundle_without_args_launches_ui() {
+        assert_eq!(
+            command_for_launch(
+                &[],
+                Path::new("/Applications/Auto Reverse.app/Contents/MacOS/auto-reverse")
+            )
+            .unwrap(),
+            Command::Ui
+        );
+    }
+
+    #[test]
+    fn app_bundle_with_args_keeps_cli_command() {
+        assert_eq!(
+            command_for_launch(
+                &[String::from("doctor")],
+                Path::new("/Applications/Auto Reverse.app/Contents/MacOS/auto-reverse")
+            )
+            .unwrap(),
+            Command::Doctor(DoctorOptions::default())
+        );
+    }
+
+    #[test]
+    fn terminal_without_args_keeps_headless_run_default() {
+        assert_eq!(
+            command_for_launch(&[], Path::new("/usr/local/bin/auto-reverse")).unwrap(),
+            Command::Run
+        );
     }
 }

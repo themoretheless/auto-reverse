@@ -6,12 +6,18 @@ edition = "2024"
 [features]
 default = ["gui"]
 # The settings window (`auto-reverse ui`), merged with the CGEventTap into
-# one process: a menu-bar tray icon (tray-icon) and SMAppService-based
+# one process: a native AppKit menu-bar item and SMAppService-based
 # login-item registration (objc2-service-management) on top of eframe.
 # Off => a lean CLI-only build: cargo build --no-default-features. All
 # three are macOS target-specific dependencies (see below) so this feature
 # alone does not pull them into a non-macOS `cargo check --lib`.
-gui = ["dep:eframe", "dep:tray-icon", "dep:objc2-service-management", "dep:objc2-foundation", "dep:objc2"]
+gui = [
+    "dep:eframe",
+    "dep:objc2-app-kit",
+    "dep:objc2-service-management",
+    "dep:objc2-foundation",
+    "dep:objc2",
+]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -30,7 +36,14 @@ eframe = { version = "0.35", default-features = false, features = [
     "default_fonts",
     "accesskit",
 ], optional = true }
-tray-icon = { version = "0.24.1", optional = true }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "NSImage",
+    "NSStatusBar",
+    "NSStatusItem",
+    "NSMenu",
+    "NSMenuItem",
+    "objc2-core-foundation",
+], optional = true }
 objc2-service-management = { version = "0.3.2", optional = true }
 objc2-foundation = { version = "0.3", optional = true }
 objc2 = { version = "0.6", optional = true }

@@ -200,11 +200,11 @@ impl eframe::App for SettingsApp {
     // close-intercept both live here rather than in `ui`, which egui only
     // calls for a visible viewport.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Build the tray icon once, on the main thread eframe already
-        // drives - tray-icon touches NSStatusItem/AppKit, same constraint
-        // as eframe's own window. Doing this here (first tick) rather than
-        // in `load()` keeps all AppKit-touching setup on the thread eframe
-        // guarantees is the right one.
+        // Build the tray icon once on the main thread eframe already
+        // drives; NSStatusItem/AppKit has the same constraint as eframe's
+        // own window. Doing this here (first tick) rather than in `load()`
+        // keeps all AppKit-touching setup on the thread eframe guarantees
+        // is the right one.
         if self.tray.is_none() {
             match tray::build() {
                 Ok(handle) => self.tray = Some(handle),

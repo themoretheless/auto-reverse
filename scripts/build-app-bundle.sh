@@ -64,25 +64,7 @@ fi
 
 rm -rf "$app"
 mkdir -p "$macos" "$resources"
-cp "$binary" "$macos/auto-reverse-bin"
-chmod 0755 "$macos/auto-reverse-bin"
-
-# CFBundleExecutable is this launcher, not the real binary. A CGEventTap
-# daemon has no AppKit/NSApplication run loop, so Finder can't reactivate it
-# via Apple Events - double-clicking (or re-opening) a running headless
-# process reliably shows "is not responding" even though it's healthy. The
-# settings window (`ui`) does run a real AppKit loop via eframe/winit, so
-# routing bare double-clicks there instead makes the bundle Finder-safe.
-# `exec` replaces this shell's process image, so TCC/Accessibility trust
-# still keys off auto-reverse-bin's own signed identity, not this script.
-cat > "$macos/auto-reverse" <<'LAUNCHER'
-#!/bin/sh
-dir="$(cd -- "$(dirname -- "$0")" && pwd)"
-if [ "$#" -eq 0 ]; then
-  exec "$dir/auto-reverse-bin" ui
-fi
-exec "$dir/auto-reverse-bin" "$@"
-LAUNCHER
+cp "$binary" "$macos/auto-reverse"
 chmod 0755 "$macos/auto-reverse"
 
 cat > "$contents/Info.plist" <<PLIST

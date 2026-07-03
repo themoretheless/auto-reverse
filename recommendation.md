@@ -1,10 +1,10 @@
 # 560 рекомендаций, проблем и улучшений (500 базовых + N01-N60 после автозапуска)
 
-Список обновлен после merge ветки `worktree-rust-impl`, повторного SOLID/DRY follow-up и локального app-bundle slice. Он отражает текущий код: macOS event tap, TOML config, отдельный CLI parser, permission checks, raw-input guard, step size, LaunchAgent start at login, JSON startup diagnostics, headless `.app` bundle, 33 unit tests и открытые gaps до Scroll Reverser parity.
+Список обновлен после merge ветки `worktree-rust-impl`, повторного SOLID/DRY follow-up и локального app-bundle slice. Он отражает текущий код: macOS event tap, TOML config, отдельный CLI parser, permission checks, raw-input guard, step size, LaunchAgent start at login, JSON startup diagnostics, GUI `.app` bundle, menu bar item и открытые gaps до Scroll Reverser parity.
 
 ## Планируемая переделка: единый процесс + menu bar + SMAppService — риски, записанные до реализации
 
-Решение (см. обсуждение в сессии): слить `ui` и `run` в один процесс (`CGEventTap` в фоновом потоке + постоянная иконка в menu bar через `tray-icon`), и заменить ручную запись LaunchAgent-plist на `SMAppService` для GUI-режима. Ниже - риски и открытые вопросы, зафиксированные **до** того, как код написан, чтобы решение и его цена были явными, а не задним числом.
+Решение (см. обсуждение в сессии): слить `ui` и `run` в один процесс (`CGEventTap` в фоновом потоке + постоянная иконка в menu bar), и заменить ручную запись LaunchAgent-plist на `SMAppService` для GUI-режима. Первая реализация пробовала `tray-icon`; после проблем с macOS status bar scene она заменена на прямой AppKit `NSStatusItem`. Ниже - риски и открытые вопросы, зафиксированные **до** того, как код написан, чтобы решение и его цена были явными, а не задним числом.
 
 ### Риск №1 (главный): SMAppService и ad-hoc подпись
 
@@ -24,9 +24,9 @@
 ### Риск №4: CGEventTap на фоновом потоке внутри eframe
 
 Де-рискован исследованием (реальный прецедент - Tauri-приложение `murmure` делает так же в проде), но:
-- Комбинация именно eframe + tray-icon + CGEventTap в одном процессе не найдена ни в одном опубликованном проекте целиком - только по частям (eframe+tray-icon отдельно, GUI-framework+CGEventTap отдельно на примере Tauri). Собственная комбинация не протестирована никем до нас.
+- Комбинация именно eframe + menu-bar `NSStatusItem` + CGEventTap в одном процессе не найдена ни в одном опубликованном проекте целиком - только по частям (GUI-framework+status item отдельно, GUI-framework+CGEventTap отдельно на примере Tauri). Собственная комбинация не протестирована никем до нас.
 - `eframe::NativeOptions::run_and_return` (нужен, чтобы процесс жил после закрытия окна) имеет исторические баги на macOS: ненадёжный `App::on_exit` конкретно при выходе через Cmd-Q, и ранее были crash-репорты при повторном входе в `run_on_demand`. Не подтверждено, сохраняются ли эти баги в текущей версии eframe 0.35 - нужно тестировать, не доверять письменным репортам 2022 года.
-- `tray-icon` тоже трогает AppKit/NSStatusItem, что требует главного потока - нужно аккуратно не столкнуть его с тем, как eframe/winit уже владеет `NSApplication`.
+- `NSStatusItem` тоже требует AppKit/main-thread дисциплины - нужно аккуратно не столкнуть его с тем, как eframe/winit уже владеет `NSApplication`.
 
 ### Риск №5: пересборка снова ломает identity - для двух вещей сразу
 
@@ -46,19 +46,19 @@
 
 ### Риск №9: не сломать lean-сборку
 
-`--no-default-features` сейчас даёт честную CLI-only сборку без eframe вообще. Новые зависимости (`tray-icon`, `objc2-service-management`) должны попасть строго за `gui`-feature-gate, аналогично `eframe`. Легко забыть и случайно потянуть objc2/tray-icon в headless-сборку - нужно явно проверять `cargo build --no-default-features` после каждого шага, как уже делается для `cargo check --lib`.
+`--no-default-features` сейчас даёт честную CLI-only сборку без eframe вообще. Новые зависимости (`objc2-app-kit`, `objc2-service-management`) должны попасть строго за `gui`-feature-gate, аналогично `eframe`. Легко забыть и случайно потянуть objc2/AppKit в headless-сборку - нужно явно проверять `cargo build --no-default-features` после каждого шага, как уже делается для `cargo check --lib`.
 
 ### Риск №10: путь отката
 
-Это смена всей модели процессов, не маленький патч. Если `tray-icon`-интеграция или `SMAppService` окажутся такими же нестабильными, как предупреждал Apple DTS, откат должен быть дешёвым. Текущая рабочая система (flock + spawn + кнопки Start/Restart) не должна удаляться, пока новая не доказала стабильность на практике - разумнее развивать новую архитектуру рядом/поверх, а не вырезать старую сразу.
+Это смена всей модели процессов, не маленький патч. Если прямой `NSStatusItem` или `SMAppService` окажутся такими же нестабильными, как предупреждал Apple DTS, откат должен быть дешёвым. Текущая рабочая система (flock + spawn + кнопки Start/Restart) не должна удаляться, пока новая не доказала стабильность на практике - разумнее развивать новую архитектуру рядом/поверх, а не вырезать старую сразу.
 
 ### Риск №11: дизайн трей-иконки не специфицирован
 
-Меню трей-иконки (что в нём: Open Settings, Enable/Disable напрямую, Quit?) и её состояния (иконка меняется в зависимости от enabled/running?) вообще не спроектированы - это отдельная UX-задача, не просто "прицепить tray-icon и всё заработает".
+Меню трей-иконки (что в нём: Open Settings, Enable/Disable напрямую, Quit?) и её состояния (иконка меняется в зависимости от enabled/running?) вообще не спроектированы - это отдельная UX-задача, не просто "создать NSStatusItem и всё заработает".
 
-Минимальный видимый слой теперь закрыт: `tray.rs` использует 18x18 macOS
-template status icon (альфа-маска на прозрачном фоне), поэтому AppKit сам
-тинтует ее под светлую/темную строку меню. Полноценный дизайн состояний
+Минимальный видимый слой теперь закрыт: `tray.rs` использует native AppKit
+template status icon, поэтому AppKit сам тинтует ее под светлую/темную строку
+меню. Полноценный дизайн состояний
 иконки (active/paused/blocked), Retina QA и расширенное меню всё еще остаются
 отдельной задачей.
 
@@ -151,12 +151,12 @@ bundle из `scripts/build-app-bundle.sh`, не production release).
   зависимость в общий (не platform-specific) `[dependencies]` и создала
   паразитный auto-feature `tray-icon = ["dep:tray-icon"]`, что понизило бы
   версию `toml` и потенциально протащило tray-icon в non-macOS сборки.
-  Исправлено вручную: `tray-icon`/`objc2-service-management`/
-  `objc2-foundation`/`objc2` перенесены в `[target.'cfg(target_os =
-  "macos")'.dependencies]` и включены в `gui` только через `dep:...`.
-  `cargo build --no-default-features` и `cargo tree --no-default-features`
-  подтверждают ноль совпадений на eframe/tray-icon/objc2/muda/winit после
-  исправления.
+  Позже `tray-icon` удален полностью, а прямые AppKit зависимости
+  (`objc2-app-kit`/`objc2-service-management`/`objc2-foundation`/`objc2`)
+  оставлены в `[target.'cfg(target_os = "macos")'.dependencies]` и включены
+  в `gui` только через `dep:...`. `cargo build --no-default-features` и
+  `cargo tree --no-default-features` должны подтверждать ноль совпадений на
+  eframe/objc2/winit после исправления.
 
 
 Секция ниже - не тот же жанр документа, что остальной backlog. Весь список из 500 пунктов дальше был написан **до** реализации, как содержательный brainstorming над голым `cargo new` scaffold - это честно и полезно как architecture backlog, но ни один пункт там не проверен против реального кода.
