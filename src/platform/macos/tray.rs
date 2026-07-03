@@ -47,6 +47,7 @@ pub fn build() -> Result<TrayHandle, String> {
     let icon = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_tooltip("Auto Reverse")
+        .with_title("AR")
         .with_icon(default_icon())
         .with_icon_as_template(true)
         .build()
