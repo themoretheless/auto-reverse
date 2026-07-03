@@ -13,12 +13,13 @@ use std::env;
 use std::fmt::Write as _;
 use std::path::Path;
 use std::process;
+use std::sync::{Arc, RwLock};
 
 use auto_reverse::config::{AppConfig, ConfigStore};
 use auto_reverse::device;
 use auto_reverse::error::{AppError, AppResult};
 use auto_reverse::input::ScrollEvent;
-use auto_reverse::platform::macos::{daemon_lock, event_tap, hid, permissions, startup};
+use auto_reverse::platform::macos::{event_tap, hid, permissions, startup};
 use auto_reverse::scroll;
 use cli::{Command, DoctorOptions, OutputFormat, SimulateOptions, StartupStatusOptions};
 
@@ -57,21 +58,6 @@ fn run() -> AppResult<()> {
 }
 
 fn run_event_tap() -> AppResult<()> {
-    // Acquired before anything else - including config load and the
-    // permission check below, either of which can take an arbitrary amount
-    // of time (a TCC prompt waits on the user). Every spawner of `run`
-    // (manual CLI, LaunchAgent, or the GUI's auto-start) races to acquire
-    // this lock; exactly one wins, and it stays held for the rest of this
-    // function's scope, including through install_and_run's forever-blocking
-    // call, since `_daemon_lock` never goes out of scope until the process
-    // exits. A second, redundant spawn of `run` observes the lock is
-    // already held and exits immediately here, rather than installing a
-    // competing CGEventTap on the same scroll stream.
-    let Some(_daemon_lock) = daemon_lock::try_acquire(&daemon_lock::default_path())? else {
-        println!("auto-reverse: another instance is already running; exiting");
-        return Ok(());
-    };
-
     let store = ConfigStore::default();
     let config = store.load_or_create()?;
 
@@ -91,10 +77,19 @@ fn run_event_tap() -> AppResult<()> {
     }
 
     println!(
-        "auto-reverse: config changes made while this is running have no effect until restart"
+        "auto-reverse: config changes made while this is running have no effect until restart \
+         (this headless `run` process does not watch the config file for changes; the merged \
+         `ui` process does, via its shared in-memory config)"
     );
 
-    event_tap::install_and_run(config)
+    // install_and_run acquires the exclusive daemon_lock itself, as the
+    // very first thing it does, before touching the HID monitor or the
+    // CGEventTap - this is the one gate shared with the merged `ui`
+    // process's in-process tap thread, so the two launch paths can never
+    // both hold a live tap. A second, redundant `run` (or a `ui` process
+    // already running) observes the lock already held and returns cleanly
+    // rather than installing a competing tap.
+    event_tap::install_and_run(Arc::new(RwLock::new(config)))
 }
 
 fn doctor(options: DoctorOptions) -> AppResult<()> {
@@ -540,8 +535,11 @@ fn print_help() {
         "Auto Reverse\n\
          \n\
          Everyday commands:\n\
-           run                         Start the macOS scroll event tap\n\
-           ui                          Open the settings window\n\
+           run                         Start the macOS scroll event tap, headless (no window)\n\
+           ui                          Open the settings window; also starts scroll reversal\n\
+                                       in this same process (a background thread, sharing a\n\
+                                       live-reloadable config with the window) and shows a\n\
+                                       menu-bar icon for as long as the process runs\n\
            enable                      Turn scroll reversing on\n\
            disable                     Turn scroll reversing off\n\
            toggle                      Flip scroll reversing on/off\n\

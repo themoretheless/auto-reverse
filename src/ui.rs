@@ -13,40 +13,61 @@
 //!   placeholders). Rendering dead switches would be lying with widgets.
 //! - The trackpad toggle says it also covers a real Magic Mouse, because
 //!   the tap cannot tell them apart.
-//! - A footnote states that an already-running `run` session keeps its old
-//!   config until restarted - and the Permissions section's status row
-//!   offers a "Restart" button that does exactly that, so this is never a
-//!   dead end the user has to go find a terminal for.
 //!
-//! Opening this window also starts actual scroll reversal: `load()` spawns
-//! a detached `<binary> run` child whenever `config.enabled` is true and
-//! the required macOS permissions are already available.
-//! Avoiding two live CGEventTaps is `run`'s own responsibility (see
-//! `platform::macos::daemon_lock`) via an exclusive lock acquired before
-//! anything else in `run_event_tap` - so a redundant spawn here (manual
-//! `run`, a LaunchAgent, or a previous launch of this same window already
-//! running) just costs a process that exits almost immediately, never a
-//! second competing tap.
+//! ## Merged process (`ui` == settings window + scroll reversal)
+//!
+//! `ui` and `run` used to be two independent processes: opening the
+//! settings window spawned a detached `<binary> run` child. That required
+//! a lot of coordination (a flock-based `daemon_lock`, a "Start
+//! now"/"Restart" button, a background reaper thread) purely to avoid two
+//! live `CGEventTap`s and to let config changes reach an already-running
+//! daemon.
+//!
+//! This is now one process: `SettingsApp::load()` spawns the `CGEventTap`
+//! on a background thread in-process (`event_tap::install_and_run`,
+//! `platform::macos::event_tap`), sharing one `Arc<RwLock<AppConfig>>`
+//! between that thread and the GUI. Every settings change writes through
+//! the shared config (in addition to saving to disk), so the very next
+//! scroll event picks it up live - no restart, no child process. The
+//! `daemon_lock` (`platform::macos::daemon_lock`) is still acquired, now by
+//! `install_and_run` itself, so a headless `run` process (still supported,
+//! e.g. via `enable-startup`'s LaunchAgent) and this in-process tap thread
+//! can never both hold a live tap at once.
+//!
+//! A menu-bar tray icon (`platform::macos::tray`) is present for the
+//! lifetime of the process. Closing the window (red button or Cmd-W) hides
+//! it rather than quitting - the window's close is intercepted via
+//! `ViewportCommand::CancelClose` and turned into a hide, so the background
+//! tap thread and tray icon keep running. Only the tray menu's "Quit"
+//! really exits the process (`std::process::exit(0)`), which also tears
+//! down the tap thread and releases its `daemon_lock` (process exit closes
+//! the lock's file descriptor, which the kernel treats as a release).
 
-use std::fs::OpenOptions;
-use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::sync::{Arc, RwLock};
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32, RichText, ViewportCommand};
 
 use crate::config::{AppConfig, ConfigStore, DeviceRule};
-use crate::platform::macos::{daemon_lock, hid, permissions, startup};
+use crate::platform::macos::{event_tap, hid, login_item, permissions, tray};
 
 const WINDOW_WIDTH: f32 = 400.0;
 const WINDOW_HEIGHT: f32 = 640.0;
 
-/// Launches the settings window; blocks until it is closed.
+/// Launches the settings window and starts scroll reversal in-process;
+/// blocks until the user actually quits (via the tray menu), not merely
+/// until the window is closed/hidden.
 pub fn run_settings_window() -> Result<(), String> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Auto Reverse")
             .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
             .with_min_inner_size([WINDOW_WIDTH, 480.0]),
+        // Keep the process (and the tray icon, and the background
+        // CGEventTap thread) alive after the window closes - see the
+        // module doc comment. This is eframe 0.35's default already, but
+        // set explicitly so the intent is not silently lost if a future
+        // eframe version changes its default.
+        run_and_return: true,
         ..Default::default()
     };
 
@@ -55,12 +76,29 @@ pub fn run_settings_window() -> Result<(), String> {
         options,
         Box::new(|_cc| Ok(Box::new(SettingsApp::load()))),
     )
-    .map_err(|error| format!("could not open the settings window: {error}"))
+    .map_err(|error| format!("could not open the settings window: {error}"))?;
+
+    // run_native returns here once the window is closed (run_and_return),
+    // NOT only on a real quit - closing the window is handled as a hide
+    // inside SettingsApp::logic, so reaching this point without the process
+    // already having called std::process::exit (tray Quit) would mean every
+    // window-close silently ended the process, defeating the entire point
+    // of the merge. Block instead of returning, so the tray icon and the
+    // background tap thread keep running; only std::process::exit (wired to
+    // the tray's Quit action) ever actually ends the process.
+    loop {
+        std::thread::park();
+    }
 }
 
 struct SettingsApp {
     store: ConfigStore,
+    /// Local UI copy, edited directly by widgets. Written through to
+    /// `shared_config` (and disk) whenever a control changes.
     config: AppConfig,
+    /// Shared with the background CGEventTap thread - this is what makes
+    /// config changes apply live instead of requiring a restart.
+    shared_config: Arc<RwLock<AppConfig>>,
     devices: Vec<hid::DeviceInfo>,
     /// Why the device list is empty, when it failed rather than genuinely
     /// finding nothing - shown inline instead of silently swallowed.
@@ -68,15 +106,18 @@ struct SettingsApp {
     /// Last save failure, shown inline; None while everything persists fine.
     save_error: Option<String>,
     load_error: Option<String>,
-    /// Set when starting, stopping, or restarting the `run` daemon fails;
-    /// shown inline rather than swallowed, mirroring `load_error`/`save_error`.
-    daemon_error: Option<String>,
+    /// Set when the in-process tap thread failed to even start (e.g. the
+    /// daemon_lock was already held by another `run`/`ui` process).
+    tap_error: Option<String>,
+    /// Set on a login_item register/unregister failure.
+    login_item_error: Option<String>,
+    tray: Option<tray::TrayHandle>,
 }
 
 impl SettingsApp {
     fn load() -> Self {
-        // One-shot, mirrors run_event_tap(): the request_* calls are what
-        // actually register this binary with TCC (and pop the native
+        // One-shot, mirrors the old run_event_tap(): the request_* calls are
+        // what actually register this binary with TCC (and pop the native
         // consent dialogs) - the has_* checks the permissions panel uses
         // are read-only and never do this. Without it, an install whose
         // only entry point is this window never appears in System
@@ -89,25 +130,34 @@ impl SettingsApp {
             Err(error) => (AppConfig::default(), Some(error.to_string())),
         };
 
+        let shared_config = Arc::new(RwLock::new(config.clone()));
+
         // Opening the app is now also how scroll reversal starts, not just
-        // where you look at settings. A second live CGEventTap would
-        // silently double-negate every scroll event, but preventing that is
-        // `run`'s own job (an exclusive daemon_lock acquired before it does
-        // anything else) - see spawn_daemon's doc comment.
-        let daemon_error = if config.enabled && permissions_ready {
-            spawn_daemon().err()
+        // where you look at settings. The CGEventTap runs on a background
+        // thread in this same process; install_and_run itself acquires the
+        // daemon_lock as its first step, so a redundant launch (a manual
+        // `run`, a LaunchAgent, or a second `ui` instance) just observes the
+        // lock already held and returns cleanly rather than installing a
+        // second competing tap.
+        let tap_error = if config.enabled && permissions_ready {
+            spawn_tap_thread(Arc::clone(&shared_config))
         } else {
             None
         };
 
+        let login_item_error = None;
+
         let mut app = Self {
             store,
             config,
+            shared_config,
             devices: Vec::new(),
             devices_error: None,
             save_error: None,
             load_error,
-            daemon_error,
+            tap_error,
+            login_item_error,
+            tray: None,
         };
         app.refresh_devices();
         app
@@ -126,12 +176,82 @@ impl SettingsApp {
         }
     }
 
+    /// Persists to disk AND publishes to the shared config the background
+    /// tap thread reads - this is what makes a settings change apply to the
+    /// very next scroll event instead of requiring a restart.
     fn save(&mut self) {
         self.save_error = self.store.save(&self.config).err().map(|e| e.to_string());
+        if self.save_error.is_none() {
+            let mut guard = match self.shared_config.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            *guard = self.config.clone();
+        }
     }
 }
 
 impl eframe::App for SettingsApp {
+    // `logic` runs before `ui` on every tick, AND (per its own doc comment)
+    // continues to run while the window is hidden as long as something
+    // calls `Context::request_repaint` - which is exactly the case here:
+    // the window can be hidden (via CancelClose+Visible(false) below) while
+    // the tray icon still needs its menu polled, so tray handling and the
+    // close-intercept both live here rather than in `ui`, which egui only
+    // calls for a visible viewport.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Build the tray icon once, on the main thread eframe already
+        // drives - tray-icon touches NSStatusItem/AppKit, same constraint
+        // as eframe's own window. Doing this here (first tick) rather than
+        // in `load()` keeps all AppKit-touching setup on the thread eframe
+        // guarantees is the right one.
+        if self.tray.is_none() {
+            match tray::build() {
+                Ok(handle) => self.tray = Some(handle),
+                Err(error) => {
+                    self.tap_error = Some(match &self.tap_error {
+                        Some(existing) => format!("{existing}; also: tray icon failed: {error}"),
+                        None => format!("tray icon failed: {error}"),
+                    })
+                }
+            }
+        }
+
+        // Closing the window (red button or Cmd-W) must hide, not quit -
+        // only the tray's Quit action really exits the process. Without
+        // canceling the close, eframe's run_and_return mode would make
+        // run_native() return right here, and run_settings_window's park
+        // loop would still keep the process alive, but the window itself
+        // would be gone with no way to get it back except relaunching the
+        // whole app - so this is still needed for a usable "hide" affordance,
+        // not just for keeping the process alive.
+        if ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        }
+
+        match tray::poll_action() {
+            Some(tray::TrayAction::OpenSettings) => {
+                ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(ViewportCommand::Focus);
+            }
+            Some(tray::TrayAction::Quit) => {
+                // The tap thread and its daemon_lock are torn down by the
+                // OS on process exit - same reliance on
+                // process-exit-releases-the-lock semantics the old
+                // spawn-a-child design already had.
+                std::process::exit(0);
+            }
+            None => {}
+        }
+
+        // The tray menu can ask for attention (Open Settings while hidden,
+        // or Quit) outside of any window input event, so keep ticking
+        // instead of only-on-input - this is what keeps `logic` running at
+        // all while the window is hidden.
+        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ui, |ui| {
             // Scroll instead of clipping: on a small screen or with many
@@ -221,18 +341,27 @@ impl SettingsApp {
             ui.separator();
             section(ui, "Permissions");
             let permissions_ready = permissions_panel(ui);
-            if let Some(error) = &self.daemon_error {
+            if let Some(error) = &self.tap_error {
                 ui.label(
-                    RichText::new(format!("Daemon action failed: {error}"))
+                    RichText::new(format!("Scroll reversal could not start: {error}"))
                         .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
                         .small(),
                 );
             }
-            match daemon_status_row(ui, self.config.enabled, permissions_ready) {
-                DaemonAction::Start => self.daemon_error = spawn_daemon().err(),
-                DaemonAction::Restart => self.daemon_error = restart_daemon().err(),
-                DaemonAction::None => {}
+            if !permissions_ready && self.config.enabled {
+                ui.horizontal(|ui| {
+                    ui.label("Scroll reversal");
+                    ui.label(
+                        RichText::new("waiting for permissions")
+                            .color(Color32::from_rgb(0xE5, 0x9E, 0x2F)),
+                    );
+                });
             }
+
+            ui.add_space(8.0);
+            ui.separator();
+            section(ui, "Start at login");
+            self.login_item_row(ui);
 
             ui.add_space(8.0);
             ui.separator();
@@ -245,22 +374,62 @@ impl SettingsApp {
 
             if changed {
                 self.save();
-                if self.save_error.is_none() && enabled_changed {
-                    self.daemon_error = if self.config.enabled {
-                        if permissions_ready {
-                            spawn_daemon().err()
-                        } else {
-                            Some(
-                                "permissions are still missing; grant them, then press Start now"
-                                    .to_string(),
-                            )
-                        }
+                // Note: there is no in-process "stop the tap thread" action
+                // for the disable-only branch - the background thread reads
+                // the shared config on every event and simply passes events
+                // through unmodified when `enabled` is false (the same
+                // pass-through behavior `scroll::transform_event` already
+                // implements), so disabling here takes effect immediately
+                // without needing to tear down the thread.
+                if self.save_error.is_none() && enabled_changed && self.config.enabled {
+                    self.tap_error = if permissions_ready {
+                        spawn_tap_thread(Arc::clone(&self.shared_config))
                     } else {
-                        stop_daemon().err()
+                        Some(
+                            "permissions are still missing; grant them, then toggle Reverse \
+                             scrolling again"
+                                .to_string(),
+                        )
                     };
                 }
             }
         }
+    }
+
+    fn login_item_row(&mut self, ui: &mut egui::Ui) {
+        let status = login_item::status();
+        ui.horizontal(|ui| {
+            ui.label("Auto Reverse.app at login");
+            ui.label(RichText::new(status.summary()).small());
+        });
+        ui.horizontal(|ui| match status {
+            login_item::LoginItemStatus::Enabled
+            | login_item::LoginItemStatus::RequiresApproval => {
+                if ui.small_button("Turn off").clicked() {
+                    self.login_item_error = login_item::unregister().err();
+                }
+            }
+            login_item::LoginItemStatus::NotRegistered | login_item::LoginItemStatus::NotFound => {
+                if ui.small_button("Turn on").clicked() {
+                    self.login_item_error = login_item::register().err();
+                }
+            }
+        });
+        if let Some(error) = &self.login_item_error {
+            ui.label(
+                RichText::new(format!("Start at login failed: {error}"))
+                    .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
+                    .small(),
+            );
+        }
+        ui.label(
+            RichText::new(
+                "Separate from the CLI's enable-startup command - this registers the app \
+                 bundle itself with macOS.",
+            )
+            .small()
+            .weak(),
+        );
     }
 }
 
@@ -367,66 +536,38 @@ fn device_rules(
     (changed, wants_refresh)
 }
 
-/// Starts `<current executable> run` as a detached background process.
-/// Always spawns unconditionally (when the caller's `config.enabled` check
-/// already passed) - deduplication against an already-running daemon is
-/// `run`'s own job now: it acquires an exclusive `daemon_lock` as the very
-/// first thing it does, before this spawned copy could do anything else, so
-/// a redundant spawn here just costs a process that exits almost
-/// immediately rather than risking a second live CGEventTap. Never blocks
-/// the GUI: no `.wait()` on the calling thread. The child is still reaped
-/// (on a background thread, once it eventually exits) so it cannot become a
-/// permanent zombie for as long as the GUI process stays open.
-///
-/// stdout/stderr are redirected to the same log file the LaunchAgent uses
-/// (`startup::log_path()`), so a GUI-spawned daemon and a login-launched
-/// one are indistinguishable in the logs.
-fn spawn_daemon() -> Result<(), String> {
-    let executable = startup::current_executable().map_err(|error| error.to_string())?;
-    let log_path = startup::log_path().map_err(|error| error.to_string())?;
-    if let Some(parent) = log_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "could not create log directory {}: {error}",
-                parent.display()
-            )
-        })?;
-    }
-
-    let log_out = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .map_err(|error| format!("could not open log file {}: {error}", log_path.display()))?;
-    let log_err = log_out
-        .try_clone()
-        .map_err(|error| format!("could not duplicate log file handle: {error}"))?;
-
-    let child = Command::new(&executable)
-        .arg("run")
-        .stdin(Stdio::null())
-        .stdout(log_out)
-        .stderr(log_err)
-        .spawn()
-        .map_err(|error| {
-            format!(
-                "could not start the scroll-reversal daemon ({}): {error}",
-                executable.display()
-            )
-        })?;
-
-    // Reap on a background thread instead of dropping the handle outright -
-    // an un-waited child that outlives its parent's interest in it becomes
-    // a zombie in the process table for as long as this GUI process (the
-    // parent) stays running. This thread just blocks in wait() for however
-    // long the daemon lives (normally: forever, until the user quits it),
-    // which is a single idle kernel-blocked thread, not a busy loop.
+/// Starts the CGEventTap on a background thread in this same process.
+/// `install_and_run` itself acquires the exclusive `daemon_lock` as its
+/// first step (see `platform::macos::event_tap`), so a redundant call here
+/// (this window opened twice, or a headless `run`/LaunchAgent also active)
+/// just costs an idle thread that returns immediately rather than risking a
+/// second live CGEventTap. Never blocks the GUI thread: `install_and_run`
+/// runs its own forever-blocking CFRunLoop entirely on the spawned thread.
+fn spawn_tap_thread(shared_config: Arc<RwLock<AppConfig>>) -> Option<String> {
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let mut child = child;
-        let _ = child.wait();
+        // install_and_run only returns once it definitively fails to start
+        // (lock contention, permission failure, or the CFRunLoop stops
+        // some other way) - there is no ongoing "still starting" state to
+        // report back beyond that first outcome, so a bounded channel send
+        // of the terminal Result is enough; this thread lives for as long
+        // as the tap does after that.
+        let outcome = event_tap::install_and_run(shared_config);
+        let _ = result_tx.send(outcome);
     });
 
-    Ok(())
+    // A real permission/lock failure surfaces near-instantly (before the
+    // CFRunLoop would ever start); a successful install blocks forever, so
+    // waiting briefly distinguishes "definitely failed" from "presumably
+    // running" without blocking the GUI thread for long in the failure
+    // case and without blocking it at all in the success case beyond this
+    // short window.
+    match result_rx.recv_timeout(std::time::Duration::from_millis(200)) {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(error.to_string()),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
+    }
 }
 
 fn permissions_panel(ui: &mut egui::Ui) -> bool {
@@ -469,78 +610,6 @@ fn permissions_panel(ui: &mut egui::Ui) -> bool {
     !any_missing
 }
 
-/// Live status of the actual `run` daemon, checked fresh every frame via
-/// `daemon_lock::is_running` - separate from the Permissions panel above,
-/// which only reflects whether TCC access is granted, not whether a daemon
-/// is actually alive right now (e.g. it can still be missing right after
-/// granting access in System Settings, since granting permission alone
-/// does not retroactively start anything). Offers a button either way: to
-/// retry starting it on demand (most useful right after fixing something
-/// in System Settings), or to restart an already-running one so it picks
-/// up config changes - neither requires quitting and reopening the app, or
-/// finding a terminal.
-enum DaemonAction {
-    None,
-    Start,
-    Restart,
-}
-
-fn daemon_status_row(ui: &mut egui::Ui, enabled: bool, permissions_ready: bool) -> DaemonAction {
-    if !enabled {
-        return DaemonAction::None;
-    }
-
-    let mut action = DaemonAction::None;
-    ui.horizontal(|ui| {
-        ui.label("Scroll reversal");
-        if !permissions_ready {
-            ui.label(
-                RichText::new("waiting for permissions").color(Color32::from_rgb(0xE5, 0x9E, 0x2F)),
-            );
-            return;
-        }
-
-        if daemon_lock::is_running(&daemon_lock::default_path()) {
-            ui.label(RichText::new("running").color(Color32::from_rgb(0x34, 0xA8, 0x53)));
-            if ui
-                .small_button("Restart")
-                .on_hover_text("Applies any settings changed since it last started")
-                .clicked()
-            {
-                action = DaemonAction::Restart;
-            }
-        } else {
-            ui.label(RichText::new("not running").color(Color32::from_rgb(0xC0, 0x39, 0x2B)));
-            if ui.small_button("Start now").clicked() {
-                action = DaemonAction::Start;
-            }
-        }
-    });
-    action
-}
-
-fn stop_daemon() -> Result<(), String> {
-    let stopped =
-        daemon_lock::terminate_and_wait(&daemon_lock::default_path(), Duration::from_secs(2));
-    if stopped {
-        Ok(())
-    } else {
-        Err("the running scroll-reversal daemon did not stop in time; try again".to_string())
-    }
-}
-
-/// Stops whichever daemon currently holds the lock and starts a fresh one,
-/// so it (re)reads the current config instead of whatever it loaded at its
-/// own startup. A 2-second wait is generous for a process whose only
-/// per-event work is a couple of CGEvent field reads - if it is still
-/// alive past that, something is genuinely stuck, and starting a second
-/// one anyway would risk exactly the double-CGEventTap bug this whole
-/// locking scheme exists to prevent, so this reports an error instead.
-fn restart_daemon() -> Result<(), String> {
-    stop_daemon()?;
-    spawn_daemon()
-}
-
 fn footer(
     ui: &mut egui::Ui,
     store: &ConfigStore,
@@ -563,11 +632,6 @@ fn footer(
                 .small(),
         );
     }
-    ui.label(
-        RichText::new("A running `auto-reverse run` keeps its old settings until restarted.")
-            .small()
-            .weak(),
-    );
     ui.label(
         RichText::new(format!("Config: {}", store.path().display()))
             .small()

@@ -3,22 +3,24 @@ name = "auto-reverse"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "probe_login_item"
+path = "src/bin/probe_login_item.rs"
+required-features = ["gui"]
+
 [features]
 default = ["gui"]
-# The settings window (`auto-reverse ui`). Off => a lean CLI-only build:
-# cargo build --no-default-features
-gui = ["dep:eframe"]
+# The settings window (`auto-reverse ui`), merged with the CGEventTap into
+# one process: a menu-bar tray icon (tray-icon) and SMAppService-based
+# login-item registration (objc2-service-management) on top of eframe.
+# Off => a lean CLI-only build: cargo build --no-default-features. All
+# three are macOS target-specific dependencies (see below) so this feature
+# alone does not pull them into a non-macOS `cargo check --lib`.
+gui = ["dep:eframe", "dep:tray-icon", "dep:objc2-service-management", "dep:objc2-foundation", "dep:objc2"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
-# glow instead of the default wgpu renderer: much lighter to build, and a
-# settings panel needs no GPU compute pipeline.
-eframe = { version = "0.35", default-features = false, features = [
-    "glow",
-    "default_fonts",
-    "accesskit",
-], optional = true }
 
 # Only platform/macos touches these; the pure core (config, device, input,
 # scroll) compiles without any OS framework.
@@ -26,3 +28,14 @@ eframe = { version = "0.35", default-features = false, features = [
 core-foundation = "0.10"
 core-foundation-sys = "0.8"
 core-graphics = { version = "0.25", features = ["highsierra"] }
+# glow instead of the default wgpu renderer: much lighter to build, and a
+# settings panel needs no GPU compute pipeline.
+eframe = { version = "0.35", default-features = false, features = [
+    "glow",
+    "default_fonts",
+    "accesskit",
+], optional = true }
+tray-icon = { version = "0.24.1", optional = true }
+objc2-service-management = { version = "0.3.2", optional = true }
+objc2-foundation = { version = "0.3", optional = true }
+objc2 = { version = "0.6", optional = true }
