@@ -1,4 +1,6 @@
-use core_foundation::runloop::CFRunLoop;
+use core_foundation::base::TCFType;
+use core_foundation::mach_port::CFMachPortRef;
+use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes};
 use core_graphics::event::{
     CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventTapProxy, CGEventType, CallbackResult,
@@ -18,19 +20,13 @@ use super::{daemon_lock, hid, scroll_events};
 /// event; the window only needs to absorb run-loop scheduling jitter.
 const WHEEL_ATTRIBUTION_WINDOW: Duration = Duration::from_millis(500);
 
-// The `core-graphics` crate only exposes `CGEventTapEnable` on an owned,
-// already-installed `CGEventTap`, but the tap-disabled recovery path in
-// `handle_event` only has the raw `CGEventTapProxy` the callback receives.
-// Apple's own docs for the callback say that proxy is what you pass back
-// into `CGEventTapEnable` to re-arm a tap the system disabled, so we bind
-// the C symbol directly (already linked in via core-graphics' "link"
-// feature, which is on by default).
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
-    fn CGEventTapEnable(tap: CGEventTapProxy, enable: bool);
+    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
 }
 
 static CONFIG: OnceLock<Arc<RwLock<AppConfig>>> = OnceLock::new();
+static TAP_PORT: OnceLock<usize> = OnceLock::new();
 
 /// Installs a system-wide event tap that reverses scroll direction for
 /// physical mouse wheels, then blocks running the current thread's run loop
@@ -82,33 +78,46 @@ pub fn install_and_run(config: Arc<RwLock<AppConfig>>) -> AppResult<()> {
         .set(config)
         .map_err(|_| AppError::Platform("event tap config was already initialized".to_string()))?;
 
-    CGEventTap::with_enabled(
+    let event_tap = CGEventTap::new(
         CGEventTapLocation::HID,
         CGEventTapPlacement::HeadInsertEventTap,
         CGEventTapOptions::Default,
         vec![CGEventType::ScrollWheel],
         handle_event,
-        CFRunLoop::run_current,
     )
     .map_err(|_| {
         AppError::Platform(
             "failed to install scroll event tap; Accessibility or Input Monitoring may be missing"
                 .to_string(),
         )
-    })
+    })?;
+
+    let _ = TAP_PORT.set(event_tap.mach_port().as_concrete_TypeRef() as usize);
+    let loop_source = event_tap
+        .mach_port()
+        .create_runloop_source(0)
+        .map_err(|_| {
+            AppError::Platform("failed to create event tap run-loop source".to_string())
+        })?;
+    CFRunLoop::get_current().add_source(&loop_source, unsafe { kCFRunLoopCommonModes });
+    event_tap.enable();
+    CFRunLoop::run_current();
+    Ok(())
 }
 
 fn handle_event(
-    proxy: CGEventTapProxy,
+    _proxy: CGEventTapProxy,
     event_type: CGEventType,
     event: &CGEvent,
 ) -> CallbackResult {
     match event_type {
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
-            // macOS disables a tap it thinks is too slow or that the user
-            // paused; without re-enabling it here, scrolling silently stops
-            // being reversed until the process is restarted.
-            unsafe { CGEventTapEnable(proxy, true) };
+            if let Some(port) = TAP_PORT.get() {
+                // CGEventTapEnable takes the CFMachPortRef returned by
+                // CGEventTapCreate. The callback proxy is a different opaque
+                // token and crashes here on pointer-authenticated macOS.
+                unsafe { CGEventTapEnable(*port as CFMachPortRef, true) };
+            }
         }
         CGEventType::ScrollWheel => {
             let Some(config_lock) = CONFIG.get() else {
