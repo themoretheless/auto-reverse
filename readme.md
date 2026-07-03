@@ -14,21 +14,22 @@ Implemented:
 - wheel step size;
 - raw-input guard through `source_pid`;
 - Accessibility and Input Monitoring checks;
-- local headless macOS `.app` bundle for Privacy & Security;
+- local macOS `.app` bundle for Privacy & Security;
 - LaunchAgent start at login via `enable-startup`/`disable-startup`;
 - per-device rules: `[[device_rules]]` pins one exact mouse (vendor/product
   ID) on or off, attributed via an IOHIDManager wheel monitor; `devices`
   lists connected pointing devices with their IDs;
-- egui settings window (`ui`, default `gui` feature); opening it auto-starts
-  the `run` daemon when enabled and permissions are ready, deduped against
-  any other already-running daemon via a PID-file lock (`daemon_lock`);
+- egui settings window (`ui`, default `gui` feature); opening it starts the
+  scroll event tap in the same process when enabled and permissions are ready,
+  deduped against any other already-running tap via `daemon_lock`;
+- menu bar UI with a macOS template status icon and Open Settings / Quit menu;
 - CLI diagnostics, JSON startup status and simulation;
 - separated CLI parser in `src/cli.rs`.
 
 Still missing:
 
-- menu bar UI;
-- preferences window;
+- richer menu bar controls and stateful icon variants;
+- polished first-run onboarding;
 - hide/show menu bar icon;
 - debug console;
 - gesture/HID classifier for Magic Mouse vs trackpad;
@@ -91,7 +92,7 @@ Then launch the bundled app:
 open "target/debug/Auto Reverse.app"
 ```
 
-Double-clicking the bundle opens the settings window (`ui`), which also auto-starts the scroll event tap (`run`) as a detached child process when `enabled=true` in the config and both permissions are granted - unless a `run` daemon (manual, LaunchAgent, or a previous launch of this same window) is already alive, checked via a PID-file lock (`platform::macos::daemon_lock`) so two event taps never double-process the same scroll stream. For terminal diagnostics through the bundled identity:
+Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and both permissions are granted, sharing one live config with the window so changes apply immediately with no restart. A menu-bar icon (Open Settings / Quit) stays up for as long as the process runs; closing the window hides it rather than quitting. An exclusive lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. For terminal diagnostics through the bundled identity:
 
 ```bash
 "target/debug/Auto Reverse.app/Contents/MacOS/auto-reverse" doctor --no-create
@@ -174,10 +175,13 @@ src/platform/macos/mod.rs            macOS integration overview
 src/platform/macos/scroll_events.rs  CGEvent field mapping (read event, write decision)
 src/platform/macos/permissions.rs    Accessibility + Input Monitoring TCC calls
 src/platform/macos/hid.rs            IOHIDManager wheel monitor (per-device attribution)
-src/platform/macos/startup.rs        LaunchAgent start-at-login support
-src/platform/macos/event_tap.rs      CGEventTap runtime loop
-src/platform/macos/daemon_lock.rs    PID-file lock: only one `run` daemon at a time
-src/ui.rs                            egui settings window (gui feature); auto-starts `run`
+src/platform/macos/startup.rs        LaunchAgent start-at-login support (headless `run`)
+src/platform/macos/event_tap.rs      CGEventTap runtime loop, config shared via Arc<RwLock<_>>
+src/platform/macos/daemon_lock.rs    flock: only one live CGEventTap at a time, any launch path
+src/platform/macos/login_item.rs     SMAppService.mainAppService() wrapper (gui feature only)
+src/platform/macos/tray.rs           menu-bar tray icon: Open Settings / Quit (gui feature only)
+src/ui.rs                            egui settings window (gui feature); also runs the tap
+                                      in-process on a background thread and hosts the tray icon
 ```
 
 The macOS framework crates (`core-foundation`, `core-graphics`) are

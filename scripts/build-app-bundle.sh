@@ -12,8 +12,9 @@ Builds a local macOS app bundle:
 
 Double-clicking the bundle opens the settings window (`auto-reverse ui`).
 It also gives macOS Privacy & Security a stable .app target for granting
-Accessibility and Input Monitoring, independent of the background daemon
-(started separately via `enable-startup`, which always passes `run`).
+Accessibility and Input Monitoring. The settings window also owns the live
+scroll event tap when enabled; the legacy `run` command is still available
+for headless diagnostics.
 USAGE
 }
 

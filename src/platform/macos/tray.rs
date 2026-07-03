@@ -48,6 +48,7 @@ pub fn build() -> Result<TrayHandle, String> {
         .with_menu(Box::new(menu))
         .with_tooltip("Auto Reverse")
         .with_icon(default_icon())
+        .with_icon_as_template(true)
         .build()
         .map_err(|error| format!("could not create the menu-bar icon: {error}"))?;
 
@@ -77,15 +78,41 @@ pub fn poll_action() -> Option<TrayAction> {
     None
 }
 
-/// A tiny solid-color square. Not a real design asset (recommendation.md
-/// risk #11 flags icon design as unspecified/out of scope) - just enough
-/// pixels for `tray-icon` to have something valid to hand to `NSStatusItem`
-/// so the process-lifecycle behavior can actually be exercised end to end.
+/// A tiny macOS template status icon: transparent background plus an alpha
+/// mask, so AppKit can tint it correctly for light/dark menu bars.
 fn default_icon() -> tray_icon::Icon {
-    const SIZE: u32 = 16;
+    const SIZE: u32 = 18;
+    const GLYPH: [&str; SIZE as usize] = [
+        "..................",
+        ".....##...........",
+        "....####..........",
+        "...######.........",
+        ".....##....##.....",
+        ".....##....##.....",
+        ".....##....##.....",
+        ".....##....##.....",
+        ".....##....##.....",
+        ".....##....##.....",
+        ".....##....##.....",
+        ".....##....##.....",
+        ".....##....##.....",
+        ".....##..######...",
+        "..........####....",
+        "...........##.....",
+        "..................",
+        "..................",
+    ];
+
     let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
-    for _ in 0..(SIZE * SIZE) {
-        rgba.extend_from_slice(&[0x33, 0x33, 0x33, 0xFF]);
+    for row in GLYPH {
+        debug_assert_eq!(row.len(), SIZE as usize);
+        for pixel in row.bytes() {
+            let alpha = match pixel {
+                b'#' => 0xFF,
+                _ => 0x00,
+            };
+            rgba.extend_from_slice(&[0x00, 0x00, 0x00, alpha]);
+        }
     }
-    tray_icon::Icon::from_rgba(rgba, SIZE, SIZE).expect("fixed-size solid icon is always valid")
+    tray_icon::Icon::from_rgba(rgba, SIZE, SIZE).expect("fixed-size template icon is always valid")
 }

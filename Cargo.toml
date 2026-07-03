@@ -3,11 +3,6 @@ name = "auto-reverse"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "probe_login_item"
-path = "src/bin/probe_login_item.rs"
-required-features = ["gui"]
-
 [features]
 default = ["gui"]
 # The settings window (`auto-reverse ui`), merged with the CGEventTap into
