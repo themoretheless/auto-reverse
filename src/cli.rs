@@ -214,7 +214,10 @@ fn parse_i64(value: Option<&String>, flag: &str) -> AppResult<i64> {
 /// hex and lsusb-style docs quote them that way.
 fn parse_u32(value: Option<&String>, flag: &str) -> AppResult<u32> {
     let value = value.ok_or_else(|| AppError::Usage(format!("{flag} needs a value")))?;
-    let parsed = match value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+    let parsed = match value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
         Some(hex) => u32::from_str_radix(hex, 16),
         None => value.parse(),
     };
@@ -330,9 +333,14 @@ mod tests {
 
     #[test]
     fn simulate_parses_hex_and_decimal_hardware_ids() {
-        let command =
-            parse_args(&strings(&["simulate", "--vendor-id", "0x046d", "--product-id", "1"]))
-                .unwrap();
+        let command = parse_args(&strings(&[
+            "simulate",
+            "--vendor-id",
+            "0x046d",
+            "--product-id",
+            "1",
+        ]))
+        .unwrap();
 
         assert_eq!(
             command,
@@ -354,7 +362,10 @@ mod tests {
 
     #[test]
     fn devices_and_ui_parse() {
-        assert_eq!(parse_args(&strings(&["devices"])).unwrap(), Command::Devices);
+        assert_eq!(
+            parse_args(&strings(&["devices"])).unwrap(),
+            Command::Devices
+        );
         assert_eq!(parse_args(&strings(&["ui"])).unwrap(), Command::Ui);
     }
 

@@ -56,6 +56,14 @@ struct SettingsApp {
 
 impl SettingsApp {
     fn load() -> Self {
+        // One-shot, mirrors run_event_tap(): the request_* calls are what
+        // actually register this binary with TCC (and pop the native
+        // consent dialogs) - the has_* checks the permissions panel uses
+        // are read-only and never do this. Without it, an install whose
+        // only entry point is this window never appears in System
+        // Settings > Privacy & Security for the user to grant.
+        permissions::request_missing_permissions();
+
         let store = ConfigStore::default();
         let (config, load_error) = match store.load_or_create() {
             Ok(config) => (config, None),
@@ -162,8 +170,7 @@ impl SettingsApp {
             ui.add_space(8.0);
             ui.separator();
             section(ui, "Per-device rules");
-            let (rules_changed, wants_refresh) =
-                device_rules(ui, &self.devices, &mut self.config);
+            let (rules_changed, wants_refresh) = device_rules(ui, &self.devices, &mut self.config);
             changed |= rules_changed;
             if wants_refresh {
                 self.refresh_devices();
@@ -212,8 +219,7 @@ fn status_header(ui: &mut egui::Ui, config: &AppConfig) {
     ui.horizontal(|ui| {
         // A painted circle, not the "●" glyph: egui's default font renders
         // that codepoint as a square, which reads as a broken icon.
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
         ui.painter().circle_filled(rect.center(), 6.0, dot_color);
         ui.label(RichText::new(status_word).size(18.0).strong());
     });
@@ -329,7 +335,10 @@ fn permissions_panel(ui: &mut egui::Ui) {
             .small()
             .weak(),
         );
-        if ui.small_button("Open Privacy & Security settings").clicked() {
+        if ui
+            .small_button("Open Privacy & Security settings")
+            .clicked()
+        {
             let _ = std::process::Command::new("open")
                 .arg("x-apple.systempreferences:com.apple.preference.security?Privacy")
                 .spawn();
@@ -345,9 +354,11 @@ fn footer(
 ) {
     if let Some(error) = load_error {
         ui.label(
-            RichText::new(format!("Config could not be loaded, using defaults: {error}"))
-                .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
-                .small(),
+            RichText::new(format!(
+                "Config could not be loaded, using defaults: {error}"
+            ))
+            .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
+            .small(),
         );
     }
     if let Some(error) = save_error {

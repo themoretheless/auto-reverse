@@ -96,10 +96,9 @@ impl AppConfig {
         }
 
         for (index, rule) in self.device_rules.iter().enumerate() {
-            let duplicate = self.device_rules[..index]
-                .iter()
-                .any(|earlier| earlier.vendor_id == rule.vendor_id
-                    && earlier.product_id == rule.product_id);
+            let duplicate = self.device_rules[..index].iter().any(|earlier| {
+                earlier.vendor_id == rule.vendor_id && earlier.product_id == rule.product_id
+            });
             if duplicate {
                 return Err(AppError::InvalidConfig(format!(
                     "duplicate device_rules entry for vendor_id=0x{:04x} product_id=0x{:04x}",
@@ -152,11 +151,7 @@ impl AppConfig {
             // the user unchecks Mouse/Trackpad and pins one device to
             // "Reverse". Without this branch both doctor and the GUI would
             // claim nothing is reversed while the tap reverses that device.
-            let pinned_on = self
-                .device_rules
-                .iter()
-                .filter(|rule| rule.reverse)
-                .count();
+            let pinned_on = self.device_rules.iter().filter(|rule| rule.reverse).count();
             if pinned_on > 0 {
                 return format!(
                     "reversing only {pinned_on} specific device(s) pinned by per-device rules"

@@ -140,7 +140,10 @@ fn remove_agent_file(agent_path: &Path) -> AppResult<()> {
 fn bootout_running_agent() {
     let uid = unsafe { getuid() };
     let target = format!("gui/{uid}/{LABEL}");
-    match Command::new("launchctl").args(["bootout", &target]).output() {
+    match Command::new("launchctl")
+        .args(["bootout", &target])
+        .output()
+    {
         Ok(output) if output.status.success() => {
             println!("stopped the login-launched agent instance");
         }

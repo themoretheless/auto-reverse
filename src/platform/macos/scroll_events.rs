@@ -3,7 +3,7 @@
 //! [`ScrollEvent`], and which fields to write to apply a
 //! [`TransformDecision`] back. No policy lives here - that's `crate::scroll`.
 
-use core_graphics::event::{CGEvent, EventField};
+use core_graphics::event::{CGEvent, CGEventField, EventField};
 
 use crate::config::AppConfig;
 use crate::device::{DeviceKind, HardwareId};
@@ -43,37 +43,79 @@ pub fn event_from_cg_event(
 
 /// Runs the pure policy over the event and writes any changed deltas back.
 ///
-/// Only the plain integer DeltaAxis1/2 fields are ever written. Empirically
-/// (verified against a live CGEvent, not assumed) writing DeltaAxis1/2
-/// makes macOS recompute FixedPtDeltaAxis1/2 and PointDeltaAxis1/2 from the
-/// new value automatically. Writing those derived fields ourselves
-/// afterward would apply the change a second time and silently restore the
-/// original, un-reversed direction for any pixel-precise consumer - so they
-/// must be left untouched. See the regression test below.
+/// Discrete (physical wheel) events: only the plain integer DeltaAxis1/2
+/// fields are ever written. Empirically (verified against a live CGEvent,
+/// not assumed) writing DeltaAxis1/2 makes macOS recompute
+/// FixedPtDeltaAxis1/2 and PointDeltaAxis1/2 from the new value
+/// automatically. Writing those derived fields ourselves afterward would
+/// apply the change a second time and silently restore the original,
+/// un-reversed direction for any pixel-precise consumer - so they must be
+/// left untouched. See `writing_delta_also_flips_the_derived_pixel_and_fixed_point_fields`.
+///
+/// Continuous (trackpad, and indistinguishably Magic Mouse) events: the
+/// opposite rule applies. DeltaAxis1/2 is a coarse, mostly-constant
+/// line-quantized value here (empirically always +-1 regardless of the
+/// real per-touch pixel motion), while the true precision consuming apps
+/// render lives in PointDeltaAxis1/2 and FixedPtDeltaAxis1/2. Writing
+/// DeltaAxis1/2 on a continuous event makes macOS overwrite those two with
+/// a fixed-size jump derived from the coarse value, discarding the real
+/// motion and producing visible stutter regardless of swipe speed - see
+/// `writing_delta_on_a_continuous_event_destroys_pixel_precision`. So for
+/// continuous events, PointDelta/FixedPtDelta are negated directly instead,
+/// and DeltaAxis1/2 is left untouched (nothing reads its coarse value for
+/// continuous scrolling).
 pub fn apply_config_in_place(
     event: &CGEvent,
     config: &AppConfig,
     device_kind: DeviceKind,
     hardware: Option<HardwareId>,
 ) -> TransformDecision {
-    let decision =
-        scroll::transform_event(config, event_from_cg_event(event, device_kind, hardware));
+    let normalized = event_from_cg_event(event, device_kind, hardware);
+    let decision = scroll::transform_event(config, normalized);
 
-    if decision.original.delta_vertical != decision.transformed.delta_vertical {
-        event.set_integer_value_field(
-            EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1,
-            decision.transformed.delta_vertical,
-        );
-    }
+    let vertical_changed = decision.original.delta_vertical != decision.transformed.delta_vertical;
+    let horizontal_changed =
+        decision.original.delta_horizontal != decision.transformed.delta_horizontal;
 
-    if decision.original.delta_horizontal != decision.transformed.delta_horizontal {
-        event.set_integer_value_field(
-            EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2,
-            decision.transformed.delta_horizontal,
-        );
+    if normalized.continuous {
+        if vertical_changed {
+            negate_precise_axis(
+                event,
+                EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1,
+                EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1,
+            );
+        }
+        if horizontal_changed {
+            negate_precise_axis(
+                event,
+                EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2,
+                EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_2,
+            );
+        }
+    } else {
+        if vertical_changed {
+            event.set_integer_value_field(
+                EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1,
+                decision.transformed.delta_vertical,
+            );
+        }
+        if horizontal_changed {
+            event.set_integer_value_field(
+                EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2,
+                decision.transformed.delta_horizontal,
+            );
+        }
     }
 
     decision
+}
+
+fn negate_precise_axis(event: &CGEvent, point_field: CGEventField, fixed_field: CGEventField) {
+    let point = event.get_integer_value_field(point_field);
+    event.set_integer_value_field(point_field, point.saturating_neg());
+
+    let fixed = event.get_double_value_field(fixed_field);
+    event.set_double_value_field(fixed_field, -fixed);
 }
 
 #[cfg(test)]
@@ -91,6 +133,18 @@ mod tests {
     fn new_test_event() -> CGEvent {
         let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
         CGEvent::new_scroll_event(source, ScrollEventUnit::LINE, 1, 0, 0, 0).unwrap()
+    }
+
+    // Continuous (trackpad-style) events are built with the PIXEL unit, not
+    // LINE, and flagged IsContinuous - this is what actually gives them
+    // sub-line-precision Point/FixedPt values to reverse. wheel1 is the
+    // vertical pixel delta.
+    fn new_continuous_test_event(wheel1: i32) -> CGEvent {
+        let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
+        let event =
+            CGEvent::new_scroll_event(source, ScrollEventUnit::PIXEL, 1, wheel1, 0, 0).unwrap();
+        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS, 1);
+        event
     }
 
     #[test]
@@ -152,6 +206,69 @@ mod tests {
         assert_eq!(
             event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2),
             -2
+        );
+    }
+
+    #[test]
+    fn writing_delta_on_a_continuous_event_destroys_pixel_precision() {
+        // Regression test for the trackpad stutter bug: unlike a discrete
+        // wheel event, a continuous event's real per-touch motion lives in
+        // Point/FixedPtDelta, not the coarse line-based Delta. Writing
+        // Delta here does NOT cascade proportionally - it replaces the
+        // original pixel-precise value with a fixed-size jump, regardless
+        // of how many pixels the touch actually moved.
+        let event = new_continuous_test_event(3);
+        let original_point =
+            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
+        assert_eq!(
+            original_point, 3,
+            "test assumption: PIXEL unit sets Point directly"
+        );
+
+        let delta = event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
+        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1, -delta);
+
+        let after_point =
+            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
+        assert_ne!(
+            after_point, -original_point,
+            "writing Delta was expected to clobber Point with an unrelated fixed value, \
+             not proportionally negate it - if this now fails, macOS's behavior changed \
+             and apply_config_in_place's continuous-event branch should be revisited"
+        );
+    }
+
+    #[test]
+    fn apply_config_in_place_negates_precise_fields_for_continuous_events() {
+        let event = new_continuous_test_event(5);
+        let original_point =
+            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
+        let original_fixed =
+            event.get_double_value_field(EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1);
+        let original_delta =
+            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
+
+        let config = AppConfig {
+            reverse_trackpad: true,
+            ..AppConfig::default()
+        };
+        let decision = apply_config_in_place(&event, &config, DeviceKind::Trackpad, None);
+
+        assert!(decision.reversed);
+        assert_eq!(
+            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1),
+            -original_point
+        );
+        assert_eq!(
+            event.get_double_value_field(EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1),
+            -original_fixed
+        );
+        // The coarse Delta field is deliberately left untouched for
+        // continuous events - nothing reads it for pixel-precise scrolling,
+        // and writing it would clobber the two assertions above.
+        assert_eq!(
+            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1),
+            original_delta
         );
     }
 }
