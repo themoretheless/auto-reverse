@@ -19,7 +19,9 @@ Implemented:
 - per-device rules: `[[device_rules]]` pins one exact mouse (vendor/product
   ID) on or off, attributed via an IOHIDManager wheel monitor; `devices`
   lists connected pointing devices with their IDs;
-- egui settings window (`ui`, default `gui` feature);
+- egui settings window (`ui`, default `gui` feature); opening it auto-starts
+  the `run` daemon when enabled and permissions are ready, deduped against
+  any other already-running daemon via a PID-file lock (`daemon_lock`);
 - CLI diagnostics, JSON startup status and simulation;
 - separated CLI parser in `src/cli.rs`.
 
@@ -89,7 +91,7 @@ Then launch the bundled app:
 open "target/debug/Auto Reverse.app"
 ```
 
-The bundle is headless today: it starts the scroll event tap, but it does not show a settings window yet. For terminal diagnostics through the bundled identity:
+Double-clicking the bundle opens the settings window (`ui`), which also auto-starts the scroll event tap (`run`) as a detached child process when `enabled=true` in the config and both permissions are granted - unless a `run` daemon (manual, LaunchAgent, or a previous launch of this same window) is already alive, checked via a PID-file lock (`platform::macos::daemon_lock`) so two event taps never double-process the same scroll stream. For terminal diagnostics through the bundled identity:
 
 ```bash
 "target/debug/Auto Reverse.app/Contents/MacOS/auto-reverse" doctor --no-create
@@ -174,7 +176,8 @@ src/platform/macos/permissions.rs    Accessibility + Input Monitoring TCC calls
 src/platform/macos/hid.rs            IOHIDManager wheel monitor (per-device attribution)
 src/platform/macos/startup.rs        LaunchAgent start-at-login support
 src/platform/macos/event_tap.rs      CGEventTap runtime loop
-src/ui.rs                            egui settings window (gui feature)
+src/platform/macos/daemon_lock.rs    PID-file lock: only one `run` daemon at a time
+src/ui.rs                            egui settings window (gui feature); auto-starts `run`
 ```
 
 The macOS framework crates (`core-foundation`, `core-graphics`) are

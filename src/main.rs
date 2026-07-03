@@ -18,7 +18,7 @@ use auto_reverse::config::{AppConfig, ConfigStore};
 use auto_reverse::device;
 use auto_reverse::error::{AppError, AppResult};
 use auto_reverse::input::ScrollEvent;
-use auto_reverse::platform::macos::{event_tap, hid, permissions, startup};
+use auto_reverse::platform::macos::{daemon_lock, event_tap, hid, permissions, startup};
 use auto_reverse::scroll;
 use cli::{Command, DoctorOptions, OutputFormat, SimulateOptions, StartupStatusOptions};
 
@@ -57,6 +57,21 @@ fn run() -> AppResult<()> {
 }
 
 fn run_event_tap() -> AppResult<()> {
+    // Acquired before anything else - including config load and the
+    // permission check below, either of which can take an arbitrary amount
+    // of time (a TCC prompt waits on the user). Every spawner of `run`
+    // (manual CLI, LaunchAgent, or the GUI's auto-start) races to acquire
+    // this lock; exactly one wins, and it stays held for the rest of this
+    // function's scope, including through install_and_run's forever-blocking
+    // call, since `_daemon_lock` never goes out of scope until the process
+    // exits. A second, redundant spawn of `run` observes the lock is
+    // already held and exits immediately here, rather than installing a
+    // competing CGEventTap on the same scroll stream.
+    let Some(_daemon_lock) = daemon_lock::try_acquire(&daemon_lock::default_path())? else {
+        println!("auto-reverse: another instance is already running; exiting");
+        return Ok(());
+    };
+
     let store = ConfigStore::default();
     let config = store.load_or_create()?;
 

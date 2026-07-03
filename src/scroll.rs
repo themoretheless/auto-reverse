@@ -12,6 +12,20 @@ pub struct TransformDecision {
     pub original: ScrollEvent,
     pub transformed: ScrollEvent,
     pub reversed: bool,
+    /// Whether policy says to reverse this specific axis, independent of
+    /// whether the numeric delta actually changed value. A continuous
+    /// (trackpad) event's real per-touch motion lives in fields this pure
+    /// module never sees (CoreGraphics-specific PointDelta/FixedPtDelta);
+    /// `ScrollEvent.delta_vertical/horizontal` only carries the coarse,
+    /// often-zero line-quantized approximation for such events. Comparing
+    /// original vs transformed on that coarse value would silently skip
+    /// reversing plenty of real, nonzero-pixel continuous events whose
+    /// coarse delta happens to read 0 - exactly the kind of per-event
+    /// inconsistency that feels like stutter across a single swipe. The
+    /// platform layer must gate its writes on these flags, not on
+    /// `changed()`.
+    pub vertical_reversed: bool,
+    pub horizontal_reversed: bool,
     pub step_size_applied: bool,
 }
 
@@ -25,6 +39,8 @@ impl TransformDecision {
 pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecision {
     let mut transformed = event;
     let mut reversed = false;
+    let mut vertical_reversed = false;
+    let mut horizontal_reversed = false;
     let mut step_size_applied = false;
 
     let skip_as_injected = config.reverse_only_raw_input && event.source_pid != 0;
@@ -34,6 +50,8 @@ pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecis
             original: event,
             transformed,
             reversed,
+            vertical_reversed,
+            horizontal_reversed,
             step_size_applied,
         };
     }
@@ -64,17 +82,21 @@ pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecis
     if should_reverse && config.reverse_vertical {
         transformed.delta_vertical = transformed.delta_vertical.saturating_neg();
         reversed = true;
+        vertical_reversed = true;
     }
 
     if should_reverse && config.reverse_horizontal {
         transformed.delta_horizontal = transformed.delta_horizontal.saturating_neg();
         reversed = true;
+        horizontal_reversed = true;
     }
 
     TransformDecision {
         original: event,
         transformed,
         reversed,
+        vertical_reversed,
+        horizontal_reversed,
         step_size_applied,
     }
 }
@@ -117,6 +139,31 @@ mod tests {
         let decision = transform_event(&AppConfig::default(), event);
 
         assert_eq!(decision.transformed, event);
+        assert!(!decision.changed());
+    }
+
+    #[test]
+    fn continuous_event_is_marked_reversed_even_when_the_coarse_delta_is_zero() {
+        // Regression test for the trackpad stutter bug: a real touch event's
+        // coarse, line-quantized delta is frequently 0 even when the real
+        // (CoreGraphics-only) pixel motion is nonzero - `changed()` would
+        // miss these, silently leaving that specific event un-reversed
+        // while neighboring events in the same swipe do get reversed. The
+        // platform layer must gate its writes on vertical_reversed /
+        // horizontal_reversed, which reflect policy only, not this event's
+        // particular coarse magnitude.
+        let event = ScrollEvent::new(DeviceKind::Trackpad, 0, 0, true);
+        let config = AppConfig {
+            reverse_trackpad: true,
+            ..AppConfig::default()
+        };
+
+        let decision = transform_event(&config, event);
+
+        assert!(decision.vertical_reversed);
+        // Negating a coarse 0 is still 0, so the pure ScrollEvent itself
+        // looks unchanged - this is exactly why the platform layer cannot
+        // use `changed()` to decide whether to touch the real pixel fields.
         assert!(!decision.changed());
     }
 

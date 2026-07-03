@@ -53,17 +53,27 @@ pub fn event_from_cg_event(
 /// left untouched. See `writing_delta_also_flips_the_derived_pixel_and_fixed_point_fields`.
 ///
 /// Continuous (trackpad, and indistinguishably Magic Mouse) events: the
-/// opposite rule applies. DeltaAxis1/2 is a coarse, mostly-constant
-/// line-quantized value here (empirically always +-1 regardless of the
-/// real per-touch pixel motion), while the true precision consuming apps
-/// render lives in PointDeltaAxis1/2 and FixedPtDeltaAxis1/2. Writing
-/// DeltaAxis1/2 on a continuous event makes macOS overwrite those two with
-/// a fixed-size jump derived from the coarse value, discarding the real
-/// motion and producing visible stutter regardless of swipe speed - see
-/// `writing_delta_on_a_continuous_event_destroys_pixel_precision`. So for
-/// continuous events, PointDelta/FixedPtDelta are negated directly instead,
-/// and DeltaAxis1/2 is left untouched (nothing reads its coarse value for
-/// continuous scrolling).
+/// opposite rule applies. DeltaAxis1/2 is a coarse, line-quantized value
+/// here that is frequently 0 for perfectly real, nonzero per-touch pixel
+/// motion (most individual continuous-scroll events do not cross a full
+/// "line"), while the true precision consuming apps render lives in
+/// PointDeltaAxis1/2 and FixedPtDeltaAxis1/2. Two consequences follow.
+///
+/// First, writing DeltaAxis1/2 on a continuous event makes macOS overwrite
+/// those two with a fixed-size jump derived from the coarse value,
+/// discarding the real motion - see
+/// `writing_delta_on_a_continuous_event_destroys_pixel_precision` - so
+/// continuous events negate PointDelta/FixedPtDelta directly instead,
+/// leaving DeltaAxis1/2 untouched.
+///
+/// Second, deciding whether to negate must not be based on whether that
+/// coarse value changed - `decision`'s per-axis reversed flags reflect
+/// policy only (config says to reverse this axis or not), not this
+/// specific event's coarse magnitude. Gating on "did the coarse delta
+/// change" would skip every continuous event whose coarse delta happens to
+/// read 0 on both sides, silently leaving it un-reversed while neighboring
+/// events in the same swipe do get reversed - exactly the per-event
+/// inconsistency that feels like stutter.
 pub fn apply_config_in_place(
     event: &CGEvent,
     config: &AppConfig,
@@ -73,19 +83,15 @@ pub fn apply_config_in_place(
     let normalized = event_from_cg_event(event, device_kind, hardware);
     let decision = scroll::transform_event(config, normalized);
 
-    let vertical_changed = decision.original.delta_vertical != decision.transformed.delta_vertical;
-    let horizontal_changed =
-        decision.original.delta_horizontal != decision.transformed.delta_horizontal;
-
     if normalized.continuous {
-        if vertical_changed {
+        if decision.vertical_reversed {
             negate_precise_axis(
                 event,
                 EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1,
                 EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1,
             );
         }
-        if horizontal_changed {
+        if decision.horizontal_reversed {
             negate_precise_axis(
                 event,
                 EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2,
@@ -93,6 +99,11 @@ pub fn apply_config_in_place(
             );
         }
     } else {
+        let vertical_changed =
+            decision.original.delta_vertical != decision.transformed.delta_vertical;
+        let horizontal_changed =
+            decision.original.delta_horizontal != decision.transformed.delta_horizontal;
+
         if vertical_changed {
             event.set_integer_value_field(
                 EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1,
@@ -269,6 +280,44 @@ mod tests {
         assert_eq!(
             event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1),
             original_delta
+        );
+    }
+
+    #[test]
+    fn apply_config_in_place_still_reverses_a_continuous_event_whose_coarse_delta_is_zero() {
+        // Regression test for the trackpad stutter bug: build an event
+        // exactly like a real touch tick that moved real pixels but didn't
+        // cross a full "line" - Delta reads 0 while Point/FixedPt carry the
+        // real, nonzero motion (set directly, which - unlike writing
+        // Delta - does not cascade to the other fields, so this precisely
+        // recreates the scenario without any construction side effect).
+        let event = new_continuous_test_event(0);
+        assert_eq!(
+            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1),
+            0,
+            "test assumption: wheel1=0 gives a zero coarse delta"
+        );
+        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1, 5);
+        event.set_double_value_field(EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1, 0.5);
+
+        let config = AppConfig {
+            reverse_trackpad: true,
+            ..AppConfig::default()
+        };
+        let decision = apply_config_in_place(&event, &config, DeviceKind::Trackpad, None);
+
+        assert!(
+            decision.vertical_reversed,
+            "policy says reverse trackpad scrolling regardless of this event's coarse delta"
+        );
+        assert_eq!(
+            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1),
+            -5,
+            "the real, nonzero pixel motion must still be reversed even though Delta read 0"
+        );
+        assert_eq!(
+            event.get_double_value_field(EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1),
+            -0.5
         );
     }
 }

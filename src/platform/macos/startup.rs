@@ -170,7 +170,11 @@ fn launch_agent_path() -> AppResult<PathBuf> {
         .join(PLIST_FILE))
 }
 
-fn log_path() -> AppResult<PathBuf> {
+/// Where the `run` daemon's stdout/stderr are logged. Shared by the
+/// LaunchAgent plist (`StandardOutPath`/`StandardErrorPath`) and by the
+/// settings window's GUI-spawned daemon (`ui.rs`), so both routes into
+/// `run` land in the same file.
+pub fn log_path() -> AppResult<PathBuf> {
     if let Some(dir) = env::var_os("AUTO_REVERSE_LAUNCH_AGENT_DIR") {
         return Ok(PathBuf::from(dir).join(LOG_FILE));
     }
