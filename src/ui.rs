@@ -42,13 +42,25 @@
 //! really exits the process (`std::process::exit(0)`), which also tears
 //! down the tap thread and releases its `daemon_lock` (process exit closes
 //! the lock's file descriptor, which the kernel treats as a release).
+//!
+//! The window-close intercept above only covers the window-level close
+//! event; it does nothing against the separate, application-level standard
+//! quit pathway (Cmd-Q, Dock/Activity Monitor "Quit", or an AppleScript
+//! `tell application "Auto Reverse" to quit"), which terminates the process
+//! directly and would otherwise bypass the hide-not-quit behavior entirely.
+//! `platform::macos::quit_handler` closes that gap by overriding the
+//! `kAEQuitApplication` Apple Event those all resolve to, at the Apple
+//! Event Manager level - see that module's doc comment for why this is
+//! done there and not via `NSApplicationDelegate`.
 
 use std::sync::{Arc, RwLock};
 
 use eframe::egui::{self, Color32, RichText, ViewportCommand};
 
 use crate::config::{AppConfig, ConfigStore, DeviceRule};
-use crate::platform::macos::{daemon_lock, event_tap, hid, login_item, permissions, tray};
+use crate::platform::macos::{
+    daemon_lock, event_tap, hid, login_item, permissions, quit_handler, tray,
+};
 
 const WINDOW_WIDTH: f32 = 400.0;
 const WINDOW_HEIGHT: f32 = 640.0;
@@ -136,6 +148,11 @@ struct SettingsApp {
     /// Set on a login_item register/unregister failure.
     login_item_error: Option<String>,
     tray: Option<tray::TrayHandle>,
+    /// Whether `quit_handler::install()` has run yet - it must happen on
+    /// the main thread after `NSApplication` has started, same constraint
+    /// as building the tray icon, so it is done lazily on the first tick
+    /// rather than in `load()`.
+    quit_handler_installed: bool,
 }
 
 impl SettingsApp {
@@ -171,6 +188,7 @@ impl SettingsApp {
             tap_thread_running: false,
             login_item_error,
             tray: None,
+            quit_handler_installed: false,
         };
         // Opening the app is now also how scroll reversal starts, not just
         // where you look at settings. If permissions are missing, leave the
@@ -277,6 +295,16 @@ impl eframe::App for SettingsApp {
             }
         }
 
+        // Same one-time, main-thread, first-tick setup as the tray icon
+        // above: overrides the kAEQuitApplication Apple Event so Cmd-Q,
+        // Dock quit, and AppleScript `quit` can no longer terminate the
+        // process - see quit_handler's module doc comment for why this
+        // cannot be done via NSApplicationDelegate instead.
+        if !self.quit_handler_installed {
+            quit_handler::install();
+            self.quit_handler_installed = true;
+        }
+
         // Closing the window (red button or Cmd-W) must hide, not quit -
         // only the tray's Quit action really exits the process. Without
         // canceling the close, eframe's run_and_return mode would make
@@ -287,6 +315,14 @@ impl eframe::App for SettingsApp {
         // not just for keeping the process alive.
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        }
+
+        // Cmd-Q / Dock quit / AppleScript quit: quit_handler already
+        // swallowed the kAEQuitApplication event before NSApplication ever
+        // saw it (so the process was never at risk of exiting), this just
+        // mirrors the window-close-to-hide UX for that same user intent.
+        if quit_handler::poll_quit_requested() {
             ctx.send_viewport_cmd(ViewportCommand::Visible(false));
         }
 

@@ -15,6 +15,9 @@
 //!   different binaries/use cases, not meant to be unified.
 //! - `tray` (gui only): native AppKit menu-bar item for the merged
 //!   settings-window + event-tap process.
+//! - `quit_handler` (gui only): overrides the `kAEQuitApplication` Apple
+//!   Event (Cmd-Q, Dock quit, AppleScript `quit`) so only the tray's own
+//!   Quit action can end the merged process.
 
 pub mod daemon_lock;
 pub mod event_tap;
@@ -22,6 +25,8 @@ pub mod hid;
 #[cfg(feature = "gui")]
 pub mod login_item;
 pub mod permissions;
+#[cfg(feature = "gui")]
+pub mod quit_handler;
 pub mod scroll_events;
 pub mod startup;
 #[cfg(feature = "gui")]
