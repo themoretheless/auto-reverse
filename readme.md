@@ -93,7 +93,7 @@ Then launch the bundled app:
 open "target/debug/Auto Reverse.app"
 ```
 
-Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and both permissions are granted, sharing one live config with the window so changes apply immediately with no restart. If the app was opened before permissions were granted, it keeps watching the permission state and retries starting the tap once both checks become ready. A menu-bar icon (Open Settings / Quit) stays up for as long as the process runs; closing the window hides it rather than quitting. An exclusive lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. For terminal diagnostics through the bundled identity:
+Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and both permissions are granted, sharing one live config with the window so changes made in that window apply immediately with no restart. If the app was opened before permissions were granted, it keeps watching the permission state and retries starting the tap once both checks become ready; if startup failed or stopped immediately, turning Reverse scrolling off clears that pending attempt so turning it on again can retry cleanly. A menu-bar icon (Open Settings / Quit) stays up for as long as the process runs; closing the window hides it rather than quitting. A separate `ui.lock` prevents duplicate windows/menu-bar icons, and an exclusive tap lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. External CLI edits made while the settings window is already open do not update that running window; use the window itself, or quit and reopen it. For terminal diagnostics through the bundled identity:
 
 The bundle uses the real Mach-O binary as `CFBundleExecutable`
 (`Contents/MacOS/auto-reverse`) rather than a shell launcher. With no
@@ -251,5 +251,5 @@ This should feel like a compact native utility:
 ## Documents
 
 - `architecture.md` - current and target architecture, SOLID/DRY split, UX direction.
-- `recommendation.md` - 660 recommendations, problems and improvements (500 base items + N01-N160 follow-ups after startup, menu bar, and bundle identity work).
+- `recommendation.md` - 760 recommendations, problems and improvements (500 base items + N01-N260 follow-ups after startup, menu bar, bundle identity, and lifecycle/design review).
 - `scroll-reverser-parity.md` - Scroll Reverser feature parity checklist.

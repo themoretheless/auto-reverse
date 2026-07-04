@@ -108,9 +108,12 @@ fn run_event_tap() -> AppResult<()> {
     }
 
     println!(
-        "auto-reverse: config changes made while this is running have no effect until restart \
-         (this headless `run` process does not watch the config file for changes; the merged \
-         `ui` process does, via its shared in-memory config)"
+        "auto-reverse: config changes made while this is running have no effect until restart. \
+         Neither this headless `run` process nor the merged `ui` process watches the config \
+         file for external edits - `ui` only applies changes made through its own settings \
+         window (written straight to its shared in-memory config), so a CLI command like \
+         `enable`/`disable` run while `ui` is open has no effect on it either, and can be \
+         silently overwritten by `ui`'s next save."
     );
 
     // install_and_run acquires the exclusive daemon_lock itself, as the

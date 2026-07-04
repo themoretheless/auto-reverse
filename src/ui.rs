@@ -48,7 +48,7 @@ use std::sync::{Arc, RwLock};
 use eframe::egui::{self, Color32, RichText, ViewportCommand};
 
 use crate::config::{AppConfig, ConfigStore, DeviceRule};
-use crate::platform::macos::{event_tap, hid, login_item, permissions, tray};
+use crate::platform::macos::{daemon_lock, event_tap, hid, login_item, permissions, tray};
 
 const WINDOW_WIDTH: f32 = 400.0;
 const WINDOW_HEIGHT: f32 = 640.0;
@@ -56,7 +56,24 @@ const WINDOW_HEIGHT: f32 = 640.0;
 /// Launches the settings window and starts scroll reversal in-process;
 /// blocks until the user actually quits (via the tray menu), not merely
 /// until the window is closed/hidden.
+///
+/// Acquires its own exclusive lock (a sibling of `daemon_lock`'s own
+/// `run.lock`) BEFORE building any window or tray icon. `daemon_lock`
+/// itself only gates the CGEventTap, not the GUI - a second `ui` process
+/// launched directly (bypassing Finder/LaunchServices' single-instance
+/// activation, e.g. `open` twice in a row, or `config.enabled == false` so
+/// the tap thread never even attempts to start) would otherwise build a
+/// second live window and a second menu-bar icon with nothing to tell the
+/// user which one is authoritative. If this lock is already held, this
+/// returns an error immediately instead of opening a redundant window.
 pub fn run_settings_window() -> Result<(), String> {
+    let ui_lock_path = daemon_lock::default_path().with_file_name("ui.lock");
+    let Some(_ui_lock) =
+        daemon_lock::try_acquire(&ui_lock_path).map_err(|error| error.to_string())?
+    else {
+        return Err("Auto Reverse is already open".to_string());
+    };
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Auto Reverse")
@@ -106,13 +123,16 @@ struct SettingsApp {
     /// Last save failure, shown inline; None while everything persists fine.
     save_error: Option<String>,
     load_error: Option<String>,
-    /// Set when the in-process tap thread failed to even start (e.g. the
-    /// daemon_lock was already held by another `run`/`ui` process).
+    /// Set when the in-process tap thread failed or returned immediately
+    /// instead of settling into its run loop.
     tap_error: Option<String>,
     /// Whether this UI process has already tried to start the in-process tap.
     /// If permissions were missing at launch, this stays false so the app can
     /// start automatically once the user grants them in System Settings.
     tap_start_attempted: bool,
+    /// True only when the startup handshake timed out, which is the normal
+    /// signal that `install_and_run` entered the forever-blocking tap loop.
+    tap_thread_running: bool,
     /// Set on a login_item register/unregister failure.
     login_item_error: Option<String>,
     tray: Option<tray::TrayHandle>,
@@ -148,6 +168,7 @@ impl SettingsApp {
             load_error,
             tap_error: None,
             tap_start_attempted: false,
+            tap_thread_running: false,
             login_item_error,
             tray: None,
         };
@@ -178,20 +199,55 @@ impl SettingsApp {
     /// Persists to disk AND publishes to the shared config the background
     /// tap thread reads - this is what makes a settings change apply to the
     /// very next scroll event instead of requiring a restart.
+    ///
+    /// On a disk-save failure, `self.config` (bound to every widget) is
+    /// rolled back to whatever `shared_config` still holds - the last state
+    /// that actually persisted and is actually running. Without this, a
+    /// failed save left the checkboxes/sliders showing the new, unapplied
+    /// values while the live tap thread kept using the old ones, with no
+    /// visible sign of the split, and a later successful save would apply
+    /// both the old failed edit and the new one together, well after the
+    /// user made the first one and after it appeared to fail.
     fn save(&mut self) {
-        self.save_error = self.store.save(&self.config).err().map(|e| e.to_string());
-        if self.save_error.is_none() {
-            let mut guard = match self.shared_config.write() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            *guard = self.config.clone();
+        match self.store.save(&self.config) {
+            Ok(()) => {
+                self.save_error = None;
+                let mut guard = match self.shared_config.write() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                *guard = self.config.clone();
+            }
+            Err(error) => {
+                self.save_error = Some(error.to_string());
+                let guard = match self.shared_config.read() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                self.config = guard.clone();
+            }
         }
     }
 
     fn start_tap_thread(&mut self) {
         self.tap_start_attempted = true;
-        self.tap_error = spawn_tap_thread(Arc::clone(&self.shared_config));
+        match spawn_tap_thread(Arc::clone(&self.shared_config)) {
+            TapStartOutcome::Running => {
+                self.tap_thread_running = true;
+                self.tap_error = None;
+            }
+            TapStartOutcome::StoppedImmediately => {
+                self.tap_thread_running = false;
+                self.tap_error = Some(
+                    "the tap stopped immediately; another Auto Reverse instance may already be running"
+                        .to_string(),
+                );
+            }
+            TapStartOutcome::Failed(error) => {
+                self.tap_thread_running = false;
+                self.tap_error = Some(error);
+            }
+        }
     }
 }
 
@@ -406,6 +462,9 @@ impl SettingsApp {
                             );
                         }
                     } else {
+                        if !self.tap_thread_running {
+                            self.tap_start_attempted = false;
+                        }
                         self.tap_error = None;
                     }
                 }
@@ -560,7 +619,13 @@ fn device_rules(
 /// just costs an idle thread that returns immediately rather than risking a
 /// second live CGEventTap. Never blocks the GUI thread: `install_and_run`
 /// runs its own forever-blocking CFRunLoop entirely on the spawned thread.
-fn spawn_tap_thread(shared_config: Arc<RwLock<AppConfig>>) -> Option<String> {
+enum TapStartOutcome {
+    Running,
+    StoppedImmediately,
+    Failed(String),
+}
+
+fn spawn_tap_thread(shared_config: Arc<RwLock<AppConfig>>) -> TapStartOutcome {
     let (result_tx, result_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         // install_and_run only returns once it definitively fails to start
@@ -580,10 +645,10 @@ fn spawn_tap_thread(shared_config: Arc<RwLock<AppConfig>>) -> Option<String> {
     // case and without blocking it at all in the success case beyond this
     // short window.
     match result_rx.recv_timeout(std::time::Duration::from_millis(200)) {
-        Ok(Ok(())) => None,
-        Ok(Err(error)) => Some(error.to_string()),
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
+        Ok(Ok(())) => TapStartOutcome::StoppedImmediately,
+        Ok(Err(error)) => TapStartOutcome::Failed(error.to_string()),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => TapStartOutcome::Running,
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => TapStartOutcome::StoppedImmediately,
     }
 }
 
