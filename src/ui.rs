@@ -109,6 +109,10 @@ struct SettingsApp {
     /// Set when the in-process tap thread failed to even start (e.g. the
     /// daemon_lock was already held by another `run`/`ui` process).
     tap_error: Option<String>,
+    /// Whether this UI process has already tried to start the in-process tap.
+    /// If permissions were missing at launch, this stays false so the app can
+    /// start automatically once the user grants them in System Settings.
+    tap_start_attempted: bool,
     /// Set on a login_item register/unregister failure.
     login_item_error: Option<String>,
     tray: Option<tray::TrayHandle>,
@@ -132,19 +136,6 @@ impl SettingsApp {
 
         let shared_config = Arc::new(RwLock::new(config.clone()));
 
-        // Opening the app is now also how scroll reversal starts, not just
-        // where you look at settings. The CGEventTap runs on a background
-        // thread in this same process; install_and_run itself acquires the
-        // daemon_lock as its first step, so a redundant launch (a manual
-        // `run`, a LaunchAgent, or a second `ui` instance) just observes the
-        // lock already held and returns cleanly rather than installing a
-        // second competing tap.
-        let tap_error = if config.enabled && permissions_ready {
-            spawn_tap_thread(Arc::clone(&shared_config))
-        } else {
-            None
-        };
-
         let login_item_error = None;
 
         let mut app = Self {
@@ -155,10 +146,18 @@ impl SettingsApp {
             devices_error: None,
             save_error: None,
             load_error,
-            tap_error,
+            tap_error: None,
+            tap_start_attempted: false,
             login_item_error,
             tray: None,
         };
+        // Opening the app is now also how scroll reversal starts, not just
+        // where you look at settings. If permissions are missing, leave the
+        // attempt pending; `panel_contents` retries automatically when the
+        // permission checks turn green.
+        if app.config.enabled && permissions_ready {
+            app.start_tap_thread();
+        }
         app.refresh_devices();
         app
     }
@@ -188,6 +187,11 @@ impl SettingsApp {
             };
             *guard = self.config.clone();
         }
+    }
+
+    fn start_tap_thread(&mut self) {
+        self.tap_start_attempted = true;
+        self.tap_error = spawn_tap_thread(Arc::clone(&self.shared_config));
     }
 }
 
@@ -341,12 +345,21 @@ impl SettingsApp {
             ui.separator();
             section(ui, "Permissions");
             let permissions_ready = permissions_panel(ui);
+            if self.config.enabled && permissions_ready && !self.tap_start_attempted {
+                self.start_tap_thread();
+            }
             if let Some(error) = &self.tap_error {
                 ui.label(
                     RichText::new(format!("Scroll reversal could not start: {error}"))
                         .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
                         .small(),
                 );
+                if permissions_ready
+                    && self.config.enabled
+                    && ui.small_button("Retry starting scroll reversal").clicked()
+                {
+                    self.start_tap_thread();
+                }
             }
             if !permissions_ready && self.config.enabled {
                 ui.horizontal(|ui| {
@@ -381,16 +394,20 @@ impl SettingsApp {
                 // pass-through behavior `scroll::transform_event` already
                 // implements), so disabling here takes effect immediately
                 // without needing to tear down the thread.
-                if self.save_error.is_none() && enabled_changed && self.config.enabled {
-                    self.tap_error = if permissions_ready {
-                        spawn_tap_thread(Arc::clone(&self.shared_config))
+                if self.save_error.is_none() && enabled_changed {
+                    if self.config.enabled {
+                        if permissions_ready && !self.tap_start_attempted {
+                            self.start_tap_thread();
+                        } else if !permissions_ready {
+                            self.tap_error = Some(
+                                "permissions are still missing; grant them, then Auto Reverse \
+                                 will retry automatically"
+                                    .to_string(),
+                            );
+                        }
                     } else {
-                        Some(
-                            "permissions are still missing; grant them, then toggle Reverse \
-                             scrolling again"
-                                .to_string(),
-                        )
-                    };
+                        self.tap_error = None;
+                    }
                 }
             }
         }

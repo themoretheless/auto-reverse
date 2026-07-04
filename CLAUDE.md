@@ -15,7 +15,10 @@ untouched. It is layered so pure logic never touches OS frameworks:
   field mapping), `permissions.rs` (Accessibility + Input Monitoring TCC),
   `hid.rs` (IOHIDManager wheel monitor attributing discrete scrolls to a
   specific vendor/product ID), `startup.rs` (LaunchAgent start-at-login),
-  `event_tap.rs` (tap runtime)
+  `event_tap.rs` (tap runtime), `tray.rs` (native AppKit status item),
+  `login_item.rs` (`SMAppService.mainAppService()` for the GUI bundle)
+- `src/ui.rs` - egui settings window; starts the tap in-process on a
+  background thread and keeps it live while the window is hidden
 - `src/main.rs` - CLI (`run`, `doctor`, `enable`, `disable`, `toggle`,
   `enable-startup`, `disable-startup`, `startup-status`, `devices`,
   `init`, `config-path`, `show-config`, `simulate`, `help`)
@@ -47,11 +50,16 @@ Known accepted limitations (documented in `doctor` output and
 trackpad through the public CGEventTap API, so `reverse_magic_mouse` and
 `reverse_unknown` currently have no effect; four config fields
 (`show_menu_bar_icon`, `check_for_updates`, `include_beta_updates`,
-`show_discrete_scroll_options`) are reserved for a future menu-bar app.
-`start_at_login` IS implemented (per-user LaunchAgent via
-`enable-startup`/`disable-startup`; `startup.rs` writes the plist, boots
-the running instance out on disable, and logs the agent's output to
-~/Library/Logs/auto-reverse.log).
+`show_discrete_scroll_options`) are stored for planned UI/updater behavior
+but are not applied by the runtime yet. `start_at_login` has two intentional
+paths: CLI `enable-startup`/`disable-startup` writes a per-user LaunchAgent,
+while the GUI settings window registers the `.app` bundle through
+`SMAppService.mainAppService()`.
+
+Bundle invariant: `scripts/build-app-bundle.sh` must copy the real Mach-O
+binary to `Contents/MacOS/auto-reverse` and keep `CFBundleExecutable` pointed
+there. Do not reintroduce a shell launcher that execs a differently named
+binary; that broke macOS Control Center status-item scene creation.
 
 See `readme.md` (overview + module map), `architecture.md` (target
 architecture, SOLID/DRY layering), `recommendation.md` (backlog + verified

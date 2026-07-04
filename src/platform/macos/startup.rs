@@ -1,9 +1,10 @@
-//! Start-at-login support for the current CLI binary.
+//! Start-at-login support for the current CLI/headless binary path.
 //!
-//! A future packaged `.app` can use `SMAppService`, but the project is
-//! currently a CLI binary. A per-user LaunchAgent is the honest integration
-//! that works now: it starts this exact executable with the `run` argument
-//! on the next login.
+//! The bundled GUI app uses `login_item.rs` / `SMAppService.mainAppService()`;
+//! this module deliberately remains the CLI mechanism. It writes a per-user
+//! LaunchAgent that starts this exact executable with the `run` argument on
+//! the next login, which is useful for lean/no-GUI builds and terminal-driven
+//! installs.
 //!
 //! "Installed" here means exactly that: the agent file exists in
 //! ~/Library/LaunchAgents. macOS can still veto it (the Login Items toggle

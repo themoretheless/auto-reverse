@@ -23,6 +23,7 @@ Implemented:
   scroll event tap in the same process when enabled and permissions are ready,
   deduped against any other already-running tap via `daemon_lock`;
 - menu bar UI with a macOS template status icon and Open Settings / Quit menu;
+- GUI Start at Login toggle via `SMAppService.mainAppService()`;
 - CLI diagnostics, JSON startup status and simulation;
 - separated CLI parser in `src/cli.rs`.
 
@@ -92,7 +93,7 @@ Then launch the bundled app:
 open "target/debug/Auto Reverse.app"
 ```
 
-Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and both permissions are granted, sharing one live config with the window so changes apply immediately with no restart. A menu-bar icon (Open Settings / Quit) stays up for as long as the process runs; closing the window hides it rather than quitting. An exclusive lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. For terminal diagnostics through the bundled identity:
+Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and both permissions are granted, sharing one live config with the window so changes apply immediately with no restart. If the app was opened before permissions were granted, it keeps watching the permission state and retries starting the tap once both checks become ready. A menu-bar icon (Open Settings / Quit) stays up for as long as the process runs; closing the window hides it rather than quitting. An exclusive lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. For terminal diagnostics through the bundled identity:
 
 The bundle uses the real Mach-O binary as `CFBundleExecutable`
 (`Contents/MacOS/auto-reverse`) rather than a shell launcher. With no
@@ -148,13 +149,18 @@ Current limitation: `reverse_magic_mouse` is present for parity, but the live cl
 
 ## Start At Login
 
-`enable-startup` installs a per-user LaunchAgent:
+There are two start-at-login mechanisms because there are two launch styles:
+
+- the GUI settings window uses `SMAppService.mainAppService()` and registers the `.app` bundle itself;
+- the CLI command `enable-startup` installs a per-user LaunchAgent for the current binary path.
+
+The CLI LaunchAgent lives at:
 
 ```text
 ~/Library/LaunchAgents/com.auto-reverse.agent.plist
 ```
 
-That agent starts the current executable with the `run` argument on the next login. This works for the CLI build today. A future packaged `.app` can switch to `SMAppService`, but LaunchAgent keeps the feature real before the GUI exists.
+That agent starts the current executable with the `run` argument on the next login. Use it for terminal/no-GUI installs. Use the settings window's Start at Login toggle for the bundled `.app`.
 
 `startup-status --json` prints the LaunchAgent state, config path, config `start_at_login` value, and whether both are in sync. It does not create a config file just to report status.
 
@@ -192,7 +198,7 @@ src/ui.rs                            egui settings window (gui feature); also ru
 The macOS framework crates (`core-foundation`, `core-graphics`) are
 target-specific dependencies: the pure core compiles without them.
 
-Next target split (future, GUI phase):
+Next target split:
 
 - introduce `app/runtime`;
 - introduce `ui/menu_bar`, `ui/settings`, `ui/diagnostics`;
@@ -245,5 +251,5 @@ This should feel like a compact native utility:
 ## Documents
 
 - `architecture.md` - current and target architecture, SOLID/DRY split, UX direction.
-- `recommendation.md` - 560 recommendations, problems and improvements (500 base items + N01-N60 added after the startup feature).
+- `recommendation.md` - 660 recommendations, problems and improvements (500 base items + N01-N160 follow-ups after startup, menu bar, and bundle identity work).
 - `scroll-reverser-parity.md` - Scroll Reverser feature parity checklist.

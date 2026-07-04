@@ -172,8 +172,8 @@ fn doctor(options: DoctorOptions) -> AppResult<()> {
     );
     println!(
         "known gap: show_menu_bar_icon, check_for_updates, include_beta_updates, and \
-         show_discrete_scroll_options are reserved for a future menu-bar app and have no effect \
-         in this CLI-only build"
+         show_discrete_scroll_options are stored for planned UI/updater behavior but are not \
+         applied by the runtime yet"
     );
 
     if !accessibility || !input_monitoring {
