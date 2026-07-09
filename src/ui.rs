@@ -421,7 +421,9 @@ impl eframe::App for SettingsApp {
                 // so this reuses ConfigStore::save on the identical
                 // shared_config the tray already wrote through, rather
                 // than re-implementing a second write path.
-                let _ = store_for_tray.save(config);
+                store_for_tray
+                    .save(config)
+                    .map_err(|error| error.to_string())
             }) {
                 Ok(handle) => self.tray = Some(handle),
                 Err(error) => {
@@ -501,6 +503,13 @@ impl eframe::App for SettingsApp {
             }
             Some(tray::TrayAction::OpenDebugConsole) => {
                 self.show_debug_console = true;
+            }
+            Some(tray::TrayAction::SaveFailed) => {
+                self.sync_config_from_shared();
+                self.save_error = Some(
+                    tray::take_last_save_error()
+                        .unwrap_or_else(|| "tray change could not be saved".to_string()),
+                );
             }
             None => {}
         }

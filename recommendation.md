@@ -209,7 +209,7 @@ bundle из `scripts/build-app-bundle.sh`, не production release).
 - `record_debug_event` берёт мьютекс `LAST_WHEEL` дважды за событие (один раз для hardware id, второй - для имени устройства) вместо одного совмещённого чтения - мьютекс не контed (единственный run-loop поток), реальной проблемы нет, просто не самый дешёвый вариант.
 - Формулировка отчёта реализации смешивала "критическая секция самого ring buffer" (действительно минимальная) с "вся синхронная работа `record_debug_event` на hot path" (включает форматирование строк до захвата лока) - не баг, просто неточная формулировка в отчёте, а не в коде.
 
-Проверено после финальной доводки под handoff: `cargo fmt --check`, `cargo check`, `cargo check --no-default-features`, `cargo test` (66+17 тестов), `cargo clippy --all-targets -- -D warnings`, `scripts/build-app-bundle.sh`, bundle smoke (`Mach-O`, `Info.plist`, `codesign`, отсутствие wrapper-маркеров) - все чистые. Интерактивный клик по вкладкам/меню/Debug Console не проверялся - нет доступа к reliable interactive AppKit driving или выданных permissions для тестовой копии в этой среде; это открытый пробел, а не "проверено и работает".
+Проверено после финальной доводки под handoff: `cargo fmt --check`, `cargo check`, `cargo check --no-default-features`, `cargo test` (67+17 тестов), `cargo clippy --all-targets -- -D warnings`, `scripts/build-app-bundle.sh`, bundle smoke (`Mach-O`, `Info.plist`, `codesign`, отсутствие wrapper-маркеров) - все чистые. Интерактивный клик по вкладкам/меню/Debug Console не проверялся - нет доступа к reliable interactive AppKit driving или выданных permissions для тестовой копии в этой среде; это открытый пробел, а не "проверено и работает".
 
 Статус 2026-07-09: пользователь явно дал команду "влей и запуш", поэтому этот крупный UI/debug-console срез входит в текущий pre-push пакет вместе с финальным ревью, документацией и исправлениями.
 
@@ -228,7 +228,7 @@ bundle из `scripts/build-app-bundle.sh`, не production release).
 
 Живая визуальная проверка после фиксов (реальный скриншот, не только код): вкладка General в тёмной теме показывает системный шрифт (не встроенный egui-шрифт), корректно скруглённые синие чекбоксы `#2F6FE4`-с-галочкой, кастомный слайдер с синей заливкой и белым круглым ползунком с рамкой - визуально заметно ближе к дизайну, чем до этого раунда. Вкладки Devices/Permissions и трей-иконка/меню интерактивно не проверены (нет способа кликать без Accessibility/computer-use доступа к этому конкретному приложению) - открытый пробел.
 
-Проверено: `cargo fmt`, `cargo build`, `cargo test` (66+17), `cargo clippy --all-targets`, `cargo build --no-default-features` - все чистые. Живой smoke-тест изолированной копии дважды (до и после ручных фиксов) - без крашей, продакшн-инстанс не тронут ни разу.
+Проверено: `cargo fmt`, `cargo build`, `cargo test` (67+17), `cargo clippy --all-targets`, `cargo build --no-default-features` - все чистые. Живой smoke-тест изолированной копии дважды (до и после ручных фиксов) - без крашей, продакшн-инстанс не тронут ни разу.
 
 ### Финальное ревью перед merge/push 2026-07-09
 
@@ -763,10 +763,10 @@ N281. [Problem] Rich tray quick-pick не показывает vendor/product ID
 N282. [Improve] В Devices submenu показывать короткий hex suffix или tooltip-like secondary title where AppKit allows it.
 N283. [Problem] Tray quick-pick остается бинарным Default/Reverse и не может выставлять Don't reverse.
 N284. [Improve] Сделать submenu per device с Default/Reverse/Don't reverse или оставить binary, но открыть Settings для третьего состояния.
-N285. [Problem] `on_disk_save` в tray игнорирует save errors.
-N286. [Improve] Возвращать Result из tray save closure и публиковать UI-visible warning/debug row.
-N287. [Problem] Tray toggle меняет shared config, но `save_error` в settings не узнает о disk failure.
-N288. [Improve] Добавить `TrayAction::ConfigSaveFailed(String)` или shared notification slot.
+N285. [Done] `on_disk_save` в tray больше не игнорирует save errors.
+N286. [Done] Tray save closure возвращает `Result`, а ошибка становится UI-visible warning.
+N287. [Done] Tray toggle откатывает shared config при disk failure, чтобы runtime не расходился с сохраненным config.
+N288. [Done] Добавлен tray save-error notification slot через `TrayAction::SaveFailed` + `take_last_save_error`.
 N289. [Problem] Debug Console Export пишет файл сразу в Application Support без пользовательского выбора.
 N290. [Improve] Добавить Save Panel или хотя бы Reveal in Finder после export.
 N291. [Problem] CSV export не включает config snapshot/reason enum, только display text.

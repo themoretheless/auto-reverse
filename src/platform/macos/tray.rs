@@ -82,6 +82,7 @@ const OPEN_SETTINGS_ACTION: usize = 1;
 const QUIT_ACTION: usize = 2;
 const TOGGLE_ENABLED_ACTION: usize = 3;
 const OPEN_DEBUG_CONSOLE_ACTION: usize = 4;
+const SAVE_FAILED_ACTION: usize = 5;
 // Device-rule quick-pick actions are encoded as
 // DEVICE_ACTION_BASE + index into the device list snapshotted when the
 // menu was last built (see `MenuActionTargetIvars::devices`), rather than
@@ -89,6 +90,9 @@ const OPEN_DEBUG_CONSOLE_ACTION: usize = 4;
 const DEVICE_ACTION_BASE: usize = 100;
 
 static PENDING_ACTION: AtomicUsize = AtomicUsize::new(NO_ACTION);
+static LAST_SAVE_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+type SaveCallback = dyn Fn(&AppConfig) -> Result<(), String> + Send + Sync;
 
 /// What the user asked for via the tray menu, polled once per frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +107,9 @@ pub enum TrayAction {
     ToggleDevice(usize),
     /// Open the Debug Console window from the rich menu or an option-click.
     OpenDebugConsole,
+    /// A tray-originated config mutation could not be persisted and was
+    /// rolled back in shared config.
+    SaveFailed,
 }
 
 /// Status the icon and the menu's status line both reflect. Computed the
@@ -242,7 +249,7 @@ impl TrayHandle {
 /// concrete `HardwareId` in `logic()`.
 struct MenuActionTargetIvars {
     shared_config: Arc<RwLock<AppConfig>>,
-    on_change: Arc<dyn Fn(&AppConfig) + Send + Sync>,
+    on_change: Arc<SaveCallback>,
     device_snapshot: Mutex<Vec<hid::DeviceInfo>>,
 }
 
@@ -267,16 +274,25 @@ define_class!(
         #[unsafe(method(toggleEnabled:))]
         fn toggle_enabled(&self, _sender: &AnyObject) {
             let ivars = self.ivars();
-            let new_value = {
+            let (old_value, new_value) = {
                 let mut guard = match ivars.shared_config.write() {
                     Ok(guard) => guard,
                     Err(poisoned) => poisoned.into_inner(),
                 };
+                let old_value = guard.clone();
                 guard.enabled = !guard.enabled;
-                guard.clone()
+                (old_value, guard.clone())
             };
-            (ivars.on_change)(&new_value);
-            PENDING_ACTION.store(TOGGLE_ENABLED_ACTION, Ordering::SeqCst);
+            match (ivars.on_change)(&new_value) {
+                Ok(()) => {
+                    PENDING_ACTION.store(TOGGLE_ENABLED_ACTION, Ordering::SeqCst);
+                }
+                Err(error) => {
+                    restore_shared_config(&ivars.shared_config, old_value);
+                    remember_save_error(error);
+                    PENDING_ACTION.store(SAVE_FAILED_ACTION, Ordering::SeqCst);
+                }
+            }
         }
 
         #[unsafe(method(openDebugConsole:))]
@@ -295,11 +311,12 @@ define_class!(
             };
             let Some(device) = device else { return };
 
-            let new_value = {
+            let (old_value, new_value) = {
                 let mut guard = match ivars.shared_config.write() {
                     Ok(guard) => guard,
                     Err(poisoned) => poisoned.into_inner(),
                 };
+                let old_value = guard.clone();
                 let Some(updated_rules) = toggle_device_rules(&guard.device_rules, &device) else {
                     // An explicit "Don't reverse" rule (Some(false)) is a
                     // deliberate choice made via the settings window's
@@ -313,16 +330,24 @@ define_class!(
                     return;
                 };
                 guard.device_rules = updated_rules;
-                guard.clone()
+                (old_value, guard.clone())
             };
-            (ivars.on_change)(&new_value);
-            // Reuses the same DEVICE_ACTION_BASE+index encoding as the menu
-            // item's own tag (see rebuild_menu) so poll_action can decode it
-            // straight back into TrayAction::ToggleDevice(index) - the
-            // settings window's self.config resync (see ui.rs's logic())
-            // needs this action, not NO_ACTION, to know a tray-driven device
-            // toggle just happened.
-            PENDING_ACTION.store(encode_device_action(index), Ordering::SeqCst);
+            match (ivars.on_change)(&new_value) {
+                Ok(()) => {
+                    // Reuses the same DEVICE_ACTION_BASE+index encoding as the menu
+                    // item's own tag (see rebuild_menu) so poll_action can decode it
+                    // straight back into TrayAction::ToggleDevice(index) - the
+                    // settings window's self.config resync (see ui.rs's logic())
+                    // needs this action, not NO_ACTION, to know a tray-driven device
+                    // toggle just happened.
+                    PENDING_ACTION.store(encode_device_action(index), Ordering::SeqCst);
+                }
+                Err(error) => {
+                    restore_shared_config(&ivars.shared_config, old_value);
+                    remember_save_error(error);
+                    PENDING_ACTION.store(SAVE_FAILED_ACTION, Ordering::SeqCst);
+                }
+            }
         }
     }
 
@@ -367,7 +392,7 @@ define_class!(
 /// one that could silently diverge from `SettingsApp::save()`.
 pub fn build(
     shared_config: Arc<RwLock<AppConfig>>,
-    on_disk_save: impl Fn(&AppConfig) + Send + Sync + 'static,
+    on_disk_save: impl Fn(&AppConfig) -> Result<(), String> + Send + Sync + 'static,
 ) -> Result<TrayHandle, String> {
     let mtm = MainThreadMarker::new()
         .ok_or_else(|| "could not create the menu-bar item off the main thread".to_string())?;
@@ -551,6 +576,7 @@ fn decode_pending_action(raw: usize) -> Option<TrayAction> {
         QUIT_ACTION => Some(TrayAction::Quit),
         TOGGLE_ENABLED_ACTION => Some(TrayAction::ToggleEnabled),
         OPEN_DEBUG_CONSOLE_ACTION => Some(TrayAction::OpenDebugConsole),
+        SAVE_FAILED_ACTION => Some(TrayAction::SaveFailed),
         NO_ACTION => None,
         // Anything at/above DEVICE_ACTION_BASE is a device-toggle index -
         // see toggle_device's PENDING_ACTION.store call for the encoding.
@@ -559,6 +585,24 @@ fn decode_pending_action(raw: usize) -> Option<TrayAction> {
         }
         _ => None,
     }
+}
+
+pub fn take_last_save_error() -> Option<String> {
+    let mut guard = LAST_SAVE_ERROR.lock().unwrap_or_else(|p| p.into_inner());
+    guard.take()
+}
+
+fn remember_save_error(error: String) {
+    let mut guard = LAST_SAVE_ERROR.lock().unwrap_or_else(|p| p.into_inner());
+    *guard = Some(error);
+}
+
+fn restore_shared_config(shared_config: &RwLock<AppConfig>, old_value: AppConfig) {
+    let mut guard = match shared_config.write() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    *guard = old_value;
 }
 
 /// Draws only the "opposing arrows" glyph (handoff "1c", concept B) into a
