@@ -95,11 +95,13 @@ unsafe extern "C" {
     fn IOHIDElementGetDevice(element: IOHIDElementRef) -> IOHIDDeviceRef;
 }
 
-/// The most recent wheel tick seen from any matched device. Written by the
-/// HID callback, read by the event tap callback; both run on the main run
-/// loop thread, so the Mutex is uncontended - it exists to satisfy `static`
-/// soundness, not for real cross-thread traffic.
-static LAST_WHEEL: Mutex<Option<(HardwareId, Instant)>> = Mutex::new(None);
+/// The most recent wheel tick seen from any matched device, plus that
+/// device's `Product` name string (read from the same `IOHIDDeviceRef` the
+/// callback already has in hand - no extra IOHIDManager call). Written by
+/// the HID callback, read by the event tap callback; both run on the main
+/// run loop thread, so the Mutex is uncontended - it exists to satisfy
+/// `static` soundness, not for real cross-thread traffic.
+static LAST_WHEEL: Mutex<Option<(HardwareId, Option<String>, Instant)>> = Mutex::new(None);
 
 /// Starts a mouse-matching HID monitor on the CURRENT thread's run loop.
 /// Must be called on the same thread that will run the event tap loop,
@@ -142,8 +144,20 @@ pub fn start_wheel_monitor() -> AppResult<()> {
 /// The device that produced a wheel tick within `max_age`, if any.
 pub fn recent_wheel_device(max_age: Duration) -> Option<HardwareId> {
     let last = LAST_WHEEL.lock().ok()?;
-    last.filter(|(_, at)| at.elapsed() <= max_age)
-        .map(|(id, _)| id)
+    last.clone()
+        .filter(|(_, _, at)| at.elapsed() <= max_age)
+        .map(|(id, _, _)| id)
+}
+
+/// Same attribution as `recent_wheel_device`, but also returns the device's
+/// `Product` name string when available - used by the Debug Console
+/// (`debug_log::device_description`) to avoid a second, expensive
+/// `list_pointing_devices` IOHIDManager round trip per scroll event.
+pub fn recent_wheel_device_name(max_age: Duration) -> Option<String> {
+    let last = LAST_WHEEL.lock().ok()?;
+    last.clone()
+        .filter(|(_, _, at)| at.elapsed() <= max_age)
+        .and_then(|(_, name, _)| name)
 }
 
 extern "C" fn wheel_value_callback(
@@ -178,7 +192,8 @@ extern "C" fn wheel_value_callback(
         if let Some(hardware) = hardware_id_of(device)
             && let Ok(mut last) = LAST_WHEEL.lock()
         {
-            *last = Some((hardware, Instant::now()));
+            let name = string_property(device, KEY_PRODUCT);
+            *last = Some((hardware, name, Instant::now()));
         }
     }
 }

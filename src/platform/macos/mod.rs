@@ -9,6 +9,9 @@
 //!   headless CLI (`enable-startup`/`disable-startup`, targets `run`).
 //! - `daemon_lock`: exclusive-lock guard (`flock`) preventing two live
 //!   CGEventTaps at once, regardless of which process/thread installs them.
+//! - `debug_log` (gui only): bounded ring buffer of scroll-reversal
+//!   decisions, recorded from `event_tap::handle_event` and shown live by
+//!   the Debug Console window.
 //! - `login_item` (gui only): `SMAppService.mainAppService()` wrapper -
 //!   login-item registration for the bundled GUI app. Deliberately separate
 //!   from `startup` (see recommendation.md risk #6): two mechanisms for two
@@ -20,6 +23,8 @@
 //!   Quit action can end the merged process.
 
 pub mod daemon_lock;
+#[cfg(feature = "gui")]
+pub mod debug_log;
 pub mod event_tap;
 pub mod hid;
 #[cfg(feature = "gui")]
