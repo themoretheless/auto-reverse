@@ -1,6 +1,6 @@
 # 900 рекомендаций, проблем и улучшений (500 базовых + N01-N400 follow-up)
 
-Список обновлен 2026-07-10 после повторного SOLID/DRY split, temporary pause, typed tap lifecycle, app-icon/CI/docs прохода и финального review. Он отражает текущий код: macOS event tap, TOML config, CLI parser, permission recovery, raw-input guard, step size, два start-at-login пути, GUI `.app` bundle с `.icns`, rich menu bar, Debug Console и открытые gaps до Scroll Reverser parity.
+Список обновлен 2026-07-11 после повторного SOLID/DRY split, temporary pause, typed tap lifecycle, app-icon/CI/docs и structured diagnostics проходов. Он отражает текущий код: macOS event tap, TOML config, CLI parser, permission recovery, raw-input guard, step size, два start-at-login пути, GUI `.app` bundle с `.icns`, rich menu bar, Debug Console со stable reason codes и открытые gaps до Scroll Reverser parity.
 
 ## Планируемая переделка: единый процесс + menu bar + SMAppService — риски, записанные до реализации
 
@@ -203,11 +203,9 @@ bundle из `scripts/build-app-bundle.sh`, не production release).
 3. **[Исправлено, умеренный]** Debug Console помечал ЛЮБУЮ неразвернутую ось трекпада как `"Passed through - trackpad natural"`, даже когда `reverse_trackpad = true` и реверс для этого устройства реально включен (`should_reverse() == true`), просто потому что проверка `device_kind == Trackpad` стояла раньше проверки `should_reverse`. Строка вводила в заблуждение при диагностике (например, "vertical: Reversed" и "horizontal: Passed - trackpad natural" из одного и того же жеста, когда на самом деле `reverse_horizontal` просто выключен). **Фикс**: порядок проверок исправлен - `"trackpad natural"` (категория Passed, как в самом дизайне) теперь достижимо только когда `should_reverse()` действительно `false`; когда `should_reverse()` `true`, но конкретная ось не реверсится, строка - нейтральный `"Passed through"`.
 4. **[Исправлено, найдено вручную, не адверсариальной проверкой]** Одна из трёх параллельных verify-агентов (`tabbed-settings-behavior-preservation`) вернула подозрительный литеральный результат `{"issues":[],"overall_assessment":"placeholder"}` - не доверился этому, перечитал `src/ui.rs` и `git show HEAD:src/ui.rs` сам. Нашёл реальную регрессию: `tap_error`/`"waiting for permissions"` раньше (в едином панели) были видны всегда, а после разбивки на вкладки оказались спрятаны внутри вкладки Permissions - если пользователь смотрит General/Devices, ошибку "scroll reversal could not start" не видно вообще. **Фикс**: блок ошибки/ожидания перенесён выше `tab_strip`, видим независимо от активной вкладки (соответствует собственной заметке дизайна "Status и master-toggle закреплены над вкладками").
 
-Для находок 2 и 3 логика вынесена в чистые, тестируемые функции (`toggle_device_rules` в `tray.rs`, `decision_text_and_category` в `event_tap.rs`) и покрыта регрессионными тестами, включая тест, воспроизводящий именно тот сценарий, что был сломан (13 новых тестов: 66 lib + 17 bin, было 53+17). Находка 1 (AppKit template-tinting) тестами не покрыта - она требует живого рендеринга `NSImage`/`NSStatusItem`, для которого в проекте и так нет прецедента модульного тестирования; проверена только сборкой и коротким живым smoke-тестом.
+Для находок 2 и 3 логика вынесена в чистые, тестируемые функции (`toggle_device_rules` в `tray/device_rules.rs`, `decision_reason` в `event_tap.rs`) и покрыта регрессионными тестами, включая тест, воспроизводящий именно тот сценарий, что был сломан. Находка 1 (AppKit template-tinting) тестами не покрыта - она требует живого рендеринга `NSImage`/`NSStatusItem`, для которого в проекте и так нет прецедента модульного тестирования; проверена только сборкой и коротким живым smoke-тестом.
 
-Не исправлено (осознанно, мелкие находки verify-агентов, не блокирующие):
-- `record_debug_event` берёт мьютекс `LAST_WHEEL` дважды за событие (один раз для hardware id, второй - для имени устройства) вместо одного совмещённого чтения - мьютекс не контed (единственный run-loop поток), реальной проблемы нет, просто не самый дешёвый вариант.
-- Формулировка отчёта реализации смешивала "критическая секция самого ring buffer" (действительно минимальная) с "вся синхронная работа `record_debug_event` на hot path" (включает форматирование строк до захвата лока) - не баг, просто неточная формулировка в отчёте, а не в коде.
+Follow-up 2026-07-11 закрыл обе заметки: `WheelSnapshot` читает hardware/name одним Mutex snapshot и переиспользует `Arc<str>` имени, а `record_debug_event` больше не форматирует display strings. Он сохраняет compact `DebugEvent` с `DecisionReason`, raw source/device fields и deltas; копирайтинг выполняется только в Debug Console. CSV теперь отдельно экспортирует `source_pid`, `synthetic`, `device_kind`, raw `device_name`, VID/PID, category и stable `reason_code`.
 
 Проверено после финальной доводки под handoff: `cargo fmt --check`, `cargo check`, `cargo check --no-default-features`, `cargo test` (67+17 тестов), `cargo clippy --all-targets -- -D warnings`, `scripts/build-app-bundle.sh`, bundle smoke (`Mach-O`, `Info.plist`, `codesign`, отсутствие wrapper-маркеров) - все чистые. Интерактивный клик по вкладкам/меню/Debug Console не проверялся - нет доступа к reliable interactive AppKit driving или выданных permissions для тестовой копии в этой среде; это открытый пробел, а не "проверено и работает".
 
@@ -751,12 +749,12 @@ N269. [Done] `src/ui.rs` больше не содержит theme helpers, Debug
 N270. [Done] Первый SRP split выполнен: `ui/debug_console.rs`, `ui/runtime.rs`, `ui/theme.rs`; дальнейшее дробление settings/devices остается только при реальном росте этих частей.
 N271. [Problem] `src/platform/macos/tray.rs` тоже стал слишком широким: icon drawing, menu model, AppKit target/delegate, device-rule mutation.
 N272. [Improve] Разбить tray на `tray/icon.rs`, `tray/menu_model.rs`, `tray/appkit.rs`, `tray/actions.rs`.
-N273. [Problem] `event_tap.rs` теперь пишет Debug Console rows и знает о UI-facing wording.
-N274. [Improve] Ввести `DiagnosticsSink` trait, чтобы event tap публиковал structured decision без знания UI/ring-buffer.
-N275. [Problem] `debug_log::DebugEvent` хранит готовые строки, из-за чего локализация/копирайтинг смешаны с hot-path recording.
-N276. [Improve] Хранить enum reasons + raw values, форматировать строки только в Debug Console UI.
-N277. [Problem] `record_debug_event` все еще делает строковые allocation на scroll hot path.
-N278. [Improve] Перейти на compact event struct: timestamp, kind, axis, deltas, reason enum, optional device Arc<str>.
+N273. [Partial] `event_tap.rs` больше не знает UI wording, но пока пишет напрямую в конкретный `debug_log` ring buffer.
+N274. [Next] Ввести `DiagnosticsSink` trait, чтобы event tap публиковал structured decision без знания UI/ring-buffer.
+N275. [Done] `DebugEvent` больше не хранит готовые display strings.
+N276. [Done] Добавлены enum reasons + raw values; строки форматируются только при search/render/export.
+N277. [Done] `record_debug_event` больше не делает display-string allocation на scroll hot path.
+N278. [Done] Compact event хранит timestamp, kind, axis, deltas, reason enum, source fields и optional device `Arc<str>`.
 N279. [Done] HID hardware id и name больше не читаются двумя отдельными Mutex-вызовами.
 N280. [Done] Добавлен единый `recent_wheel_snapshot(max_age) -> Option<WheelSnapshot>`.
 N281. [Problem] Rich tray quick-pick не показывает vendor/product ID, поэтому одинаковые имена устройств трудно различить.
@@ -769,8 +767,8 @@ N287. [Done] Tray toggle откатывает shared config при disk failure,
 N288. [Done] Добавлен tray save-error notification slot через `TrayAction::SaveFailed` + `take_last_save_error`.
 N289. [Problem] Debug Console Export пишет файл сразу в Application Support без пользовательского выбора.
 N290. [Improve] Добавить Save Panel или хотя бы Reveal in Finder после export.
-N291. [Problem] CSV export не включает config snapshot/reason enum, только display text.
-N292. [Improve] Экспортировать structured fields: source_pid, synthetic, device_kind, hardware_id, reason_code.
+N291. [Partial] CSV теперь structured, но config snapshot в export пока не включен.
+N292. [Done] CSV экспортирует source_pid, synthetic, device_kind, raw device name, hardware ID и reason_code.
 N293. [Problem] CSV filename uses epoch millis, not human-readable local timestamp.
 N294. [Improve] Use `YYYYMMDD-HHMMSS` plus millis suffix for export filenames.
 N295. [Problem] Debug Console `format_timestamp` derives time from epoch modulo day, not real local timezone formatting.
@@ -825,10 +823,10 @@ N343. [Done] Добавлен macOS GitHub Actions CI.
 N344. [Done] CI запускает fmt, default/lean checks, clippy all-targets, tests и bundle smoke.
 N345. [Problem] `cargo check --no-default-features` can miss GUI-only AppKit breakage.
 N346. [Done] CI проверяет и GUI default, и `--no-default-features`.
-N347. [Problem] Device name from HID may contain commas/newlines that affect UI/export readability.
-N348. [Improve] Normalize display names for UI while preserving raw name in structured export.
-N349. [Problem] Debug Console search allocates lowercase strings per row per render.
-N350. [Improve] Fine for 500 rows today; if capacity grows, cache searchable lowercase text per event.
+N347. [Done] HID device names with commas/newlines no longer ломают UI readability или CSV structure.
+N348. [Done] UI normalizes device-name whitespace, structured CSV сохраняет raw escaped name.
+N349. [Partial] ASCII search больше не создает lowercase-копии; Unicode fallback пока аллоцирует их при поиске.
+N350. [Next] Если capacity вырастет, кешировать Unicode-search representation per event.
 N351. [Problem] The tray menu rebuild lists devices synchronously on `menuWillOpen`.
 N352. [Improve] If menu opening feels slow on some Macs, cache device list and refresh asynchronously.
 N353. [Problem] No sleep/wake recovery test after rich tray/runtime changes.
@@ -871,9 +869,9 @@ N386. [Done] Добавлен `PRIVACY.md`: local-only input/config/debug bounda
 N387. [Done] Добавлен `SECURITY.md`: FFI boundary и production-signing caveat.
 N388. [Done] Добавлен `CONTRIBUTING.md` с layering invariants и full gate.
 N389. [Done] Добавлен privacy-aware GitHub bug report template.
-N390. [Done] После финального review набор вырос до 74 library + 17 binary tests.
-N391. [Problem] Debug events все еще хранят display strings вместо reason enum и structured source fields.
-N392. [Improve] Ввести `DiagnosticsSink` и `DecisionReason`, форматировать строки только в UI/export.
+N390. [Done] После structured diagnostics review набор вырос до 78 library + 17 binary tests.
+N391. [Done] Debug events хранят `DecisionReason` и structured source fields вместо display strings.
+N392. [Partial] `DecisionReason` и lazy formatting готовы; маленький `DiagnosticsSink` остается отдельным следующим шагом.
 N393. [Problem] Sleep/wake recovery пока описан только в QA, NSWorkspace observer не реализован.
 N394. [Improve] После wake перепроверять permissions/tap state и делать serialized recovery.
 N395. [Problem] External CLI и открытый GUI могут перезаписать config по last-writer-wins.

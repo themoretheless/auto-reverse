@@ -21,7 +21,7 @@
 
 use std::ffi::c_void;
 use std::ptr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use core_foundation::base::{CFType, CFTypeRef, TCFType};
@@ -96,12 +96,18 @@ unsafe extern "C" {
 }
 
 /// The most recent wheel tick seen from any matched device, plus that
-/// device's `Product` name string (read from the same `IOHIDDeviceRef` the
+/// device's shared `Product` name (read from the same `IOHIDDeviceRef` the
 /// callback already has in hand - no extra IOHIDManager call). Written by
 /// the HID callback, read by the event tap callback; both run on the main
 /// run loop thread, so the Mutex is uncontended - it exists to satisfy
 /// `static` soundness, not for real cross-thread traffic.
-static LAST_WHEEL: Mutex<Option<(HardwareId, Option<String>, Instant)>> = Mutex::new(None);
+struct RecentWheel {
+    hardware: HardwareId,
+    name: Option<Arc<str>>,
+    at: Instant,
+}
+
+static LAST_WHEEL: Mutex<Option<RecentWheel>> = Mutex::new(None);
 
 /// One consistent view of the last attributed wheel tick. Returning the
 /// hardware id and display name together avoids taking `LAST_WHEEL` twice
@@ -109,7 +115,7 @@ static LAST_WHEEL: Mutex<Option<(HardwareId, Option<String>, Instant)>> = Mutex:
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WheelSnapshot {
     pub hardware: HardwareId,
-    pub name: Option<String>,
+    pub name: Option<Arc<str>>,
 }
 
 /// Starts a mouse-matching HID monitor on the CURRENT thread's run loop.
@@ -154,9 +160,12 @@ pub fn start_wheel_monitor() -> AppResult<()> {
 /// product name is captured by the same callback as the hardware id.
 pub fn recent_wheel_snapshot(max_age: Duration) -> Option<WheelSnapshot> {
     let last = LAST_WHEEL.lock().ok()?;
-    last.clone()
-        .filter(|(_, _, at)| at.elapsed() <= max_age)
-        .map(|(hardware, name, _)| WheelSnapshot { hardware, name })
+    last.as_ref()
+        .filter(|recent| recent.at.elapsed() <= max_age)
+        .map(|recent| WheelSnapshot {
+            hardware: recent.hardware,
+            name: recent.name.clone(),
+        })
 }
 
 extern "C" fn wheel_value_callback(
@@ -191,8 +200,18 @@ extern "C" fn wheel_value_callback(
         if let Some(hardware) = hardware_id_of(device)
             && let Ok(mut last) = LAST_WHEEL.lock()
         {
-            let name = string_property(device, KEY_PRODUCT);
-            *last = Some((hardware, name, Instant::now()));
+            // Product names are stable for a connected device. Reuse the
+            // existing Arc for consecutive ticks instead of cloning and then
+            // re-wrapping a String for every CGEvent diagnostics row.
+            let name = match last.as_ref() {
+                Some(previous) if previous.hardware == hardware => previous.name.clone(),
+                _ => string_property(device, KEY_PRODUCT).map(Arc::<str>::from),
+            };
+            *last = Some(RecentWheel {
+                hardware,
+                name,
+                at: Instant::now(),
+            });
         }
     }
 }

@@ -26,8 +26,9 @@ Implemented:
   status dot, a rich native menu, a Reverse Scrolling toggle, per-device
   quick-pick submenu, temporary pause/resume, Open Settings, Open Debug Console,
   and Quit;
-- local Debug Console with search, decision filters, export, clear, and an
-  in-memory ring buffer of recent scroll decisions;
+- local Debug Console with search, decision filters, clear, and a bounded
+  structured ring buffer; CSV export includes stable reason codes, source PID,
+  synthetic flag, device kind, raw HID name, and vendor/product IDs;
 - process-local 15-minute pause that leaves persisted settings untouched;
 - typed event-tap lifecycle with explicit started/already-running/stopped/failed
   events rather than timeout-inferred booleans;
@@ -109,6 +110,11 @@ open "target/debug/Auto Reverse.app"
 ```
 
 Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and both permissions are granted, sharing one live config with the window so changes made in that window apply immediately with no restart. If the app was opened before permissions were granted, it keeps watching the permission state and retries starting the tap once both checks become ready; if startup failed or stopped immediately, turning Reverse scrolling off clears that pending attempt so turning it on again can retry cleanly. A menu-bar icon stays up for as long as the process runs: it uses an opposing-arrows template glyph plus a separate colored status dot for active/paused/permission-blocked states. Its native menu includes Reverse Scrolling, device quick-picks, Open Settings, Open Debug Console, and Quit; holding Option while opening the icon opens the Debug Console directly. Closing the settings window hides it rather than quitting. A separate `ui.lock` prevents duplicate windows/menu-bar icons, and an exclusive tap lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. External CLI edits made while the settings window is already open do not update that running window; use the window itself, or quit and reopen it. For terminal diagnostics through the bundled identity:
+
+Debug Console rows keep raw source metadata in memory and derive display text
+only while the console is searching or rendering. Export preserves the raw HID
+name in its own escaped CSV field while normalizing whitespace only in the
+human-readable `device` column. Debug data remains local to this Mac.
 
 The bundle uses the real Mach-O binary as `CFBundleExecutable`
 (`Contents/MacOS/auto-reverse`) rather than a shell launcher. With no
@@ -205,7 +211,7 @@ src/platform/macos/hid.rs            IOHIDManager wheel monitor (per-device attr
 src/platform/macos/startup.rs        LaunchAgent start-at-login support (headless `run`)
 src/platform/macos/event_tap.rs      CGEventTap runtime loop, config shared via Arc<RwLock<_>>
 src/platform/macos/daemon_lock.rs    flock: only one live CGEventTap at a time, any launch path
-src/platform/macos/debug_log.rs      local ring buffer for the Debug Console (gui feature only)
+src/platform/macos/debug_log.rs      structured decisions + local Debug Console ring buffer
 src/platform/macos/quit_handler.rs   AppleEvent quit interception so only tray Quit exits
 src/platform/macos/login_item.rs     SMAppService.mainAppService() wrapper (gui feature only)
 src/platform/macos/tray.rs           rich native menu-bar tray icon/menu (gui feature only)

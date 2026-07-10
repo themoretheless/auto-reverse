@@ -5,6 +5,7 @@
 //! table rendering and local CSV export stay together in this module.
 
 use eframe::egui::{self, Color32, RichText};
+use std::fmt::Write as _;
 
 use crate::config::ConfigStore;
 use crate::platform::macos::debug_log;
@@ -214,20 +215,23 @@ fn table_header(ui: &mut egui::Ui) {
 }
 
 fn table_row(ui: &mut egui::Ui, event: &debug_log::DebugEvent) {
+    let device_description = event.device_description();
+    let decision_text = event.decision_text();
+
     ui.horizontal(|ui| {
         cell(
             ui,
             96.0,
             RichText::new(format_timestamp(event.timestamp_ms)).monospace(),
         );
-        cell(ui, 180.0, event.device_description.as_str());
+        cell(ui, 180.0, device_description.as_str());
         cell(ui, 76.0, event.axis.label());
         cell(
             ui,
             92.0,
             RichText::new(format!("{} → {}", event.raw_delta, event.output_delta)).monospace(),
         );
-        let color = match event.category {
+        let color = match event.category() {
             debug_log::DecisionCategory::Reversed => Color32::from_rgb(0x34, 0xA8, 0x53),
             debug_log::DecisionCategory::Passed => Color32::GRAY,
             debug_log::DecisionCategory::Ignored => Color32::from_rgb(0xE5, 0x9E, 0x2F),
@@ -235,7 +239,7 @@ fn table_row(ui: &mut egui::Ui, event: &debug_log::DebugEvent) {
         cell(
             ui,
             ui.available_width(),
-            RichText::new(&event.decision_text).color(color),
+            RichText::new(decision_text.as_ref()).color(color),
         );
     });
 }
@@ -252,9 +256,9 @@ fn filtered_events(
         .iter()
         .filter(|event| match state.filter {
             Filter::All => true,
-            Filter::Reversed => event.category == debug_log::DecisionCategory::Reversed,
-            Filter::Passed => event.category == debug_log::DecisionCategory::Passed,
-            Filter::Ignored => event.category == debug_log::DecisionCategory::Ignored,
+            Filter::Reversed => event.category() == debug_log::DecisionCategory::Reversed,
+            Filter::Passed => event.category() == debug_log::DecisionCategory::Passed,
+            Filter::Ignored => event.category() == debug_log::DecisionCategory::Ignored,
         })
         .filter(|event| event.matches_search(&state.search))
         .cloned()
@@ -280,26 +284,57 @@ fn export_events(events: &[debug_log::DebugEvent]) -> Result<std::path::PathBuf,
 
     let now_ms = debug_log::now_millis();
     let file_path = export_dir.join(format!("debug-events-{now_ms}.csv"));
-    let mut csv = String::from("timestamp_ms,device,axis,raw_delta,output_delta,decision\n");
-
-    for event in events {
-        csv.push_str(&format!(
-            "{},{},{},{},{},{}\n",
-            event.timestamp_ms,
-            csv_escape(&event.device_description),
-            event.axis.label(),
-            event.raw_delta,
-            event.output_delta,
-            csv_escape(&event.decision_text),
-        ));
-    }
+    let csv = events_to_csv(events);
 
     std::fs::write(&file_path, csv).map_err(|error| error.to_string())?;
     Ok(file_path)
 }
 
+fn events_to_csv(events: &[debug_log::DebugEvent]) -> String {
+    let mut csv = String::from(
+        "timestamp_ms,device,device_kind,device_name,vendor_id,product_id,source_pid,synthetic,axis,raw_delta,output_delta,category,reason_code,decision\n",
+    );
+
+    for event in events {
+        let device_description = event.device_description();
+        let decision_text = event.decision_text();
+        let device_name = event.device_name.as_deref().unwrap_or_default();
+        let (vendor_id, product_id) = event
+            .hardware
+            .map(|hardware| {
+                (
+                    format!("0x{:04x}", hardware.vendor_id),
+                    format!("0x{:04x}", hardware.product_id),
+                )
+            })
+            .unwrap_or_default();
+
+        writeln!(
+            csv,
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            event.timestamp_ms,
+            csv_escape(&device_description),
+            event.device_kind.as_str(),
+            csv_escape(device_name),
+            vendor_id,
+            product_id,
+            event.source_pid,
+            event.synthetic,
+            event.axis.code(),
+            event.raw_delta,
+            event.output_delta,
+            event.category().code(),
+            event.reason.code(),
+            csv_escape(&decision_text),
+        )
+        .expect("writing to a String cannot fail");
+    }
+
+    csv
+}
+
 fn csv_escape(value: &str) -> String {
-    if value.contains(',') || value.contains('"') || value.contains('\n') {
+    if value.contains(',') || value.contains('"') || value.contains(['\n', '\r']) {
         format!("\"{}\"", value.replace('"', "\"\""))
     } else {
         value.to_string()
@@ -309,6 +344,8 @@ fn csv_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device::{DeviceKind, HardwareId};
+    use std::sync::Arc;
 
     #[test]
     fn csv_escape_quotes_commas_quotes_and_newlines() {
@@ -316,5 +353,34 @@ mod tests {
         assert_eq!(csv_escape("a,b"), "\"a,b\"");
         assert_eq!(csv_escape("a\"b"), "\"a\"\"b\"");
         assert_eq!(csv_escape("a\nb"), "\"a\nb\"");
+        assert_eq!(csv_escape("a\rb"), "\"a\rb\"");
+    }
+
+    #[test]
+    fn csv_export_contains_raw_structured_source_and_reason_fields() {
+        let event = debug_log::DebugEvent {
+            timestamp_ms: 42,
+            device_kind: DeviceKind::Mouse,
+            device_name: Some(Arc::from("MX, Master\n3S")),
+            hardware: Some(HardwareId {
+                vendor_id: 0x046d,
+                product_id: 0xb034,
+            }),
+            source_pid: 123,
+            synthetic: true,
+            axis: debug_log::Axis::Vertical,
+            raw_delta: 1,
+            output_delta: -1,
+            reason: debug_log::DecisionReason::SyntheticEvent,
+        };
+
+        let csv = events_to_csv(&[event]);
+
+        assert!(csv.starts_with(
+            "timestamp_ms,device,device_kind,device_name,vendor_id,product_id,source_pid,synthetic,axis,raw_delta,output_delta,category,reason_code,decision\n"
+        ));
+        assert!(csv.contains("Mouse wheel · MX, Master 3S"));
+        assert!(csv.contains("\"MX, Master\n3S\""));
+        assert!(csv.contains("0x046d,0xb034,123,true,vertical,1,-1,ignored,synthetic_event"));
     }
 }

@@ -252,11 +252,11 @@ fn record_debug_event(
     config: &AppConfig,
     device_kind: DeviceKind,
     hardware: Option<HardwareId>,
-    device_name: Option<String>,
+    device_name: Option<Arc<str>>,
     temporarily_paused: bool,
     decision: TransformDecision,
 ) {
-    let device_description = debug_log::device_description(device_kind, device_name.as_deref());
+    let timestamp_ms = debug_log::now_millis();
 
     // Two rows (vertical/horizontal) whenever the event carries a nonzero
     // delta on that axis - mirrors the handoff's per-axis rows exactly.
@@ -283,7 +283,7 @@ fn record_debug_event(
             debug_log::Axis::Horizontal => decision.horizontal_reversed,
         };
 
-        let (decision_text, category) = decision_text_and_category(
+        let reason = decision_reason(
             config,
             device_kind,
             hardware,
@@ -294,26 +294,26 @@ fn record_debug_event(
         );
 
         debug_log::push(debug_log::DebugEvent {
-            timestamp_ms: debug_log::now_millis(),
-            device_description: device_description.clone(),
+            timestamp_ms,
+            device_kind,
+            device_name: device_name.clone(),
+            hardware,
+            source_pid: decision.original.source_pid,
+            synthetic: decision.original.synthetic,
             axis,
             raw_delta: raw,
             output_delta: out,
-            decision_text,
-            category,
+            reason,
         });
     }
 }
 
-/// Pure derivation of one Debug Console row's text/category for a single
-/// axis - split out of `record_debug_event` so the branch order (the actual
-/// source of a real, previously-shipped bug) is unit-testable without a
-/// live CGEventTap or IOHIDManager. Does not recompute or duplicate
-/// `scroll::transform_event`'s policy - `axis_reversed` is exactly what
-/// that function already decided; this only chooses WORDING for the cases
-/// where it decided "not reversed".
+/// Pure derivation of one Debug Console row's stable reason for a single axis.
+/// Split out of `record_debug_event` so branch order remains unit-testable
+/// without a live CGEventTap or IOHIDManager. User-facing wording belongs to
+/// the diagnostics presentation layer, not this callback path.
 #[cfg(feature = "gui")]
-fn decision_text_and_category(
+fn decision_reason(
     config: &AppConfig,
     device_kind: DeviceKind,
     hardware: Option<HardwareId>,
@@ -321,36 +321,21 @@ fn decision_text_and_category(
     source_pid: i64,
     temporarily_paused: bool,
     axis_reversed: bool,
-) -> (String, debug_log::DecisionCategory) {
+) -> debug_log::DecisionReason {
     if !config.enabled {
-        return (
-            "Ignored – scroll reversal is off".to_string(),
-            debug_log::DecisionCategory::Ignored,
-        );
+        return debug_log::DecisionReason::ScrollReversalOff;
     }
     if temporarily_paused {
-        return (
-            "Ignored - temporarily paused".to_string(),
-            debug_log::DecisionCategory::Ignored,
-        );
+        return debug_log::DecisionReason::TemporarilyPaused;
     }
     if synthetic {
-        return (
-            "Ignored – synthetic event".to_string(),
-            debug_log::DecisionCategory::Ignored,
-        );
+        return debug_log::DecisionReason::SyntheticEvent;
     }
     if config.reverse_only_raw_input && source_pid != 0 {
-        return (
-            "Ignored – raw input guard (remote desktop)".to_string(),
-            debug_log::DecisionCategory::Ignored,
-        );
+        return debug_log::DecisionReason::RawInputGuard;
     }
     if axis_reversed {
-        return (
-            "Reversed".to_string(),
-            debug_log::DecisionCategory::Reversed,
-        );
+        return debug_log::DecisionReason::Reversed;
     }
 
     if !config.should_reverse(device_kind, hardware) {
@@ -364,7 +349,8 @@ fn decision_text_and_category(
         // with reverse_horizontal off would falsely read "trackpad
         // natural" instead of naming the real reason (that direction is
         // off), contradicting a "Reversed" row from the same gesture's
-        // vertical axis. See decision_text_trackpad_off_by_default_reads_natural_only_when_should_reverse_is_false.
+        // vertical axis. See
+        // trackpad_off_by_default_reads_natural_only_when_should_reverse_is_false.
         let has_dont_reverse_rule = hardware.is_some_and(|hw| {
             config
                 .device_rules
@@ -372,38 +358,23 @@ fn decision_text_and_category(
                 .any(|rule| rule.matches(hw) && !rule.reverse)
         });
         return if device_kind == DeviceKind::Unknown {
-            (
-                "Ignored – unknown devices not reversed".to_string(),
-                debug_log::DecisionCategory::Ignored,
-            )
+            debug_log::DecisionReason::UnknownDeviceNotReversed
         } else if has_dont_reverse_rule {
-            (
-                "Ignored – this device has a Don't reverse rule".to_string(),
-                debug_log::DecisionCategory::Ignored,
-            )
+            debug_log::DecisionReason::DeviceRuleDisabled
         } else if device_kind == DeviceKind::Trackpad {
             // Trackpad-off-by-default is the normal, expected state (not
             // an error) - matches the design handoff's own example
             // wording/category for this exact case.
-            (
-                "Passed through – trackpad natural".to_string(),
-                debug_log::DecisionCategory::Passed,
-            )
+            debug_log::DecisionReason::TrackpadNatural
         } else {
-            (
-                format!("Ignored – {device_kind} reversal is off"),
-                debug_log::DecisionCategory::Ignored,
-            )
+            debug_log::DecisionReason::DeviceReversalOff
         };
     }
 
     // should_reverse(device_kind, hardware) is true here, so this axis's
     // own direction flag (reverse_vertical/reverse_horizontal) is what's
     // off - a real, deliberate "not this direction" outcome, not an error.
-    (
-        "Passed through".to_string(),
-        debug_log::DecisionCategory::Passed,
-    )
+    debug_log::DecisionReason::AxisDisabled
 }
 
 #[cfg(all(test, feature = "gui"))]
@@ -435,11 +406,9 @@ mod debug_log_decision_tests {
         });
         assert!(config.should_reverse(DeviceKind::Trackpad, None));
 
-        let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Trackpad, None, false, 0, false, false);
+        let reason = decision_reason(&config, DeviceKind::Trackpad, None, false, 0, false, false);
 
-        assert_eq!(text, "Passed through");
-        assert_eq!(category, debug_log::DecisionCategory::Passed);
+        assert_eq!(reason, debug_log::DecisionReason::AxisDisabled);
     }
 
     #[test]
@@ -447,11 +416,9 @@ mod debug_log_decision_tests {
         let config = config_with(|c| c.reverse_trackpad = false);
         assert!(!config.should_reverse(DeviceKind::Trackpad, None));
 
-        let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Trackpad, None, false, 0, false, false);
+        let reason = decision_reason(&config, DeviceKind::Trackpad, None, false, 0, false, false);
 
-        assert_eq!(text, "Passed through – trackpad natural");
-        assert_eq!(category, debug_log::DecisionCategory::Passed);
+        assert_eq!(reason, debug_log::DecisionReason::TrackpadNatural);
     }
 
     #[test]
@@ -473,7 +440,7 @@ mod debug_log_decision_tests {
             });
         });
 
-        let (text, category) = decision_text_and_category(
+        let reason = decision_reason(
             &config,
             DeviceKind::Mouse,
             Some(hardware),
@@ -483,60 +450,49 @@ mod debug_log_decision_tests {
             false,
         );
 
-        assert_eq!(text, "Ignored – this device has a Don't reverse rule");
-        assert_eq!(category, debug_log::DecisionCategory::Ignored);
+        assert_eq!(reason, debug_log::DecisionReason::DeviceRuleDisabled);
     }
 
     #[test]
     fn unknown_device_kind_names_itself() {
         let config = config_with(|_| {});
-        let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Unknown, None, false, 0, false, false);
-        assert_eq!(text, "Ignored – unknown devices not reversed");
-        assert_eq!(category, debug_log::DecisionCategory::Ignored);
+        let reason = decision_reason(&config, DeviceKind::Unknown, None, false, 0, false, false);
+        assert_eq!(reason, debug_log::DecisionReason::UnknownDeviceNotReversed);
     }
 
     #[test]
     fn mouse_reversal_off_names_the_device_kind() {
         let config = config_with(|c| c.reverse_mouse = false);
-        let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Mouse, None, false, 0, false, false);
-        assert_eq!(text, "Ignored – mouse reversal is off");
-        assert_eq!(category, debug_log::DecisionCategory::Ignored);
+        let reason = decision_reason(&config, DeviceKind::Mouse, None, false, 0, false, false);
+        assert_eq!(reason, debug_log::DecisionReason::DeviceReversalOff);
     }
 
     #[test]
     fn axis_reversed_wins_over_every_other_check() {
         let config = config_with(|_| {});
-        let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Mouse, None, false, 0, false, true);
-        assert_eq!(text, "Reversed");
-        assert_eq!(category, debug_log::DecisionCategory::Reversed);
+        let reason = decision_reason(&config, DeviceKind::Mouse, None, false, 0, false, true);
+        assert_eq!(reason, debug_log::DecisionReason::Reversed);
     }
 
     #[test]
     fn disabled_config_is_ignored_before_anything_else() {
         let config = config_with(|c| c.enabled = false);
-        let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Mouse, None, false, 0, false, true);
-        assert_eq!(text, "Ignored – scroll reversal is off");
-        assert_eq!(category, debug_log::DecisionCategory::Ignored);
+        let reason = decision_reason(&config, DeviceKind::Mouse, None, false, 0, false, true);
+        assert_eq!(reason, debug_log::DecisionReason::ScrollReversalOff);
     }
 
     #[test]
     fn synthetic_event_is_ignored_even_when_axis_reversed_would_otherwise_apply() {
         let config = config_with(|_| {});
-        let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Mouse, None, true, 0, false, true);
-        assert_eq!(text, "Ignored – synthetic event");
-        assert_eq!(category, debug_log::DecisionCategory::Ignored);
+        let reason = decision_reason(&config, DeviceKind::Mouse, None, true, 0, false, true);
+        assert_eq!(reason, debug_log::DecisionReason::SyntheticEvent);
     }
 
     #[test]
     fn raw_input_guard_is_ignored_even_when_axis_reversed_would_otherwise_apply() {
         let config = config_with(|c| c.reverse_only_raw_input = true);
         let non_zero_source_pid = 4242;
-        let (text, category) = decision_text_and_category(
+        let reason = decision_reason(
             &config,
             DeviceKind::Mouse,
             None,
@@ -545,17 +501,14 @@ mod debug_log_decision_tests {
             false,
             true,
         );
-        assert_eq!(text, "Ignored – raw input guard (remote desktop)");
-        assert_eq!(category, debug_log::DecisionCategory::Ignored);
+        assert_eq!(reason, debug_log::DecisionReason::RawInputGuard);
     }
 
     #[test]
     fn temporary_pause_has_an_explicit_debug_reason() {
         let config = config_with(|_| {});
-        let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Mouse, None, false, 0, true, false);
+        let reason = decision_reason(&config, DeviceKind::Mouse, None, false, 0, true, false);
 
-        assert_eq!(text, "Ignored - temporarily paused");
-        assert_eq!(category, debug_log::DecisionCategory::Ignored);
+        assert_eq!(reason, debug_log::DecisionReason::TemporarilyPaused);
     }
 }

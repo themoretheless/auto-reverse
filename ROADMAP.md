@@ -1,6 +1,6 @@
 # Auto Reverse Roadmap
 
-This is the executable view of the 860-item audit in `recommendation.md`.
+This is the executable view of the 900-item audit in `recommendation.md`.
 Items are intentionally small enough to understand, implement, and verify
 independently.
 
@@ -11,7 +11,7 @@ independently.
 3. [Done] Keep one consistent HID wheel snapshot per CGEvent.
 4. [Done] Roll tray config changes back when persistence fails.
 5. [Done] Add a process-local 15-minute pause with an explicit resume action.
-6. [Next] Store structured debug reason enums instead of hot-path display strings.
+6. [Done] Store structured debug reason enums instead of hot-path display strings.
 7. [Next] Observe sleep/wake and re-arm a disabled or stopped tap safely.
 8. [Next] Serialize external CLI and GUI config writes or detect stale revisions.
 9. [Next] Focus the existing settings window when a second launch hits `ui.lock`.
