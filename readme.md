@@ -32,6 +32,8 @@ Implemented:
 - process-local 15-minute pause that leaves persisted settings untouched;
 - typed event-tap lifecycle with explicit started/already-running/stopped/failed
   events rather than timeout-inferred booleans;
+- GUI sleep/wake recovery through `NSWorkspace`: after wake it rechecks
+  permissions, safely re-arms a live tap, or restarts one stopped tap;
 - permission-first initial tab, targeted Accessibility/Input Monitoring actions,
   and confirmation before Restore defaults removes per-device rules;
 - branded opposing-arrows app icon and generated Retina `.icns` in the bundle;
@@ -210,6 +212,7 @@ src/platform/macos/permissions.rs    Accessibility + Input Monitoring TCC calls
 src/platform/macos/hid.rs            IOHIDManager wheel monitor (per-device attribution)
 src/platform/macos/startup.rs        LaunchAgent start-at-login support (headless `run`)
 src/platform/macos/event_tap.rs      CGEventTap runtime loop, config shared via Arc<RwLock<_>>
+src/platform/macos/power_events.rs   NSWorkspace sleep/wake observer and atomic signal
 src/platform/macos/daemon_lock.rs    flock: only one live CGEventTap at a time, any launch path
 src/platform/macos/debug_log.rs      structured decisions + local Debug Console ring buffer
 src/platform/macos/quit_handler.rs   AppleEvent quit interception so only tray Quit exits
@@ -256,7 +259,7 @@ Build the app surface:
 Make it releasable:
 
 - Magic Mouse/trackpad distinction;
-- wake recovery;
+- manual sleep/wake validation of the implemented recovery path;
 - packaging/signing;
 - localization;
 - update strategy;
@@ -636,8 +639,8 @@ items visible from the README without making the first read impossible.
 | 348 | Done | Первый шаг packaging сделан: headless drag-and-run `.app` для Privacy & Security. |
 | 349 | Done | LaunchAgent implementation добавлен в `platform/macos/startup.rs`. |
 | 350 | Done | Add `SMAppService` path when the app bundle exists. |
-| 351 | Problem | Нет wake-from-sleep recovery. |
-| 352 | Improve | Observe wake notifications and re-arm tap or relaunch. |
+| 351 | Partial | Wake recovery реализован; реальный sleep/wake на собранном bundle еще не отмечен в QA. |
+| 352 | Done | NSWorkspace DidWake проверяет permissions и re-arm/restart tap через bounded recovery. |
 | 353 | Problem | Event tap can stop silently in edge cases. |
 | 354 | Improve | Runtime health should detect no events/disabled tap. |
 | 355 | Problem | Нет watchdog. |

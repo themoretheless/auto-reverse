@@ -1,6 +1,6 @@
 # 900 рекомендаций, проблем и улучшений (500 базовых + N01-N400 follow-up)
 
-Список обновлен 2026-07-11 после повторного SOLID/DRY split, temporary pause, typed tap lifecycle, app-icon/CI/docs и structured diagnostics проходов. Он отражает текущий код: macOS event tap, TOML config, CLI parser, permission recovery, raw-input guard, step size, два start-at-login пути, GUI `.app` bundle с `.icns`, rich menu bar, Debug Console со stable reason codes и открытые gaps до Scroll Reverser parity.
+Список обновлен 2026-07-11 после повторного SOLID/DRY split, temporary pause, typed tap lifecycle, app-icon/CI/docs, structured diagnostics и sleep/wake recovery проходов. Он отражает текущий код: macOS event tap, TOML config, CLI parser, permission recovery, raw-input guard, step size, два start-at-login пути, GUI `.app` bundle с `.icns`, rich menu bar, Debug Console со stable reason codes и открытые gaps до Scroll Reverser parity.
 
 ## Планируемая переделка: единый процесс + menu bar + SMAppService — риски, записанные до реализации
 
@@ -493,7 +493,7 @@ N22. Добавить `run --foreground` для явного CLI режима.
 N23. Добавить `run --daemon` для будущего фонового режима.
 N24. Добавить health file с последним успешным запуском.
 N25. Добавить "last crash" marker.
-N26. Добавить wake-from-sleep tap rearm.
+N26. [Done] Добавить wake-from-sleep tap rearm.
 N27. [Done] Добавить app bundle smoke target.
 N28. [Done] Добавить status menu без settings window как промежуточный UX.
 N29. Добавить native notification при missing permissions on login.
@@ -661,8 +661,8 @@ N184. [Problem] Если пользователь снял permission после
 N185. [Improve] Обновлять status при потере permissions и показывать recovery action.
 N186. [Problem] Event tap disabled callback сейчас обработан, но нет счетчика повторных disable events.
 N187. [Improve] Добавить local diagnostic: `tap_disabled_count`, `last_tap_disable_reason`.
-N188. [Problem] Нет wake/sleep lifecycle hooks.
-N189. [Improve] После wake проверять permissions, lock, tap status и делать controlled restart.
+N188. [Done] Добавлены NSWorkspace WillSleep/DidWake lifecycle hooks.
+N189. [Done] После wake проверяются permissions и typed tap state; live tap re-arm, stopped tap получает один controlled restart.
 N190. [Done] Два GUI-инстанса больше не должны давать две menu bar иконки: `run_settings_window` берет отдельный `ui.lock`.
 N191. [Improve] Следующий UX слой: если `ui.lock` занят, сфокусировать существующее окно через IPC/focus command, а не только вернуть ошибку.
 N192. [Done] `daemon_lock` оставлен для input behavior, а визуальный UX от дублей защищает отдельный lock.
@@ -829,8 +829,8 @@ N349. [Partial] ASCII search больше не создает lowercase-копи
 N350. [Next] Если capacity вырастет, кешировать Unicode-search representation per event.
 N351. [Problem] The tray menu rebuild lists devices synchronously on `menuWillOpen`.
 N352. [Improve] If menu opening feels slow on some Macs, cache device list and refresh asynchronously.
-N353. [Problem] No sleep/wake recovery test after rich tray/runtime changes.
-N354. [Improve] Add manual sleep/wake QA and later NSWorkspace wake notification handling.
+N353. [Partial] Pure sleep/wake recovery transitions покрыты тестами; реальный system sleep остается manual QA.
+N354. [Partial] NSWorkspace wake handling готов, но строка sleep/wake в `QA.md` еще не подтверждена на bundle.
 N355. [Problem] No distinction between Magic Mouse and trackpad remains the biggest Scroll Reverser parity gap.
 N356. [Improve] Run a focused IOHID/gesture spike for Magic Mouse attribution.
 N357. [Problem] Rich menu and Debug Console introduce more user-facing strings with no localization structure.
@@ -848,7 +848,7 @@ N365. [Done] Pure tray device-rule mutation вынесена из AppKit adapter
 N366. [Done] `TapRunOutcome` типизирует lock contention и stopped run loop.
 N367. [Done] Event tap сообщает readiness явным callback до входа в CFRunLoop.
 N368. [Done] CONFIG и runtime control устанавливаются только после успешного создания CGEventTap, поэтому permission failure не отравляет retry.
-N369. [Done] TAP_PORT стал обновляемым `AtomicUsize`, поэтому callback не держит устаревший port после stop/retry.
+N369. [Done] TAP_PORT стал RAII mutex registry: re-arm сериализован с teardown и не может вызвать CoreGraphics на freed port.
 N370. [Done] Один `WheelSnapshot` связывает hardware id и name с одним HID tick.
 N371. [Done] Temporary pause читается lock-free через `AtomicU64` на каждом scroll event.
 N372. [Done] Settings UI дает `Pause for 15 minutes` и `Resume now`, не меняя TOML.
@@ -869,11 +869,11 @@ N386. [Done] Добавлен `PRIVACY.md`: local-only input/config/debug bounda
 N387. [Done] Добавлен `SECURITY.md`: FFI boundary и production-signing caveat.
 N388. [Done] Добавлен `CONTRIBUTING.md` с layering invariants и full gate.
 N389. [Done] Добавлен privacy-aware GitHub bug report template.
-N390. [Done] После structured diagnostics review набор вырос до 78 library + 17 binary tests.
+N390. [Done] После sleep/wake recovery review набор вырос до 83 library + 17 binary tests.
 N391. [Done] Debug events хранят `DecisionReason` и structured source fields вместо display strings.
 N392. [Partial] `DecisionReason` и lazy formatting готовы; маленький `DiagnosticsSink` остается отдельным следующим шагом.
-N393. [Problem] Sleep/wake recovery пока описан только в QA, NSWorkspace observer не реализован.
-N394. [Improve] После wake перепроверять permissions/tap state и делать serialized recovery.
+N393. [Done] `power_events.rs` наблюдает NSWorkspace sleep/wake независимо от видимости settings window.
+N394. [Done] После wake permissions/tap state перепроверяются, re-arm/restart сериализован и ограничен recovery window.
 N395. [Problem] External CLI и открытый GUI могут перезаписать config по last-writer-wins.
 N396. [Improve] Добавить config revision/hash check или один config-writer service.
 N397. [Problem] Второй GUI launch корректно блокируется, но не фокусирует существующее окно.
@@ -1079,8 +1079,8 @@ N400. [Improve] Следующий product slice: native Save Panel, structured 
 348. [Done] Первый шаг packaging сделан: headless drag-and-run `.app` для Privacy & Security.
 349. [Done] LaunchAgent implementation добавлен в `platform/macos/startup.rs`.
 350. [Done] Add `SMAppService` path when the app bundle exists.
-351. [Problem] Нет wake-from-sleep recovery.
-352. [Improve] Observe wake notifications and re-arm tap or relaunch.
+351. [Partial] Wake recovery реализован; реальный sleep/wake на собранном bundle еще не отмечен в QA.
+352. [Done] NSWorkspace DidWake проверяет permissions и re-arm/restart tap через bounded recovery.
 353. [Problem] Event tap can stop silently in edge cases.
 354. [Improve] Runtime health should detect no events/disabled tap.
 355. [Problem] Нет watchdog.

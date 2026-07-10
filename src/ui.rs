@@ -58,7 +58,9 @@ use std::sync::{Arc, RwLock};
 use eframe::egui::{self, Color32, RichText, ViewportCommand};
 
 use crate::config::{AppConfig, ConfigStore, DeviceRule};
-use crate::platform::macos::{daemon_lock, hid, login_item, permissions, quit_handler, tray};
+use crate::platform::macos::{
+    daemon_lock, hid, login_item, permissions, power_events, quit_handler, tray,
+};
 use crate::runtime::{DEFAULT_PAUSE_DURATION, RuntimeControl};
 
 mod debug_console;
@@ -206,6 +208,12 @@ struct SettingsApp {
     load_error: Option<String>,
     /// Typed lifecycle state and event channel for the in-process tap.
     tap_runtime: runtime::TapRuntime,
+    /// Main-thread NSWorkspace sleep/wake observer. Installed lazily on the
+    /// first eframe logic tick, alongside the other AppKit integrations.
+    power_events: Option<power_events::PowerEventObserver>,
+    /// Installation failure for the sleep/wake observer, shown rather than
+    /// silently leaving post-wake recovery unavailable.
+    power_events_error: Option<String>,
     /// AppKit tray construction failure, independent of tap lifecycle.
     tray_error: Option<String>,
     /// Set on a login_item register/unregister failure.
@@ -274,6 +282,8 @@ impl SettingsApp {
             save_error: None,
             load_error,
             tap_runtime: runtime::TapRuntime::default(),
+            power_events: None,
+            power_events_error: None,
             tray_error: None,
             login_item_error,
             tray: None,
@@ -395,7 +405,37 @@ impl eframe::App for SettingsApp {
     // calls for a visible viewport.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.tap_runtime.poll();
-        if !self.config.enabled {
+
+        if self.power_events.is_none() && self.power_events_error.is_none() {
+            match power_events::PowerEventObserver::install() {
+                Ok(observer) => self.power_events = Some(observer),
+                Err(error) => self.power_events_error = Some(error),
+            }
+        }
+        let power_event = self
+            .power_events
+            .as_ref()
+            .and_then(power_events::PowerEventObserver::poll);
+        match power_event {
+            Some(power_events::PowerEvent::WillSleep) | None => {}
+            Some(power_events::PowerEvent::DidWake) => {
+                // Devices can be connected or removed while asleep. Refresh
+                // their UI snapshot once, and open a bounded tap-recovery
+                // window even while the settings viewport is hidden.
+                self.refresh_devices();
+                if self.config.enabled {
+                    self.tap_runtime.request_wake_recovery();
+                }
+            }
+        }
+
+        if self.config.enabled && self.tap_runtime.wake_recovery_pending() {
+            self.tap_runtime.recover_after_wake(
+                permissions_ready(),
+                &self.shared_config,
+                &self.runtime_control,
+            );
+        } else if !self.config.enabled {
             self.tap_runtime.disabled();
         }
 
@@ -627,6 +667,13 @@ impl SettingsApp {
         if let Some(error) = &self.tray_error {
             ui.label(
                 RichText::new(error)
+                    .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
+                    .small(),
+            );
+        }
+        if let Some(error) = &self.power_events_error {
+            ui.label(
+                RichText::new(format!("Sleep/wake recovery unavailable: {error}"))
                     .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
                     .small(),
             );

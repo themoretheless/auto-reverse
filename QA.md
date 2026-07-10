@@ -30,7 +30,7 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Pause 15 minutes / Resume now |  |  |  |  |
 |  |  | Missing then granted permissions |  |  |  |  |
 |  |  | Start at Login after reboot |  |  |  |  |
-|  |  | Sleep and wake |  |  |  |  |
+|  |  | Sleep/wake: hidden app re-arms live tap or restarts one stopped tap |  |  |  |  |
 |  |  | Cmd-W, Cmd-Q, Dock Quit, tray Quit |  |  |  |  |
 |  |  | Menu, device submenu, Option-click console |  |  |  |  |
 |  |  | Debug search/filter/export/clear |  |  |  |  |

@@ -16,6 +16,8 @@
 //!   login-item registration for the bundled GUI app. Deliberately separate
 //!   from `startup` (see recommendation.md risk #6): two mechanisms for two
 //!   different binaries/use cases, not meant to be unified.
+//! - `power_events` (gui only): `NSWorkspace` sleep/wake notifications used
+//!   to re-arm or restart the in-process event tap after wake.
 //! - `tray` (gui only): native AppKit menu-bar item for the merged
 //!   settings-window + event-tap process.
 //! - `quit_handler` (gui only): overrides the `kAEQuitApplication` Apple
@@ -30,6 +32,8 @@ pub mod hid;
 #[cfg(feature = "gui")]
 pub mod login_item;
 pub mod permissions;
+#[cfg(feature = "gui")]
+pub mod power_events;
 #[cfg(feature = "gui")]
 pub mod quit_handler;
 pub mod scroll_events;

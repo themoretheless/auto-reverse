@@ -5,8 +5,7 @@ use core_graphics::event::{
     CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventTapProxy, CGEventType, CallbackResult,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 use std::time::Duration;
 
 use crate::config::AppConfig;
@@ -35,7 +34,55 @@ unsafe extern "C" {
 
 static CONFIG: OnceLock<Arc<RwLock<AppConfig>>> = OnceLock::new();
 static RUNTIME_CONTROL: OnceLock<Arc<RuntimeControl>> = OnceLock::new();
-static TAP_PORT: AtomicUsize = AtomicUsize::new(0);
+static TAP_PORT: Mutex<Option<usize>> = Mutex::new(None);
+
+/// Keeps the raw CFMachPort pointer registered only while the owning
+/// `CGEventTap` value is alive. The mutex serializes wake-thread rearming with
+/// run-loop teardown so `CGEventTapEnable` can never observe a freed port.
+struct TapPortRegistration {
+    port: usize,
+}
+
+impl TapPortRegistration {
+    fn new(port: usize) -> AppResult<Self> {
+        let mut registered = tap_port_guard();
+        if registered.is_some() {
+            return Err(AppError::Platform(
+                "an event tap port is already registered in this process".to_string(),
+            ));
+        }
+        *registered = Some(port);
+        Ok(Self { port })
+    }
+}
+
+impl Drop for TapPortRegistration {
+    fn drop(&mut self) {
+        let mut registered = tap_port_guard();
+        if *registered == Some(self.port) {
+            *registered = None;
+        }
+    }
+}
+
+fn tap_port_guard() -> MutexGuard<'static, Option<usize>> {
+    match TAP_PORT.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+/// Re-enables the currently registered tap, if its owning run loop is still
+/// alive. Holding the registry lock across the CoreGraphics call prevents a
+/// concurrent run-loop return from dropping the backing `CGEventTap` first.
+pub fn rearm_if_installed() -> bool {
+    let registered = tap_port_guard();
+    let Some(port) = *registered else {
+        return false;
+    };
+    unsafe { CGEventTapEnable(port as CFMachPortRef, true) };
+    true
+}
 
 /// Why the blocking event-tap runner returned successfully.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,15 +195,12 @@ pub fn install_and_run_with_ready(
         ),
     }
 
-    TAP_PORT.store(
-        event_tap.mach_port().as_concrete_TypeRef() as usize,
-        Ordering::Release,
-    );
+    let _tap_port_registration =
+        TapPortRegistration::new(event_tap.mach_port().as_concrete_TypeRef() as usize)?;
     CFRunLoop::get_current().add_source(&loop_source, unsafe { kCFRunLoopCommonModes });
     event_tap.enable();
     on_ready();
     CFRunLoop::run_current();
-    TAP_PORT.store(0, Ordering::Release);
     Ok(TapRunOutcome::Stopped)
 }
 
@@ -167,13 +211,10 @@ fn handle_event(
 ) -> CallbackResult {
     match event_type {
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
-            let port = TAP_PORT.load(Ordering::Acquire);
-            if port != 0 {
-                // CGEventTapEnable takes the CFMachPortRef returned by
-                // CGEventTapCreate. The callback proxy is a different opaque
-                // token and crashes here on pointer-authenticated macOS.
-                unsafe { CGEventTapEnable(port as CFMachPortRef, true) };
-            }
+            // CGEventTapEnable takes the CFMachPortRef returned by
+            // CGEventTapCreate. The callback proxy is a different opaque
+            // token and crashes here on pointer-authenticated macOS.
+            rearm_if_installed();
         }
         CGEventType::ScrollWheel => {
             let Some(config_lock) = CONFIG.get() else {
@@ -510,5 +551,23 @@ mod debug_log_decision_tests {
         let reason = decision_reason(&config, DeviceKind::Mouse, None, false, 0, true, false);
 
         assert_eq!(reason, debug_log::DecisionReason::TemporarilyPaused);
+    }
+}
+
+#[cfg(test)]
+mod tap_port_tests {
+    use super::*;
+
+    #[test]
+    fn registration_rejects_overlap_and_clears_on_drop() {
+        assert!(tap_port_guard().is_none());
+
+        let registration = TapPortRegistration::new(0x1234).expect("first registration");
+        assert_eq!(*tap_port_guard(), Some(0x1234));
+        assert!(TapPortRegistration::new(0x5678).is_err());
+        assert_eq!(*tap_port_guard(), Some(0x1234));
+
+        drop(registration);
+        assert!(tap_port_guard().is_none());
     }
 }
