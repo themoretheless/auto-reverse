@@ -15,7 +15,7 @@ independently.
 7. [Implemented] Observe sleep/wake and re-arm a disabled or stopped tap safely; real sleep/wake manual QA remains open.
 8. [Done] Serialize CLI writes with a persistent lock; reject and reload stale GUI/tray revisions.
 9. [Implemented] A second GUI launch activates the existing window; hidden-window manual QA remains open.
-10. [Next] Add integration tests with isolated `HOME` and config paths.
+10. [Done] Run black-box CLI integration tests in isolated `HOME` and config paths.
 
 ## P1 - Product and design
 

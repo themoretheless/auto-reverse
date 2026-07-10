@@ -43,6 +43,8 @@ Implemented:
 - GUI Start at Login toggle via `SMAppService.mainAppService()`;
 - CLI diagnostics, JSON startup status and simulation;
 - separated CLI parser in `src/cli.rs`;
+- black-box CLI integration tests with isolated `HOME`, explicit config paths,
+  no-create diagnostics, startup plist paths, and concurrent mutations;
 - macOS CI plus roadmap, design, QA, privacy, security, and contribution docs.
 
 Still missing:
@@ -73,6 +75,7 @@ cargo run -- startup-status
 cargo run -- startup-status --json
 cargo run -- run
 cargo test
+cargo test --test cli_integration
 cargo fmt
 cargo clippy -- -D warnings
 scripts/check-app-bundle.sh
@@ -234,6 +237,7 @@ src/ui.rs                            settings app coordinator and tab contents
 src/ui/runtime.rs                    typed tap lifecycle and explicit event channel
 src/ui/theme.rs                      handoff tokens and custom egui controls
 src/ui/debug_console.rs              Debug Console viewport/filter/export
+tests/cli_integration.rs             real binary in isolated HOME/config sandboxes
 ```
 
 The macOS framework crates (`core-foundation`, `core-graphics`) are
@@ -429,7 +433,7 @@ items visible from the README without making the first read impossible.
 | 127 | Problem | Нет serde round-trip для `DeviceKind`. |
 | 128 | Improve | Добавить TOML test для `magic-mouse`. |
 | 129 | Problem | Нет CLI snapshot tests. |
-| 130 | Improve | Добавить integration tests через `assert_cmd`. |
+| 130 | Done | CLI integration tests запускают real binary через `std::process::Command` в sandbox. |
 | 131 | Problem | Нет golden output для `show-config`. |
 | 132 | Improve | Зафиксировать config output или сделать формат explicit unstable. |
 | 133 | Problem | Нет test tempdir crate. |
