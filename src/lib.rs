@@ -6,6 +6,7 @@
 //! - [`error`], [`device`], [`input`]: shared vocabulary types.
 //! - [`config`]: what the settings are (`schema`) and where they live
 //!   (`store`).
+//! - [`runtime`]: process-local controls such as temporary pause.
 //! - [`scroll`]: the pure reversal policy - config + event in, decision
 //!   out. No OS types anywhere.
 //! - [`platform`]: everything OS-specific and unsafe. `platform::macos`
@@ -17,6 +18,7 @@ pub mod device;
 pub mod error;
 pub mod input;
 pub mod platform;
+pub mod runtime;
 pub mod scroll;
 #[cfg(all(feature = "gui", target_os = "macos"))]
 pub mod ui;

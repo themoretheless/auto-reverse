@@ -1,0 +1,37 @@
+name: Bug report
+description: Report reproducible Auto Reverse behavior
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected scrolling behavior.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Input device
+      description: Mouse/trackpad model and connection type; omit serial numbers.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Paste `doctor --no-create` output after removing personal paths or names.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed personal device names, paths, and exported event logs.
+          required: true

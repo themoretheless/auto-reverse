@@ -162,10 +162,9 @@ pub fn clear() {
 /// Human-readable device description, e.g. "Mouse wheel · Logitech" or
 /// "Trackpad" or "Unknown device" - reuses `DeviceKind`'s existing labels
 /// plus whatever device name the caller already resolved (see
-/// `event_tap::handle_event`'s `hid::recent_wheel_device` /
-/// `hid::cached_device_name` lookup), rather than this module doing its own
-/// (expensive - `list_pointing_devices` opens an IOHIDManager) name lookup
-/// on every single scroll event.
+/// `event_tap::handle_event`'s `hid::recent_wheel_snapshot` lookup), rather
+/// than this module doing its own (expensive - `list_pointing_devices`
+/// opens an IOHIDManager) name lookup on every single scroll event.
 pub fn device_description(device_kind: DeviceKind, device_name: Option<&str>) -> String {
     let kind_label = match device_kind {
         DeviceKind::Mouse => "Mouse wheel",

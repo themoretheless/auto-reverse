@@ -159,21 +159,24 @@
 
 ## Acceptance matrix
 
-| Area | Scroll Reverser behavior | Auto Reverse target |
-| --- | --- | --- |
-| Core | Reverse scroll direction | Same user-visible behavior |
-| Devices | Mouse and trackpad independent settings | Mouse, trackpad, Magic Mouse, unknown fallback |
-| Axes | Vertical and horizontal toggles | Same |
-| Wheel | Step size control | Same, hidden until wheel detected |
-| UI | Menu bar app with preferences | Menu bar/tray app with settings |
-| Permissions | Accessibility and Input Monitoring flow | Same platform-specific flow |
-| Debug | Option-click debug console | Debug console/diagnostics equivalent |
-| Startup | Start at login | Same |
-| Icon | Show/hide menu bar icon | Same with recovery path |
-| Automation | AppleScript enabled property | CLI/API equivalent, AppleScript if macOS-native |
-| Updates | Sparkle update flow | Equivalent update strategy |
-| Localization | Many languages | i18n-ready, Russian and English first |
-| Limits | Gestures not reversed | Same limitation documented |
+| Area | Target behavior | Status | Gap / next action |
+| --- | --- | --- | --- |
+| Core | Reverse scroll direction | Done | Physical wheel and continuous precision paths are tested separately. |
+| Devices | Mouse and trackpad independent settings | Partial | Discrete per-device rules work live; Magic Mouse still follows trackpad classification. |
+| Axes | Vertical and horizontal toggles | Done | Both policy and CGEvent field writes have regression tests. |
+| Wheel | Step size control | Partial | Implemented; detection-driven conditional visibility is still open. |
+| UI | Menu bar app with preferences | Done | Handoff 1b/1e implemented. |
+| Pause | Temporary pause without changing settings | Done | 15-minute auto-resume and Resume Now exist in settings and tray. |
+| Permissions | Accessibility and Input Monitoring flow | Done | Permission-first tab and separate pane actions exist; live human QA remains. |
+| Debug | Option-click debug console | Done | Search/filter/export/clear and bounded local ring buffer exist. |
+| Startup | Start at login | Done | GUI uses SMAppService; lean CLI keeps LaunchAgent support. |
+| Status icon | Retina menu status and app identity | Done | Template glyph, colored state dot, SVG-to-ICNS app icon pipeline. |
+| Hide icon | Show/hide menu bar icon | Open | Requires a recovery/focus command before exposing the toggle. |
+| Automation | Scriptable enable/disable | Done | CLI `enable`, `disable`, `toggle`, `doctor`; AppleScript property is not implemented. |
+| Updates | Explicit update strategy | Open | Choose Sparkle/manual/no-updater before activating stored flags. |
+| Localization | Russian and English-ready strings | Open | User-facing copy still lives inline. |
+| Distribution | Signed/notarized release | Open | Local bundle is ad-hoc signed; Developer ID/notarization remains external release work. |
+| Limits | Gestures not reversed | Documented | Keep compatibility notes and hardware QA current. |
 
 ## First implementation slices
 
@@ -187,4 +190,3 @@
 8. macOS feasibility spike for event tap and gesture classification.
 9. Menu bar/settings UI shell.
 10. Debug console backed by efficient ring buffer.
-

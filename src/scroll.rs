@@ -30,6 +30,17 @@ pub struct TransformDecision {
 }
 
 impl TransformDecision {
+    pub fn passthrough(event: ScrollEvent) -> Self {
+        Self {
+            original: event,
+            transformed: event,
+            reversed: false,
+            vertical_reversed: false,
+            horizontal_reversed: false,
+            step_size_applied: false,
+        }
+    }
+
     pub fn changed(self) -> bool {
         self.original.delta_vertical != self.transformed.delta_vertical
             || self.original.delta_horizontal != self.transformed.delta_horizontal
@@ -46,14 +57,7 @@ pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecis
     let skip_as_injected = config.reverse_only_raw_input && event.source_pid != 0;
 
     if !config.enabled || event.synthetic || skip_as_injected {
-        return TransformDecision {
-            original: event,
-            transformed,
-            reversed,
-            vertical_reversed,
-            horizontal_reversed,
-            step_size_applied,
-        };
+        return TransformDecision::passthrough(event);
     }
 
     let should_reverse = config.should_reverse(event.device_kind, event.hardware);

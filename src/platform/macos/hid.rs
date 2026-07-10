@@ -103,6 +103,15 @@ unsafe extern "C" {
 /// `static` soundness, not for real cross-thread traffic.
 static LAST_WHEEL: Mutex<Option<(HardwareId, Option<String>, Instant)>> = Mutex::new(None);
 
+/// One consistent view of the last attributed wheel tick. Returning the
+/// hardware id and display name together avoids taking `LAST_WHEEL` twice
+/// for one CGEvent and guarantees both fields came from the same HID tick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WheelSnapshot {
+    pub hardware: HardwareId,
+    pub name: Option<String>,
+}
+
 /// Starts a mouse-matching HID monitor on the CURRENT thread's run loop.
 /// Must be called on the same thread that will run the event tap loop,
 /// before entering it. On success the manager intentionally lives for the
@@ -141,23 +150,13 @@ pub fn start_wheel_monitor() -> AppResult<()> {
     Ok(())
 }
 
-/// The device that produced a wheel tick within `max_age`, if any.
-pub fn recent_wheel_device(max_age: Duration) -> Option<HardwareId> {
+/// The device that produced a wheel tick within `max_age`, if any. The
+/// product name is captured by the same callback as the hardware id.
+pub fn recent_wheel_snapshot(max_age: Duration) -> Option<WheelSnapshot> {
     let last = LAST_WHEEL.lock().ok()?;
     last.clone()
         .filter(|(_, _, at)| at.elapsed() <= max_age)
-        .map(|(id, _, _)| id)
-}
-
-/// Same attribution as `recent_wheel_device`, but also returns the device's
-/// `Product` name string when available - used by the Debug Console
-/// (`debug_log::device_description`) to avoid a second, expensive
-/// `list_pointing_devices` IOHIDManager round trip per scroll event.
-pub fn recent_wheel_device_name(max_age: Duration) -> Option<String> {
-    let last = LAST_WHEEL.lock().ok()?;
-    last.clone()
-        .filter(|(_, _, at)| at.elapsed() <= max_age)
-        .and_then(|(_, name, _)| name)
+        .map(|(hardware, name, _)| WheelSnapshot { hardware, name })
 }
 
 extern "C" fn wheel_value_callback(

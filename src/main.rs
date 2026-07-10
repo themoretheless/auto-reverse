@@ -123,7 +123,12 @@ fn run_event_tap() -> AppResult<()> {
     // both hold a live tap. A second, redundant `run` (or a `ui` process
     // already running) observes the lock already held and returns cleanly
     // rather than installing a competing tap.
-    event_tap::install_and_run(Arc::new(RwLock::new(config)))
+    match event_tap::install_and_run(Arc::new(RwLock::new(config)))? {
+        event_tap::TapRunOutcome::AlreadyRunning => Ok(()),
+        event_tap::TapRunOutcome::Stopped => Err(AppError::Platform(
+            "the event tap run loop stopped unexpectedly".to_string(),
+        )),
+    }
 }
 
 fn doctor(options: DoctorOptions) -> AppResult<()> {

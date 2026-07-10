@@ -5,12 +5,15 @@ use core_graphics::event::{
     CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventTapProxy, CGEventType, CallbackResult,
 };
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 use crate::config::AppConfig;
 use crate::device::conservative_kind_from_continuity;
 use crate::error::{AppError, AppResult};
+use crate::runtime::RuntimeControl;
+use crate::scroll::TransformDecision;
 
 use super::{daemon_lock, hid, scroll_events};
 
@@ -18,8 +21,6 @@ use super::{daemon_lock, hid, scroll_events};
 use super::debug_log;
 #[cfg(feature = "gui")]
 use crate::device::{DeviceKind, HardwareId};
-#[cfg(feature = "gui")]
-use crate::scroll::TransformDecision;
 
 /// How recently a HID wheel tick must have arrived for a discrete CGEvent
 /// to be attributed to that device. Both callbacks share one run loop
@@ -33,7 +34,17 @@ unsafe extern "C" {
 }
 
 static CONFIG: OnceLock<Arc<RwLock<AppConfig>>> = OnceLock::new();
-static TAP_PORT: OnceLock<usize> = OnceLock::new();
+static RUNTIME_CONTROL: OnceLock<Arc<RuntimeControl>> = OnceLock::new();
+static TAP_PORT: AtomicUsize = AtomicUsize::new(0);
+
+/// Why the blocking event-tap runner returned successfully.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TapRunOutcome {
+    /// Another process owns `run.lock`; no tap was installed here.
+    AlreadyRunning,
+    /// This process installed a tap, but its CFRunLoop later stopped.
+    Stopped,
+}
 
 /// Installs a system-wide event tap that reverses scroll direction for
 /// physical mouse wheels, then blocks running the current thread's run loop
@@ -51,39 +62,25 @@ static TAP_PORT: OnceLock<usize> = OnceLock::new();
 /// creating the tap - this is the one gate that prevents two live
 /// `CGEventTap`s regardless of which of the two launch paths (headless
 /// `run`, or the merged GUI process's in-process thread) got there first.
-/// If the lock is already held, this returns `Ok(())` without installing a
-/// tap, exactly like the standalone `run` command already did.
-pub fn install_and_run(config: Arc<RwLock<AppConfig>>) -> AppResult<()> {
+/// If the lock is already held, this returns
+/// `Ok(TapRunOutcome::AlreadyRunning)` without installing a tap.
+pub fn install_and_run(config: Arc<RwLock<AppConfig>>) -> AppResult<TapRunOutcome> {
+    install_and_run_with_ready(config, Arc::new(RuntimeControl::default()), || {})
+}
+
+/// Same runner as [`install_and_run`], with a one-shot callback fired after
+/// the tap is enabled and immediately before entering the blocking run loop.
+/// The GUI uses this explicit handshake instead of inferring startup from a
+/// timeout; the headless path uses [`install_and_run`] with a no-op callback.
+pub fn install_and_run_with_ready(
+    config: Arc<RwLock<AppConfig>>,
+    runtime_control: Arc<RuntimeControl>,
+    on_ready: impl FnOnce(),
+) -> AppResult<TapRunOutcome> {
     let Some(_daemon_lock) = daemon_lock::try_acquire(&daemon_lock::default_path())? else {
         println!("auto-reverse: another instance is already running; exiting");
-        return Ok(());
+        return Ok(TapRunOutcome::AlreadyRunning);
     };
-
-    // Per-device rules need the HID wheel monitor; without rules it would
-    // only burn cycles, so it stays off. Failure degrades gracefully to
-    // per-kind behavior instead of aborting - the tap itself still works.
-    let device_rule_count = config
-        .read()
-        .expect("event tap config lock poisoned")
-        .device_rules
-        .len();
-    if device_rule_count == 0 {
-        println!("auto-reverse: no device_rules in config; per-device attribution is off");
-    } else {
-        match hid::start_wheel_monitor() {
-            Ok(()) => println!(
-                "auto-reverse: HID wheel monitor started for {device_rule_count} device rule(s)"
-            ),
-            Err(error) => eprintln!(
-                "auto-reverse: device_rules are configured but the HID wheel monitor failed \
-                 ({error}); falling back to per-kind flags only"
-            ),
-        }
-    }
-
-    CONFIG
-        .set(config)
-        .map_err(|_| AppError::Platform("event tap config was already initialized".to_string()))?;
 
     let event_tap = CGEventTap::new(
         CGEventTapLocation::HID,
@@ -98,18 +95,69 @@ pub fn install_and_run(config: Arc<RwLock<AppConfig>>) -> AppResult<()> {
                 .to_string(),
         )
     })?;
-
-    let _ = TAP_PORT.set(event_tap.mach_port().as_concrete_TypeRef() as usize);
     let loop_source = event_tap
         .mach_port()
         .create_runloop_source(0)
         .map_err(|_| {
             AppError::Platform("failed to create event tap run-loop source".to_string())
         })?;
+
+    if let Some(existing) = CONFIG.get() {
+        if !Arc::ptr_eq(existing, &config) {
+            return Err(AppError::Platform(
+                "event tap config was already initialized by another runtime".to_string(),
+            ));
+        }
+    } else {
+        CONFIG
+            .set(Arc::clone(&config))
+            .map_err(|_| AppError::Platform("event tap config initialization raced".to_string()))?;
+    }
+    if let Some(existing) = RUNTIME_CONTROL.get() {
+        if !Arc::ptr_eq(existing, &runtime_control) {
+            return Err(AppError::Platform(
+                "event tap runtime control was already initialized by another runtime".to_string(),
+            ));
+        }
+    } else {
+        RUNTIME_CONTROL.set(runtime_control).map_err(|_| {
+            AppError::Platform("event tap runtime control initialization raced".to_string())
+        })?;
+    }
+
+    // Always start the HID monitor, even when config currently has no rules:
+    // the merged UI can add its first rule live after startup, and the tap
+    // thread has no safe way to schedule IOHIDManager later from the GUI
+    // thread. Starting here keeps that first rule immediately effective.
+    // This still happens after every fallible tap/source step so an early TCC
+    // failure cannot leave a process-lifetime manager on an exiting thread.
+    let device_rule_count = match config.read() {
+        Ok(guard) => guard.device_rules.len(),
+        Err(poisoned) => poisoned.into_inner().device_rules.len(),
+    };
+    match hid::start_wheel_monitor() {
+        Ok(()) if device_rule_count == 0 => {
+            println!("auto-reverse: HID wheel monitor started; no device_rules configured yet")
+        }
+        Ok(()) => println!(
+            "auto-reverse: HID wheel monitor started for {device_rule_count} device rule(s)"
+        ),
+        Err(error) => eprintln!(
+            "auto-reverse: HID wheel monitor failed ({error}); current and newly-added \
+             device_rules will fall back to per-kind flags until restart"
+        ),
+    }
+
+    TAP_PORT.store(
+        event_tap.mach_port().as_concrete_TypeRef() as usize,
+        Ordering::Release,
+    );
     CFRunLoop::get_current().add_source(&loop_source, unsafe { kCFRunLoopCommonModes });
     event_tap.enable();
+    on_ready();
     CFRunLoop::run_current();
-    Ok(())
+    TAP_PORT.store(0, Ordering::Release);
+    Ok(TapRunOutcome::Stopped)
 }
 
 fn handle_event(
@@ -119,11 +167,12 @@ fn handle_event(
 ) -> CallbackResult {
     match event_type {
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
-            if let Some(port) = TAP_PORT.get() {
+            let port = TAP_PORT.load(Ordering::Acquire);
+            if port != 0 {
                 // CGEventTapEnable takes the CFMachPortRef returned by
                 // CGEventTapCreate. The callback proxy is a different opaque
                 // token and crashes here on pointer-authenticated macOS.
-                unsafe { CGEventTapEnable(*port as CFMachPortRef, true) };
+                unsafe { CGEventTapEnable(port as CFMachPortRef, true) };
             }
         }
         CGEventType::ScrollWheel => {
@@ -140,11 +189,12 @@ fn handle_event(
             // so pinning it to whatever mouse scrolled last would be wrong -
             // it could inherit that device's rule purely by wall-clock luck.
             let from_hid = scroll_events::event_source_pid(event) == 0;
-            let hardware = if continuous || !from_hid {
+            let wheel_snapshot = if continuous || !from_hid {
                 None
             } else {
-                hid::recent_wheel_device(WHEEL_ATTRIBUTION_WINDOW)
+                hid::recent_wheel_snapshot(WHEEL_ATTRIBUTION_WINDOW)
             };
+            let hardware = wheel_snapshot.as_ref().map(|snapshot| snapshot.hardware);
 
             // Hot path: hold the read lock only long enough to clone the
             // config, then drop it before touching the CGEvent fields. A
@@ -159,12 +209,29 @@ fn handle_event(
                 };
                 guard.clone()
             };
+            let temporarily_paused = RUNTIME_CONTROL
+                .get()
+                .is_some_and(|control| control.is_paused());
             #[cfg_attr(not(feature = "gui"), allow(unused_variables))]
-            let decision =
-                scroll_events::apply_config_in_place(event, &config, device_kind, hardware);
+            let decision = if temporarily_paused {
+                TransformDecision::passthrough(scroll_events::event_from_cg_event(
+                    event,
+                    device_kind,
+                    hardware,
+                ))
+            } else {
+                scroll_events::apply_config_in_place(event, &config, device_kind, hardware)
+            };
 
             #[cfg(feature = "gui")]
-            record_debug_event(&config, device_kind, hardware, decision);
+            record_debug_event(
+                &config,
+                device_kind,
+                hardware,
+                wheel_snapshot.and_then(|snapshot| snapshot.name),
+                temporarily_paused,
+                decision,
+            );
         }
         _ => {}
     }
@@ -185,10 +252,10 @@ fn record_debug_event(
     config: &AppConfig,
     device_kind: DeviceKind,
     hardware: Option<HardwareId>,
+    device_name: Option<String>,
+    temporarily_paused: bool,
     decision: TransformDecision,
 ) {
-    let device_name =
-        hardware.and_then(|_| hid::recent_wheel_device_name(WHEEL_ATTRIBUTION_WINDOW));
     let device_description = debug_log::device_description(device_kind, device_name.as_deref());
 
     // Two rows (vertical/horizontal) whenever the event carries a nonzero
@@ -222,6 +289,7 @@ fn record_debug_event(
             hardware,
             decision.original.synthetic,
             decision.original.source_pid,
+            temporarily_paused,
             axis_reversed,
         );
 
@@ -251,11 +319,18 @@ fn decision_text_and_category(
     hardware: Option<HardwareId>,
     synthetic: bool,
     source_pid: i64,
+    temporarily_paused: bool,
     axis_reversed: bool,
 ) -> (String, debug_log::DecisionCategory) {
     if !config.enabled {
         return (
             "Ignored – scroll reversal is off".to_string(),
+            debug_log::DecisionCategory::Ignored,
+        );
+    }
+    if temporarily_paused {
+        return (
+            "Ignored - temporarily paused".to_string(),
             debug_log::DecisionCategory::Ignored,
         );
     }
@@ -361,7 +436,7 @@ mod debug_log_decision_tests {
         assert!(config.should_reverse(DeviceKind::Trackpad, None));
 
         let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Trackpad, None, false, 0, false);
+            decision_text_and_category(&config, DeviceKind::Trackpad, None, false, 0, false, false);
 
         assert_eq!(text, "Passed through");
         assert_eq!(category, debug_log::DecisionCategory::Passed);
@@ -373,7 +448,7 @@ mod debug_log_decision_tests {
         assert!(!config.should_reverse(DeviceKind::Trackpad, None));
 
         let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Trackpad, None, false, 0, false);
+            decision_text_and_category(&config, DeviceKind::Trackpad, None, false, 0, false, false);
 
         assert_eq!(text, "Passed through – trackpad natural");
         assert_eq!(category, debug_log::DecisionCategory::Passed);
@@ -398,8 +473,15 @@ mod debug_log_decision_tests {
             });
         });
 
-        let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Mouse, Some(hardware), false, 0, false);
+        let (text, category) = decision_text_and_category(
+            &config,
+            DeviceKind::Mouse,
+            Some(hardware),
+            false,
+            0,
+            false,
+            false,
+        );
 
         assert_eq!(text, "Ignored – this device has a Don't reverse rule");
         assert_eq!(category, debug_log::DecisionCategory::Ignored);
@@ -409,7 +491,7 @@ mod debug_log_decision_tests {
     fn unknown_device_kind_names_itself() {
         let config = config_with(|_| {});
         let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Unknown, None, false, 0, false);
+            decision_text_and_category(&config, DeviceKind::Unknown, None, false, 0, false, false);
         assert_eq!(text, "Ignored – unknown devices not reversed");
         assert_eq!(category, debug_log::DecisionCategory::Ignored);
     }
@@ -418,7 +500,7 @@ mod debug_log_decision_tests {
     fn mouse_reversal_off_names_the_device_kind() {
         let config = config_with(|c| c.reverse_mouse = false);
         let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Mouse, None, false, 0, false);
+            decision_text_and_category(&config, DeviceKind::Mouse, None, false, 0, false, false);
         assert_eq!(text, "Ignored – mouse reversal is off");
         assert_eq!(category, debug_log::DecisionCategory::Ignored);
     }
@@ -427,7 +509,7 @@ mod debug_log_decision_tests {
     fn axis_reversed_wins_over_every_other_check() {
         let config = config_with(|_| {});
         let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Mouse, None, false, 0, true);
+            decision_text_and_category(&config, DeviceKind::Mouse, None, false, 0, false, true);
         assert_eq!(text, "Reversed");
         assert_eq!(category, debug_log::DecisionCategory::Reversed);
     }
@@ -436,7 +518,7 @@ mod debug_log_decision_tests {
     fn disabled_config_is_ignored_before_anything_else() {
         let config = config_with(|c| c.enabled = false);
         let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Mouse, None, false, 0, true);
+            decision_text_and_category(&config, DeviceKind::Mouse, None, false, 0, false, true);
         assert_eq!(text, "Ignored – scroll reversal is off");
         assert_eq!(category, debug_log::DecisionCategory::Ignored);
     }
@@ -445,7 +527,7 @@ mod debug_log_decision_tests {
     fn synthetic_event_is_ignored_even_when_axis_reversed_would_otherwise_apply() {
         let config = config_with(|_| {});
         let (text, category) =
-            decision_text_and_category(&config, DeviceKind::Mouse, None, true, 0, true);
+            decision_text_and_category(&config, DeviceKind::Mouse, None, true, 0, false, true);
         assert_eq!(text, "Ignored – synthetic event");
         assert_eq!(category, debug_log::DecisionCategory::Ignored);
     }
@@ -460,9 +542,20 @@ mod debug_log_decision_tests {
             None,
             false,
             non_zero_source_pid,
+            false,
             true,
         );
         assert_eq!(text, "Ignored – raw input guard (remote desktop)");
+        assert_eq!(category, debug_log::DecisionCategory::Ignored);
+    }
+
+    #[test]
+    fn temporary_pause_has_an_explicit_debug_reason() {
+        let config = config_with(|_| {});
+        let (text, category) =
+            decision_text_and_category(&config, DeviceKind::Mouse, None, false, 0, true, false);
+
+        assert_eq!(text, "Ignored - temporarily paused");
         assert_eq!(category, debug_log::DecisionCategory::Ignored);
     }
 }

@@ -76,6 +76,11 @@ use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 use crate::config::AppConfig;
 use crate::platform::macos::{hid, permissions};
+use crate::runtime::{DEFAULT_PAUSE_DURATION, RuntimeControl};
+
+mod device_rules;
+
+use device_rules::toggle_device_rules;
 
 const NO_ACTION: usize = 0;
 const OPEN_SETTINGS_ACTION: usize = 1;
@@ -83,6 +88,7 @@ const QUIT_ACTION: usize = 2;
 const TOGGLE_ENABLED_ACTION: usize = 3;
 const OPEN_DEBUG_CONSOLE_ACTION: usize = 4;
 const SAVE_FAILED_ACTION: usize = 5;
+const PAUSE_CHANGED_ACTION: usize = 6;
 // Device-rule quick-pick actions are encoded as
 // DEVICE_ACTION_BASE + index into the device list snapshotted when the
 // menu was last built (see `MenuActionTargetIvars::devices`), rather than
@@ -110,6 +116,8 @@ pub enum TrayAction {
     /// A tray-originated config mutation could not be persisted and was
     /// rolled back in shared config.
     SaveFailed,
+    /// Temporary process-local pause started or ended.
+    PauseChanged,
 }
 
 /// Status the icon and the menu's status line both reflect. Computed the
@@ -120,17 +128,26 @@ pub enum TrayAction {
 pub enum TrayStatus {
     Active,
     Paused,
+    TemporarilyPaused,
     NeedsPermission,
 }
 
 impl TrayStatus {
-    pub fn from_config(config: &AppConfig) -> Self {
-        if !config.enabled {
+    pub fn from_config(config: &AppConfig, temporarily_paused: bool) -> Self {
+        Self::from_state(
+            config.enabled,
+            permissions::has_accessibility_trust() && permissions::has_input_monitoring_access(),
+            temporarily_paused,
+        )
+    }
+
+    fn from_state(enabled: bool, permissions_ready: bool, temporarily_paused: bool) -> Self {
+        if !enabled {
             Self::Paused
-        } else if !permissions::has_accessibility_trust()
-            || !permissions::has_input_monitoring_access()
-        {
+        } else if !permissions_ready {
             Self::NeedsPermission
+        } else if temporarily_paused {
+            Self::TemporarilyPaused
         } else {
             Self::Active
         }
@@ -165,6 +182,16 @@ impl TrayStatus {
                 0x8E as f64 / 255.0,
                 0x93 as f64 / 255.0,
             ),
+            (Self::TemporarilyPaused, false) => (
+                0x80 as f64 / 255.0,
+                0x80 as f64 / 255.0,
+                0x80 as f64 / 255.0,
+            ),
+            (Self::TemporarilyPaused, true) => (
+                0x8E as f64 / 255.0,
+                0x8E as f64 / 255.0,
+                0x93 as f64 / 255.0,
+            ),
             (Self::NeedsPermission, false) => (
                 0xE5 as f64 / 255.0,
                 0x9E as f64 / 255.0,
@@ -182,6 +209,7 @@ impl TrayStatus {
         match self {
             Self::Active => "On",
             Self::Paused => "Off",
+            Self::TemporarilyPaused => "Paused temporarily",
             Self::NeedsPermission => "Needs permission",
         }
     }
@@ -249,6 +277,7 @@ impl TrayHandle {
 /// concrete `HardwareId` in `logic()`.
 struct MenuActionTargetIvars {
     shared_config: Arc<RwLock<AppConfig>>,
+    runtime_control: Arc<RuntimeControl>,
     on_change: Arc<SaveCallback>,
     device_snapshot: Mutex<Vec<hid::DeviceInfo>>,
 }
@@ -298,6 +327,20 @@ define_class!(
         #[unsafe(method(openDebugConsole:))]
         fn open_debug_console(&self, _sender: &AnyObject) {
             PENDING_ACTION.store(OPEN_DEBUG_CONSOLE_ACTION, Ordering::SeqCst);
+        }
+
+        #[unsafe(method(pauseTemporarily:))]
+        fn pause_temporarily(&self, _sender: &AnyObject) {
+            self.ivars()
+                .runtime_control
+                .pause_for(DEFAULT_PAUSE_DURATION);
+            PENDING_ACTION.store(PAUSE_CHANGED_ACTION, Ordering::SeqCst);
+        }
+
+        #[unsafe(method(resumeNow:))]
+        fn resume_now(&self, _sender: &AnyObject) {
+            self.ivars().runtime_control.resume();
+            PENDING_ACTION.store(PAUSE_CHANGED_ACTION, Ordering::SeqCst);
         }
 
         #[unsafe(method(toggleDevice:))]
@@ -377,7 +420,14 @@ define_class!(
                 *snapshot = devices.clone();
             }
             let mtm = self.mtm();
-            rebuild_menu(menu, self, &config, &devices, mtm);
+            rebuild_menu(
+                menu,
+                self,
+                &config,
+                &devices,
+                &ivars.runtime_control,
+                mtm,
+            );
         }
     }
 );
@@ -392,6 +442,7 @@ define_class!(
 /// one that could silently diverge from `SettingsApp::save()`.
 pub fn build(
     shared_config: Arc<RwLock<AppConfig>>,
+    runtime_control: Arc<RuntimeControl>,
     on_disk_save: impl Fn(&AppConfig) -> Result<(), String> + Send + Sync + 'static,
 ) -> Result<TrayHandle, String> {
     let mtm = MainThreadMarker::new()
@@ -408,6 +459,7 @@ pub fn build(
 
     let target_alloc = mtm.alloc().set_ivars(MenuActionTargetIvars {
         shared_config,
+        runtime_control: Arc::clone(&runtime_control),
         on_change: Arc::new(on_disk_save),
         device_snapshot: Mutex::new(devices.clone()),
     });
@@ -415,9 +467,16 @@ pub fn build(
 
     let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str("Auto Reverse"));
     menu.setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*target)));
-    rebuild_menu(&menu, &target, &config_snapshot, &devices, mtm);
+    rebuild_menu(
+        &menu,
+        &target,
+        &config_snapshot,
+        &devices,
+        &runtime_control,
+        mtm,
+    );
 
-    let status = TrayStatus::from_config(&config_snapshot);
+    let status = TrayStatus::from_config(&config_snapshot, runtime_control.is_paused());
     let icon = arrows_icon()?;
     let status_item = NSStatusBar::systemStatusBar().statusItemWithLength(NSSquareStatusItemLength);
     #[allow(deprecated)]
@@ -471,11 +530,13 @@ fn rebuild_menu(
     target: &MenuActionTarget,
     config: &AppConfig,
     devices: &[hid::DeviceInfo],
+    runtime_control: &RuntimeControl,
     mtm: MainThreadMarker,
 ) {
     menu.removeAllItems();
 
-    let status = TrayStatus::from_config(config);
+    let temporarily_paused = runtime_control.is_paused();
+    let status = TrayStatus::from_config(config, temporarily_paused);
     let status_item = NSMenuItem::new(mtm);
     status_item.setTitle(&NSString::from_str(&format!(
         "Auto Reverse — {}",
@@ -493,6 +554,17 @@ fn rebuild_menu(
         NSControlStateValueOff
     });
     menu.addItem(&reverse_item);
+
+    let (pause_title, pause_selector) = if temporarily_paused {
+        ("Resume Now", sel!(resumeNow:))
+    } else {
+        ("Pause for 15 Minutes", sel!(pauseTemporarily:))
+    };
+    let pause_item = menu_item(pause_title, pause_selector, target, mtm);
+    if !temporarily_paused && status != TrayStatus::Active {
+        pause_item.setEnabled(false);
+    }
+    menu.addItem(&pause_item);
 
     let devices_item = NSMenuItem::new(mtm);
     devices_item.setTitle(&NSString::from_str("Devices"));
@@ -577,6 +649,7 @@ fn decode_pending_action(raw: usize) -> Option<TrayAction> {
         TOGGLE_ENABLED_ACTION => Some(TrayAction::ToggleEnabled),
         OPEN_DEBUG_CONSOLE_ACTION => Some(TrayAction::OpenDebugConsole),
         SAVE_FAILED_ACTION => Some(TrayAction::SaveFailed),
+        PAUSE_CHANGED_ACTION => Some(TrayAction::PauseChanged),
         NO_ACTION => None,
         // Anything at/above DEVICE_ACTION_BASE is a device-toggle index -
         // see toggle_device's PENDING_ACTION.store call for the encoding.
@@ -724,115 +797,9 @@ fn menu_item(
     item
 }
 
-/// Pure decision for what `device_rules` should become after a tray
-/// quick-pick click on `device`, given the CURRENT rules - split out of
-/// `toggle_device` so this is unit-testable without a live `AnyObject`
-/// sender/ivars. Returns `None` for "no-op": the device has an explicit
-/// `Some(false)` ("Don't reverse") rule, which the tray's binary checkmark
-/// cannot safely represent or cycle through, so a click must never
-/// silently overwrite it with Reverse. Otherwise returns the updated rule
-/// list, cycling Default -> Reverse -> Default.
-fn toggle_device_rules(
-    current_rules: &[crate::config::DeviceRule],
-    device: &hid::DeviceInfo,
-) -> Option<Vec<crate::config::DeviceRule>> {
-    let current_rule = current_rules
-        .iter()
-        .find(|rule| rule.matches(device.hardware))
-        .map(|rule| rule.reverse);
-    if current_rule == Some(false) {
-        return None;
-    }
-
-    let mut updated: Vec<crate::config::DeviceRule> = current_rules
-        .iter()
-        .filter(|rule| !rule.matches(device.hardware))
-        .cloned()
-        .collect();
-    if current_rule != Some(true) {
-        updated.push(crate::config::DeviceRule {
-            vendor_id: device.hardware.vendor_id,
-            product_id: device.hardware.product_id,
-            name: device.name.clone(),
-            reverse: true,
-        });
-    }
-    Some(updated)
-}
-
 #[cfg(test)]
-mod toggle_device_rules_tests {
+mod tests {
     use super::*;
-    use crate::config::DeviceRule;
-    use crate::device::HardwareId;
-
-    fn device(vendor_id: u32, product_id: u32) -> hid::DeviceInfo {
-        hid::DeviceInfo {
-            hardware: HardwareId {
-                vendor_id,
-                product_id,
-            },
-            name: Some("Test Device".to_string()),
-            transport: None,
-        }
-    }
-
-    #[test]
-    fn default_device_becomes_reversed() {
-        let updated = toggle_device_rules(&[], &device(0x1, 0x2)).expect("should mutate");
-        assert_eq!(
-            updated,
-            vec![DeviceRule {
-                vendor_id: 0x1,
-                product_id: 0x2,
-                name: Some("Test Device".to_string()),
-                reverse: true,
-            }]
-        );
-    }
-
-    #[test]
-    fn reversed_device_cycles_back_to_default() {
-        let rules = vec![DeviceRule {
-            vendor_id: 0x1,
-            product_id: 0x2,
-            name: None,
-            reverse: true,
-        }];
-        let updated = toggle_device_rules(&rules, &device(0x1, 0x2)).expect("should mutate");
-        assert!(updated.is_empty());
-    }
-
-    #[test]
-    fn explicit_dont_reverse_rule_is_never_touched() {
-        // This is the exact regression this test locks in: a prior version
-        // of toggle_device only checked for an existing `reverse: true`
-        // rule, so a device explicitly pinned to "Don't reverse"
-        // (`reverse: false`) looked identical to "no rule" and got
-        // silently flipped to `reverse: true` by a single tray click,
-        // destroying the user's explicit choice from the settings window.
-        let rules = vec![DeviceRule {
-            vendor_id: 0x1,
-            product_id: 0x2,
-            name: None,
-            reverse: false,
-        }];
-        assert_eq!(toggle_device_rules(&rules, &device(0x1, 0x2)), None);
-    }
-
-    #[test]
-    fn unrelated_devices_rules_are_left_untouched() {
-        let other = DeviceRule {
-            vendor_id: 0x9,
-            product_id: 0x9,
-            name: None,
-            reverse: true,
-        };
-        let rules = vec![other.clone()];
-        let updated = toggle_device_rules(&rules, &device(0x1, 0x2)).expect("should mutate");
-        assert!(updated.contains(&other));
-        assert!(updated.iter().any(|rule| rule.vendor_id == 0x1));
-    }
 
     #[test]
     fn device_action_encoding_does_not_truncate_large_indexes() {
@@ -841,6 +808,22 @@ mod toggle_device_rules_tests {
         assert_eq!(
             decode_pending_action(encode_device_action(index)),
             Some(TrayAction::ToggleDevice(index))
+        );
+    }
+
+    #[test]
+    fn disabled_and_missing_permissions_outrank_temporary_pause() {
+        assert_eq!(
+            TrayStatus::from_state(false, false, true),
+            TrayStatus::Paused
+        );
+        assert_eq!(
+            TrayStatus::from_state(true, false, true),
+            TrayStatus::NeedsPermission
+        );
+        assert_eq!(
+            TrayStatus::from_state(true, true, true),
+            TrayStatus::TemporarilyPaused
         );
     }
 }

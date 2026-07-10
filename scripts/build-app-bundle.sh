@@ -56,6 +56,7 @@ app="target/$profile/Auto Reverse.app"
 contents="$app/Contents"
 macos="$contents/MacOS"
 resources="$contents/Resources"
+icon_source="assets/AppIcon.svg"
 
 if [[ ! -x "$binary" ]]; then
   echo "built binary is missing or not executable: $binary" >&2
@@ -66,6 +67,33 @@ rm -rf "$app"
 mkdir -p "$macos" "$resources"
 cp "$binary" "$macos/auto-reverse"
 chmod 0755 "$macos/auto-reverse"
+
+if [[ ! -f "$icon_source" ]]; then
+  echo "app icon source is missing: $icon_source" >&2
+  exit 1
+fi
+
+iconset="$resources/AppIcon.iconset"
+icon_base="$resources/AppIcon-1024.png"
+mkdir -p "$iconset"
+sips -s format png "$icon_source" --out "$icon_base" >/dev/null
+while read -r filename pixels; do
+  sips -z "$pixels" "$pixels" "$icon_base" --out "$iconset/$filename" >/dev/null
+done <<'ICON_SIZES'
+icon_16x16.png 16
+icon_16x16@2x.png 32
+icon_32x32.png 32
+icon_32x32@2x.png 64
+icon_128x128.png 128
+icon_128x128@2x.png 256
+icon_256x256.png 256
+icon_256x256@2x.png 512
+icon_512x512.png 512
+icon_512x512@2x.png 1024
+ICON_SIZES
+iconutil -c icns "$iconset" -o "$resources/AutoReverse.icns"
+rm -rf "$iconset"
+rm -f "$icon_base"
 
 cat > "$contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -80,6 +108,8 @@ cat > "$contents/Info.plist" <<PLIST
   <string>auto-reverse</string>
   <key>CFBundleIdentifier</key>
   <string>com.auto-reverse.app</string>
+  <key>CFBundleIconFile</key>
+  <string>AutoReverse</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -108,6 +138,8 @@ if command -v codesign >/dev/null 2>&1; then
 else
   sign_note="not signed: codesign not found"
 fi
+
+scripts/check-app-bundle.sh "$profile"
 
 echo "Built $app ($sign_note)"
 echo

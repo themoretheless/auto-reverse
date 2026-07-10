@@ -24,16 +24,24 @@ Implemented:
   deduped against any other already-running tap via `daemon_lock`;
 - menu bar UI with a custom opposing-arrows template icon, a separate colored
   status dot, a rich native menu, a Reverse Scrolling toggle, per-device
-  quick-pick submenu, Open Settings, Open Debug Console, and Quit;
+  quick-pick submenu, temporary pause/resume, Open Settings, Open Debug Console,
+  and Quit;
 - local Debug Console with search, decision filters, export, clear, and an
   in-memory ring buffer of recent scroll decisions;
+- process-local 15-minute pause that leaves persisted settings untouched;
+- typed event-tap lifecycle with explicit started/already-running/stopped/failed
+  events rather than timeout-inferred booleans;
+- permission-first initial tab, targeted Accessibility/Input Monitoring actions,
+  and confirmation before Restore defaults removes per-device rules;
+- branded opposing-arrows app icon and generated Retina `.icns` in the bundle;
 - GUI Start at Login toggle via `SMAppService.mainAppService()`;
 - CLI diagnostics, JSON startup status and simulation;
-- separated CLI parser in `src/cli.rs`.
+- separated CLI parser in `src/cli.rs`;
+- macOS CI plus roadmap, design, QA, privacy, security, and contribution docs.
 
 Still missing:
 
-- polished first-run onboarding;
+- guided onboarding beyond the compact permission-first state;
 - hide/show menu bar icon;
 - gesture/HID classifier for Magic Mouse vs trackpad;
 - packaging/signing/update flow.
@@ -61,6 +69,7 @@ cargo run -- run
 cargo test
 cargo fmt
 cargo clippy -- -D warnings
+scripts/check-app-bundle.sh
 ```
 
 `run` installs the macOS event tap. It requires:
@@ -83,6 +92,10 @@ Default output:
 ```text
 target/debug/Auto Reverse.app
 ```
+
+The bundle contains `Contents/Resources/AutoReverse.icns`; the build script
+generates its complete Retina iconset from `assets/AppIcon.svg`, ad-hoc signs
+the local build, and validates the Mach-O/plist/icon/signature structure.
 
 Use that `.app` in macOS:
 
@@ -179,6 +192,7 @@ src/lib.rs                           library facade documenting the layering
 src/error.rs                         shared AppError / AppResult
 src/device.rs                        DeviceKind + conservative classifier
 src/input.rs                         normalized ScrollEvent
+src/runtime.rs                       lock-free process-local pause control
 src/scroll.rs                        pure reversal policy (no CoreGraphics)
 src/config/mod.rs                    facade re-exporting AppConfig/ConfigStore
 src/config/schema.rs                 what the settings ARE: fields, defaults, validation
@@ -195,19 +209,19 @@ src/platform/macos/debug_log.rs      local ring buffer for the Debug Console (gu
 src/platform/macos/quit_handler.rs   AppleEvent quit interception so only tray Quit exits
 src/platform/macos/login_item.rs     SMAppService.mainAppService() wrapper (gui feature only)
 src/platform/macos/tray.rs           rich native menu-bar tray icon/menu (gui feature only)
-src/ui.rs                            egui settings window (gui feature); also runs the tap
-                                      in-process, hosts the tray, and opens Debug Console
+src/platform/macos/tray/device_rules.rs pure tray quick-pick rule mutation
+src/ui.rs                            settings app coordinator and tab contents
+src/ui/runtime.rs                    typed tap lifecycle and explicit event channel
+src/ui/theme.rs                      handoff tokens and custom egui controls
+src/ui/debug_console.rs              Debug Console viewport/filter/export
 ```
 
 The macOS framework crates (`core-foundation`, `core-graphics`) are
 target-specific dependencies: the pure core compiles without them.
 
-Next target split:
-
-- introduce `app/runtime`;
-- split `src/ui.rs` into `ui/app.rs`, `ui/settings.rs`, `ui/debug_console.rs`, `ui/theme.rs`;
-- split `tray.rs` into icon drawing, menu model, and AppKit adapter;
-- move the debug ring buffer behind a tiny diagnostics interface.
+The remaining useful split is narrower: keep the AppKit icon/menu adapter in
+`tray.rs`, move structured diagnostics behind a small sink, and split settings
+tabs only when their behavior grows enough to justify another boundary.
 
 ## Three Iterations
 
@@ -227,7 +241,8 @@ Build the app surface:
 - menu bar utility;
 - settings window;
 - permission onboarding;
-- debug console (implemented; next split it out of `src/ui.rs`);
+- debug console and its dedicated module;
+- process-local pause and permission-first recovery;
 - hide/show icon.
 
 ### Iteration 3: Release Quality
@@ -256,7 +271,7 @@ This should feel like a compact native utility:
 ## Top 500
 
 The full working backlog lives in `recommendation.md`: 500 base findings plus
-`N01-N360` follow-ups. The collapsed mirror below keeps the requested 500 base
+`N01-N400` follow-ups. The collapsed mirror below keeps the requested 500 base
 items visible from the README without making the first read impossible.
 
 <details>
@@ -342,7 +357,7 @@ items visible from the README without making the first read impossible.
 | 75 | Problem | Нет hot reload config. |
 | 76 | Improve | Добавить command `reload` или runtime channel. |
 | 77 | Problem | Нет pause без изменения config. |
-| 78 | Improve | Различить persistent enabled и temporary paused. |
+| 78 | Done | Persistent enabled отделен от process-local temporary pause. |
 | 79 | Done | CLI `enable`, `disable`, `toggle` меняют config. |
 | 80 | Done | CLI commands теперь проходят через отдельный parser в `src/cli.rs`. |
 | 81 | Improve | Для большего CLI все еще можно добавить `clap`, но текущий parser мал и покрыт тестами. |
@@ -356,7 +371,7 @@ items visible from the README without making the first read impossible.
 | 89 | Problem | `AppError::InvalidConfig` хранит plain string. |
 | 90 | Improve | Сделать structured validation errors. |
 | 91 | Problem | `AppError::Platform` слишком общий. |
-| 92 | Improve | Добавить enum для permission/tap/install/runtime. |
+| 92 | Done | Tap lifecycle типизирован через runtime state и TapRunOutcome. |
 | 93 | Done | Accessibility check реализован. |
 | 94 | Done | Input Monitoring preflight реализован. |
 | 95 | Problem | `request_input_monitoring_access` не используется в CLI flow. |
@@ -421,8 +436,8 @@ items visible from the README without making the first read impossible.
 | 154 | Improve | Зафиксировать Rust version через `rust-toolchain.toml`. |
 | 155 | Problem | Edition 2024 требует свежий toolchain. |
 | 156 | Improve | README должен назвать required Rust version. |
-| 157 | Problem | Нет CI. |
-| 158 | Improve | Добавить GitHub Actions после remote setup. |
+| 157 | Done | Есть macOS GitHub Actions CI. |
+| 158 | Done | CI запускает полный quality gate и bundle smoke. |
 | 159 | Problem | Нет `cargo audit`. |
 | 160 | Improve | Добавить audit в release checklist. |
 | 161 | Problem | Нет license. |
@@ -439,12 +454,12 @@ items visible from the README without making the first read impossible.
 | 172 | Done | macOS status item стал primary always-on UI для Open Settings/Quit. |
 | 173 | Done | CLI больше не единственный способ менять настройки. |
 | 174 | Done | Preferences/settings window добавлен через egui. |
-| 175 | Problem | Нет first-run welcome. |
-| 176 | Improve | Показать onboarding с permissions и recommended setup. |
+| 175 | Done | Missing permissions дают compact permission-first state. |
+| 176 | Done | Первый запуск выбирает Permissions и targeted recovery actions. |
 | 177 | Done | Visible active/paused/permission state есть в header окна и status-dot трея. |
 | 178 | Done | Status icon отражает active, paused и permission-blocked через отдельную status-dot. |
-| 179 | Problem | Нет temporary pause. |
-| 180 | Improve | Добавить pause без записи config. |
+| 179 | Done | Есть temporary pause на 15 минут. |
+| 180 | Done | Pause process-local и не пишет config. |
 | 181 | Problem | Right-click toggle не реализован. |
 | 182 | Improve | Повторить Scroll Reverser: right/control click toggles app. |
 | 183 | Done | Option-click debug console реализован через rich tray menu handling. |
@@ -467,8 +482,8 @@ items visible from the README without making the first read impossible.
 | 200 | Improve | Позволить переименовать устройства после registry. |
 | 201 | Problem | Нет disconnected device state. |
 | 202 | Improve | Показывать known/disconnected devices отдельно. |
-| 203 | Problem | Нет restore defaults. |
-| 204 | Improve | Добавить reset with confirmation. |
+| 203 | Done | Restore defaults реализован. |
+| 204 | Done | Reset требует confirmation и показывает число device rules. |
 | 205 | Problem | Нет undo для settings changes. |
 | 206 | Improve | Добавить short undo toast для non-destructive changes. |
 | 207 | Problem | Нет settings validation UI. |
@@ -485,12 +500,12 @@ items visible from the README without making the first read impossible.
 | 218 | Improve | Показывать status badges in UI. |
 | 219 | Problem | Нет state `Degraded`. |
 | 220 | Improve | Runtime state: Active, Paused, NeedsPermission, Degraded, Error. |
-| 221 | Problem | Нет lightweight app runtime. |
-| 222 | Improve | Создать `app::runtime` с channels для UI commands. |
+| 221 | Done | Есть lightweight tap lifecycle runtime. |
+| 222 | Done | `ui/runtime.rs` использует channel events и typed state. |
 | 223 | Problem | UI может напрямую дергать config store. |
 | 224 | Improve | UI должен отправлять `AppCommand`. |
-| 225 | Problem | Нет design tokens. |
-| 226 | Improve | Создать tokens: spacing, color, radius, type scale. |
+| 225 | Done | Design tokens вынесены из app coordinator. |
+| 226 | Done | `ui/theme.rs` хранит handoff colors, spacing, radii и controls. |
 | 227 | Problem | Product может стать слишком декоративным. |
 | 228 | Improve | Использовать native compact utility layout. |
 | 229 | Problem | Cards могут захламить настройки. |
@@ -639,8 +654,8 @@ items visible from the README without making the first read impossible.
 | 372 | Improve | Add shutdown path before UI. |
 | 373 | Problem | Нет signal handling for CLI run. |
 | 374 | Improve | Handle Ctrl+C gracefully. |
-| 375 | Problem | Нет manual QA checklist in repo. |
-| 376 | Improve | Add `QA.md`. |
+| 375 | Done | Manual QA checklist хранится в repo. |
+| 376 | Done | Добавлен `QA.md` с automated/manual matrix. |
 | 377 | Problem | Нет test matrix for devices. |
 | 378 | Improve | Matrix: wheel mouse, Magic Mouse, built-in trackpad, Magic Trackpad. |
 | 379 | Problem | Нет remote desktop test. |
@@ -683,14 +698,14 @@ items visible from the README without making the first read impossible.
 | 416 | Improve | Add future notes, not product promise. |
 | 417 | Problem | Нет dependency policy. |
 | 418 | Improve | Add dependencies only for clear use cases. |
-| 419 | Problem | Нет security policy. |
-| 420 | Improve | Add `SECURITY.md` before public repo. |
-| 421 | Problem | Нет contribution guide. |
-| 422 | Improve | Add `CONTRIBUTING.md` with fmt/clippy/test rules. |
-| 423 | Problem | Нет issue templates. |
-| 424 | Improve | Add bug template with diagnostics fields. |
-| 425 | Problem | Нет privacy policy. |
-| 426 | Improve | State local-only data handling. |
+| 419 | Done | Есть security policy. |
+| 420 | Done | Добавлен `SECURITY.md` с FFI/release boundaries. |
+| 421 | Done | Есть contribution guide. |
+| 422 | Done | `CONTRIBUTING.md` фиксирует full gate и layering. |
+| 423 | Done | Есть privacy-aware bug issue template. |
+| 424 | Done | Bug template собирает macOS/device/diagnostics fields. |
+| 425 | Done | Есть privacy policy. |
+| 426 | Done | `PRIVACY.md` фиксирует local-only data handling. |
 | 427 | Problem | Update checks could send network requests. |
 | 428 | Improve | Make network behavior explicit and opt-in. |
 | 429 | Problem | Нет telemetry boundary tests. |
@@ -705,12 +720,12 @@ items visible from the README without making the first read impossible.
 | 438 | Improve | Track translator credits in changelog. |
 | 439 | Problem | Нет screenshots. |
 | 440 | Improve | Add real screenshots after UI exists. |
-| 441 | Problem | Нет полноценного icon asset set: есть только минимальная template status icon. |
-| 442 | Improve | Design status icon states. |
-| 443 | Problem | Нет app icon. |
-| 444 | Improve | Create app icon before packaging. |
-| 445 | Problem | Нет design review artifacts. |
-| 446 | Improve | Add simple UI spec in architecture docs. |
+| 441 | Done | Есть template glyph, colored state dot и branded app icon. |
+| 442 | Done | Active/paused/temporary/permission icon states спроектированы. |
+| 443 | Done | App icon добавлен. |
+| 444 | Done | Bundle генерирует `.icns` до codesign. |
+| 445 | Done | Design review artifact хранится в repo. |
+| 446 | Done | Добавлен `DESIGN.md` с handoff и tokens. |
 | 447 | Problem | Нет final product review process. |
 | 448 | Improve | Review UX, reliability, privacy before each milestone. |
 | 449 | Problem | Нет branch strategy. |
@@ -735,16 +750,16 @@ items visible from the README without making the first read impossible.
 | 468 | Improve | Keep architecture Russian if it helps project learning. |
 | 469 | Problem | Recommendation list can become stale quickly. |
 | 470 | Improve | Refresh it after every milestone. |
-| 471 | Problem | 500-item list is hard to execute directly. |
-| 472 | Improve | Create smaller `ROADMAP.md` with P0/P1/P2. |
+| 471 | Done | 900-item audit больше не daily task queue. |
+| 472 | Done | Есть `ROADMAP.md` с 25 P0/P1/P2 задачами. |
 | 473 | Problem | Нет issue tracker mapping. |
 | 474 | Improve | Convert top 20 recommendations to issues. |
 | 475 | Problem | Нет owner per area. |
 | 476 | Improve | Add ownership notes for config, platform, UI. |
-| 477 | Problem | Нет acceptance criteria per task. |
-| 478 | Improve | Every task should include tests/docs/manual check. |
-| 479 | Problem | Нет "definition of done". |
-| 480 | Improve | Define done: code, tests, docs, review, QA. |
+| 477 | Done | Roadmap и QA задают acceptance criteria. |
+| 478 | Done | Definition of Done требует tests/docs/manual check. |
+| 479 | Done | Definition of Done зафиксирован. |
+| 480 | Done | `ROADMAP.md` определяет code/tests/docs/review/QA gate. |
 | 481 | Problem | Нет automated review checklist. |
 | 482 | Improve | Add checklist: bugs, risks, missing tests, UX, privacy. |
 | 483 | Problem | Нет code review notes file. |
@@ -761,8 +776,8 @@ items visible from the README without making the first read impossible.
 | 494 | Improve | Document minimum macOS version and fallback behavior. |
 | 495 | Problem | No app-level state machine. |
 | 496 | Improve | Add explicit state enum before UI. |
-| 497 | Problem | No final review commit yet for updated docs. |
-| 498 | Improve | Commit docs and review fixes after checks pass. |
+| 497 | Done | Final review fixes and updated docs are included in the merge/push commit. |
+| 498 | Done | Full gate is required immediately before the final commit. |
 | 499 | Done | Push destination exists today. |
 | 500 | Done | Remote configured; `master` can be pushed with docs/review commits. |
 <!-- TOP500_README:END -->
@@ -772,5 +787,7 @@ items visible from the README without making the first read impossible.
 ## Documents
 
 - `architecture.md` - current and target architecture, SOLID/DRY split, UX direction.
-- `recommendation.md` - 860 recommendations, problems and improvements (500 base items + N01-N360 follow-ups after startup, menu bar, bundle identity, lifecycle, and design-handoff review).
+- `recommendation.md` - 900 recommendations, problems and improvements (500 base items + N01-N400 follow-ups through the SOLID/DRY, pause, app-icon, CI, and documentation pass).
+- `ROADMAP.md` - the executable top 25, grouped P0/P1/P2.
+- `DESIGN.md`, `QA.md`, `PRIVACY.md`, `SECURITY.md`, `CONTRIBUTING.md` - focused product and release contracts.
 - `scroll-reverser-parity.md` - Scroll Reverser feature parity checklist.
