@@ -23,6 +23,8 @@ Implemented:
 - egui settings window (`ui`, default `gui` feature); opening it starts the
   scroll event tap in the same process when enabled and permissions are ready,
   deduped against any other already-running tap via `daemon_lock`;
+- single-instance GUI activation: a second launch exits without another tray
+  icon and asks the existing process to reveal and focus its settings window;
 - menu bar UI with a custom opposing-arrows template icon, a separate colored
   status dot, a rich native menu, a Reverse Scrolling toggle, per-device
   quick-pick submenu, temporary pause/resume, Open Settings, Open Debug Console,
@@ -112,7 +114,7 @@ Then launch the bundled app:
 open "target/debug/Auto Reverse.app"
 ```
 
-Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and both permissions are granted, sharing one live config with the window so changes made in that window apply immediately with no restart. If the app was opened before permissions were granted, it keeps watching the permission state and retries starting the tap once both checks become ready; if startup failed or stopped immediately, turning Reverse scrolling off clears that pending attempt so turning it on again can retry cleanly. A menu-bar icon stays up for as long as the process runs: it uses an opposing-arrows template glyph plus a separate colored status dot for active/paused/permission-blocked states. Its native menu includes Reverse Scrolling, device quick-picks, Open Settings, Open Debug Console, and Quit; holding Option while opening the icon opens the Debug Console directly. Closing the settings window hides it rather than quitting. A separate `ui.lock` prevents duplicate windows/menu-bar icons, and an exclusive tap lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. External CLI edits made while the settings window is already open are not live-watched. They are nevertheless protected: the next GUI/tray save detects the exact TOML revision mismatch, reloads the newer disk state, and asks the user to repeat the local action instead of silently overwriting it. Reopen the window to apply an external edit immediately. For terminal diagnostics through the bundled identity:
+Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and both permissions are granted, sharing one live config with the window so changes made in that window apply immediately with no restart. If the app was opened before permissions were granted, it keeps watching the permission state and retries starting the tap once both checks become ready; if startup failed or stopped immediately, turning Reverse scrolling off clears that pending attempt so turning it on again can retry cleanly. A menu-bar icon stays up for as long as the process runs: it uses an opposing-arrows template glyph plus a separate colored status dot for active/paused/permission-blocked states. Its native menu includes Reverse Scrolling, device quick-picks, Open Settings, Open Debug Console, and Quit; holding Option while opening the icon opens the Debug Console directly. Closing the settings window hides it rather than quitting. A separate `ui.lock` prevents duplicate windows/menu-bar icons. When a second GUI launch finds that lock held, it atomically writes a PID-addressed `ui.activate` request and exits with success; the existing process consumes the request on its hidden-window tick, makes the settings viewport visible, and focuses it. An exclusive tap lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. External CLI edits made while the settings window is already open are not live-watched. They are nevertheless protected: the next GUI/tray save detects the exact TOML revision mismatch, reloads the newer disk state, and asks the user to repeat the local action instead of silently overwriting it. Reopen the window to apply an external edit immediately. For terminal diagnostics through the bundled identity:
 
 Debug Console rows keep raw source metadata in memory and derive display text
 only while the console is searching or rendering. Export preserves the raw HID
@@ -222,6 +224,7 @@ src/platform/macos/startup.rs        LaunchAgent start-at-login support (headles
 src/platform/macos/event_tap.rs      CGEventTap runtime loop, config shared via Arc<RwLock<_>>
 src/platform/macos/power_events.rs   NSWorkspace sleep/wake observer and atomic signal
 src/platform/macos/daemon_lock.rs    flock: only one live CGEventTap at a time, any launch path
+src/platform/macos/activation.rs     second GUI launch -> existing-window focus mailbox
 src/platform/macos/debug_log.rs      structured decisions + local Debug Console ring buffer
 src/platform/macos/quit_handler.rs   AppleEvent quit interception so only tray Quit exits
 src/platform/macos/login_item.rs     SMAppService.mainAppService() wrapper (gui feature only)
@@ -664,7 +667,7 @@ items visible from the README without making the first read impossible.
 | 365 | Done | Exact TOML revision CAS отклоняет stale GUI/tray save вместо last-writer-wins. |
 | 366 | Done | CLI использует locked `update`, GUI/tray - `save_if_unchanged` с reload конфликта. |
 | 367 | Done | Базовый single-instance behavior есть: `run.lock` для tap и `ui.lock` для окна/tray. |
-| 368 | Improve | Relaunch should focus existing settings window, not just fail on `ui.lock`. |
+| 368 | Done | Relaunch publishes `ui.activate`; the owner reveals and focuses its existing window. |
 | 369 | Problem | `OnceLock` blocks multiple install attempts in one process. |
 | 370 | Improve | Runtime should own tap lifecycle explicitly. |
 | 371 | Problem | Нет graceful shutdown tests. |

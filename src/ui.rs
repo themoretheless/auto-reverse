@@ -59,7 +59,7 @@ use eframe::egui::{self, Color32, RichText, ViewportCommand};
 
 use crate::config::{AppConfig, ConfigRevision, ConfigStore, DeviceRule};
 use crate::platform::macos::{
-    daemon_lock, hid, login_item, permissions, power_events, quit_handler, tray,
+    activation, daemon_lock, hid, login_item, permissions, power_events, quit_handler, tray,
 };
 use crate::runtime::{DEFAULT_PAUSE_DURATION, RuntimeControl};
 
@@ -87,14 +87,17 @@ const WINDOW_HEIGHT: f32 = 640.0;
 /// the tap thread never even attempts to start) would otherwise build a
 /// second live window and a second menu-bar icon with nothing to tell the
 /// user which one is authoritative. If this lock is already held, this
-/// returns an error immediately instead of opening a redundant window.
+/// process leaves an activation request for the owner and exits cleanly.
 pub fn run_settings_window() -> Result<(), String> {
     let ui_lock_path = daemon_lock::default_path().with_file_name("ui.lock");
-    let Some(_ui_lock) =
-        daemon_lock::try_acquire(&ui_lock_path).map_err(|error| error.to_string())?
+    let Some(ui_instance_guard) =
+        activation::acquire_or_activate(&ui_lock_path).map_err(|error| error.to_string())?
     else {
-        return Err("Auto Reverse is already open".to_string());
+        return Ok(());
     };
+    // Keep the guard in this stack frame through eframe and the park loop; its
+    // Drop releases ui.lock only when this primary GUI truly ends.
+    let activation_inbox = ui_instance_guard.inbox();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -113,9 +116,9 @@ pub fn run_settings_window() -> Result<(), String> {
     eframe::run_native(
         "Auto Reverse",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             install_system_fonts(&cc.egui_ctx);
-            Ok(Box::new(SettingsApp::load()))
+            Ok(Box::new(SettingsApp::load(activation_inbox)))
         }),
     )
     .map_err(|error| format!("could not open the settings window: {error}"))?;
@@ -131,6 +134,13 @@ pub fn run_settings_window() -> Result<(), String> {
     loop {
         std::thread::park();
     }
+}
+
+fn show_settings_window(ctx: &egui::Context) {
+    // winit's macOS focus path ignores hidden windows, so visibility must be
+    // applied first; Focus then activates the app and orders the window front.
+    ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+    ctx.send_viewport_cmd(ViewportCommand::Focus);
 }
 
 /// Loads the real macOS system fonts (SF Pro / SF Mono) into egui so the
@@ -219,6 +229,10 @@ struct SettingsApp {
     power_events_error: Option<String>,
     /// AppKit tray construction failure, independent of tap lifecycle.
     tray_error: Option<String>,
+    /// Failure while polling a second-launch request. A successful poll clears
+    /// it, so transient filesystem errors do not remain after recovery.
+    activation_error: Option<String>,
+    activation_inbox: activation::ActivationInbox,
     /// Set on a login_item register/unregister failure.
     login_item_error: Option<String>,
     tray: Option<tray::TrayHandle>,
@@ -255,7 +269,7 @@ enum SettingsTab {
 }
 
 impl SettingsApp {
-    fn load() -> Self {
+    fn load(activation_inbox: activation::ActivationInbox) -> Self {
         // One-shot, mirrors the old run_event_tap(): the request_* calls are
         // what actually register this binary with TCC (and pop the native
         // consent dialogs) - the has_* checks the permissions panel uses
@@ -290,6 +304,8 @@ impl SettingsApp {
             power_events: None,
             power_events_error: None,
             tray_error: None,
+            activation_error: None,
+            activation_inbox,
             login_item_error,
             tray: None,
             quit_handler_installed: false,
@@ -608,10 +624,21 @@ impl eframe::App for SettingsApp {
             ctx.send_viewport_cmd(ViewportCommand::Visible(false));
         }
 
+        // Process second-launch requests after close/quit-to-hide commands so
+        // a concurrent relaunch wins the frame and leaves the window visible.
+        match self.activation_inbox.poll() {
+            Ok(should_activate) => {
+                self.activation_error = None;
+                if should_activate {
+                    show_settings_window(ctx);
+                }
+            }
+            Err(error) => self.activation_error = Some(error.to_string()),
+        }
+
         match tray::poll_action() {
             Some(tray::TrayAction::OpenSettings) => {
-                ctx.send_viewport_cmd(ViewportCommand::Visible(true));
-                ctx.send_viewport_cmd(ViewportCommand::Focus);
+                show_settings_window(ctx);
             }
             Some(tray::TrayAction::Quit) => {
                 // The tap thread and its daemon_lock are torn down by the
@@ -776,6 +803,13 @@ impl SettingsApp {
         if let Some(error) = &self.tray_error {
             ui.label(
                 RichText::new(error)
+                    .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
+                    .small(),
+            );
+        }
+        if let Some(error) = &self.activation_error {
+            ui.label(
+                RichText::new(format!("Window activation unavailable: {error}"))
                     .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
                     .small(),
             );

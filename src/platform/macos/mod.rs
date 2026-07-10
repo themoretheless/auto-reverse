@@ -9,6 +9,8 @@
 //!   headless CLI (`enable-startup`/`disable-startup`, targets `run`).
 //! - `daemon_lock`: exclusive-lock guard (`flock`) preventing two live
 //!   CGEventTaps at once, regardless of which process/thread installs them.
+//! - `activation` (gui only): PID-addressed file mailbox that lets a second
+//!   GUI launch reveal and focus the existing settings window.
 //! - `debug_log` (gui only): bounded ring buffer of structured scroll
 //!   decisions. `event_tap` records raw fields plus a stable reason enum; the
 //!   Debug Console formats them only while presenting or exporting.
@@ -24,6 +26,8 @@
 //!   Event (Cmd-Q, Dock quit, AppleScript `quit`) so only the tray's own
 //!   Quit action can end the merged process.
 
+#[cfg(feature = "gui")]
+pub mod activation;
 pub mod daemon_lock;
 #[cfg(feature = "gui")]
 pub mod debug_log;

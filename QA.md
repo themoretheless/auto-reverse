@@ -32,6 +32,7 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Start at Login after reboot |  |  |  |  |
 |  |  | Sleep/wake: hidden app re-arms live tap or restarts one stopped tap |  |  |  |  |
 |  |  | Cmd-W, Cmd-Q, Dock Quit, tray Quit |  |  |  |  |
+|  |  | Hide window, launch app again: one icon and focused existing window |  |  |  |  |
 |  |  | Menu, device submenu, Option-click console |  |  |  |  |
 |  |  | Debug search/filter/export/clear |  |  |  |  |
 |  |  | Finder and System Settings app icon |  |  |  |  |

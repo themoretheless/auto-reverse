@@ -145,7 +145,7 @@ pub fn is_running(path: &Path) -> bool {
 /// informational - never used to decide mutual exclusion (flock alone does
 /// that) - so a missing or unparseable value just means "nothing to signal
 /// for a restart", not an error.
-fn recorded_pid(path: &Path) -> Option<i32> {
+pub(super) fn recorded_pid(path: &Path) -> Option<i32> {
     std::fs::read_to_string(path).ok()?.trim().parse().ok()
 }
 

@@ -11,6 +11,12 @@ The callback changes only documented scroll delta fields. It never writes key,
 button, pointer-position, or application data. Synthetic/injected events can be
 ignored with `reverse_only_raw_input`. Diagnostics are bounded and local-only.
 
+The second-launch `ui.activate` mailbox accepts only the PID of the process that
+already owns `ui.lock`. A local process able to write the application-support
+directory can at most request that the settings window come to the front; the
+mailbox cannot change configuration, control the event tap, or claim ownership.
+`flock` remains the single-instance authority.
+
 ## Reporting
 
 Do not include exported debug logs or personal device names in a public issue.

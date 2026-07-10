@@ -1,6 +1,6 @@
 # 900 рекомендаций, проблем и улучшений (500 базовых + N01-N400 follow-up)
 
-Список обновлен 2026-07-11 после повторного SOLID/DRY split, temporary pause, typed tap lifecycle, app-icon/CI/docs, structured diagnostics, sleep/wake recovery и config-consistency проходов. Он отражает текущий код: macOS event tap, TOML config с cross-process transaction lock и exact-revision CAS, CLI parser, permission recovery, raw-input guard, step size, два start-at-login пути, GUI `.app` bundle с `.icns`, rich menu bar, Debug Console со stable reason codes и открытые gaps до Scroll Reverser parity.
+Список обновлен 2026-07-11 после повторного SOLID/DRY split, temporary pause, typed tap lifecycle, app-icon/CI/docs, structured diagnostics, sleep/wake recovery, config consistency и focus-existing-window проходов. Он отражает текущий код: macOS event tap, TOML config с cross-process transaction lock и exact-revision CAS, CLI parser, permission recovery, raw-input guard, step size, два start-at-login пути, GUI `.app` bundle с `.icns`, rich menu bar, Debug Console, PID-addressed activation mailbox и открытые gaps до Scroll Reverser parity.
 
 ## Планируемая переделка: единый процесс + menu bar + SMAppService — риски, записанные до реализации
 
@@ -177,7 +177,7 @@ bundle из `scripts/build-app-bundle.sh`, не production release).
 
 1. **[Исправлено] Ложное сообщение в `run`**: печатало "merged `ui` process watches the config file" - неправда, никакого file-watching нет нигде в проекте. CLI-команда `enable`/`disable`, запущенная при открытом `ui`, молча не действует на работающий tap, а следующий save() из GUI может тихо откатить изменение обратно. Сообщение переписано на честное.
 2. **[Исправлено] `SettingsApp::save()` расходился с `shared_config` при ошибке записи на диск**: `self.config` (виджеты) мутировался всегда, `shared_config` (что реально применяет tap) - только при успехе. GUI показывал одни настройки, tap работал по другим, без предупреждения. Исправлено: при ошибке `self.config` откатывается к `shared_config`, так что виджеты "отпрыгивают" назад вместе с видимой ошибкой - честно, а не тихо расходится.
-3. **[Исправлено] Два живых GUI-инстанса (риск №7) были возможны в реальности, не только гипотетически**: `daemon_lock` защищает только сам `CGEventTap`, но не постройку окна/трей-иконки - если `config.enabled == false` (лок вообще не берётся) или бинарник запущен напрямую (не через `open`, минуя LaunchServices dedup), второй процесс строил второе окно и вторую иконку без единой проверки. Добавлен отдельный `ui.lock` (та же `flock`-примитив из `daemon_lock`, соседний файл), берётся в `run_settings_window` до создания окна.
+3. **[Исправлено] Два живых GUI-инстанса (риск №7) были возможны в реальности, не только гипотетически**: `daemon_lock` защищает только сам `CGEventTap`, но не постройку окна/трей-иконки - если `config.enabled == false` (лок вообще не берётся) или бинарник запущен напрямую (не через `open`, минуя LaunchServices dedup), второй процесс строил второе окно и вторую иконку без единой проверки. Отдельный `ui.lock` берётся до создания окна; теперь lock contention атомарно публикует PID-addressed `ui.activate`, после чего уже работающий process показывает и фокусирует свое окно, а второй завершается без AppKit objects.
 4. **[Исправлено] Cmd-Q (и Dock "Quit", и любой AppleEvent `quit`) убивал процесс напрямую, в обход всего дизайна "только Quit из трея завершает"**: эмпирически подтверждено (`osascript -e 'tell application "Auto Reverse" to quit'`, 4/5 чистых попыток, пятая была загрязнена вторым параллельным инстансом - изоляция дала 5/5). Причина найдена в исходниках eframe: `fn exiting()` для Cmd-Q на Mac срабатывает по отдельному, более раннему пути, чем `WindowEvent::CloseRequested`, который перехватывает `CancelClose` - так что весь механизм "закрытие окна ≠ выход" был реализован только наполовину. Это прямо противоречит более раннему выводу этого же документа (см. пункт про риск №4 выше, теперь помеченный как ошибочный) о том, что путь Cmd-Q "не имеет возможности проявиться".
    **Фикс** (`src/platform/macos/quit_handler.rs`): перехват на уровне Apple Event Manager (`AEInstallEventHandler` на `kCoreEventClass`/`kAEQuitApplication`), а не через `NSApplicationDelegate` - подмена делегата оказалась тупиком: winit 0.30.13 хранит `NSApp.delegate` как объект своего собственного класса и паникует (`is_kind_of::<Self>()`), если делегат заменён на что-то другое (подтверждено чтением реального исходника winit, не гипотеза). `AEInstallEventHandler` работает ниже и независимо от делегата, поэтому не задевает этот механизм. Проверено дважды независимо (реализация + отдельная адверсариальная проверка, 0 находок): 5+ живых попыток quit через `osascript` против изолированных, отдельно подписанных копий бандла - процесс пережил все попытки. Лично повторил тест ещё раз (`/tmp/AutoReverseCheck.app`, quit AppleEvent, процесс жив) перед тем, как считать это закрытым.
 5. **[Не устранено, документировано] Активный конкурентный агент (Codex) коммитит и пушит в тот же `master`** прямо во время работы над этой же фичей - независимо обнаружено дважды (первым раундом реализации и второй проверкой, увидевшей новый коммит появиться прямо во время ревью). Не баг кода, а проблема процесса - см. историю worktree-изоляции в начале этого документа для прецедента решения.
@@ -476,7 +476,7 @@ N05. [Done] Показывать current executable path в `doctor`.
 N06. Добавить `open-launch-agent` для показа plist в Finder.
 N07. Добавить uninstall command, который выключает startup и удаляет config backup.
 N08. [Done] Добавить single-instance lock, чтобы LaunchAgent не запускал второй tap.
-N09. Второй запуск должен отправлять команду первому процессу.
+N09. [Done] Второй GUI запуск отправляет activation request первому процессу.
 N10. Добавить `restart-tap` command.
 N11. [Done] Добавить launchd stdout/stderr log paths.
 N12. Добавить `doctor` check, что LaunchAgent plist XML валиден.
@@ -568,9 +568,9 @@ N94. [Improve] `doctor` должен явно сказать: "GUI login item st
 N95. [Problem] `show_menu_bar_icon` хранится, но UI/runtime его игнорируют.
 N96. [Improve] Не показывать hide-icon control до готового CLI recovery command.
 N97. [Problem] Если иконку позже скрыть, нужен способ вернуть окно.
-N98. [Improve] Добавить `auto-reverse ui`/relaunch behavior that focuses existing instance and restores icon.
+N98. [Partial] `auto-reverse ui`/relaunch фокусирует existing instance; hide-icon recovery ждет реализации hide-icon.
 N99. [Done] Двойной запуск `.app` больше не должен создавать вторую иконку: `ui.lock` берется до окна и tray.
-N100. [Improve] Поверх `ui.lock` добавить IPC/focus command, чтобы повторный запуск открывал существующее окно.
+N100. [Done] Поверх `ui.lock` добавлен atomic PID-addressed mailbox/focus command.
 N101. [Problem] Status item icon сейчас системный Refresh symbol, не бренд/состояние продукта.
 N102. [Improve] Сделать собственный template status icon с состояниями active/paused/blocked.
 N103. [Problem] Refresh symbol может восприниматься как sync/update, а не scroll direction.
@@ -664,7 +664,7 @@ N187. [Improve] Добавить local diagnostic: `tap_disabled_count`, `last_t
 N188. [Done] Добавлены NSWorkspace WillSleep/DidWake lifecycle hooks.
 N189. [Done] После wake проверяются permissions и typed tap state; live tap re-arm, stopped tap получает один controlled restart.
 N190. [Done] Два GUI-инстанса больше не должны давать две menu bar иконки: `run_settings_window` берет отдельный `ui.lock`.
-N191. [Improve] Следующий UX слой: если `ui.lock` занят, сфокусировать существующее окно через IPC/focus command, а не только вернуть ошибку.
+N191. [Done] Если `ui.lock` занят, второй launch фокусирует существующее окно и выходит успешно.
 N192. [Done] `daemon_lock` оставлен для input behavior, а визуальный UX от дублей защищает отдельный lock.
 N193. [Done] Разделены lock names: `run.lock` для event tap и `ui.lock` для single app instance.
 N194. [Problem] `SMAppService` status виден только внутри settings row.
@@ -733,7 +733,7 @@ N256. [Done] `Pause for 15 Minutes` есть в settings и menu bar.
 N257. [Done] Temporary pause имеет auto-resume deadline и Resume Now.
 N258. [Problem] Нет visual distinction между config-disabled and permission-blocked.
 N259. [Improve] Status icon variants: active, paused, warning, blocked, plus accessible labels.
-N260. [Improve] После этого review сделать следующий кодовый slice: runtime state enum + focus-existing-window IPC поверх уже добавленного `ui.lock`.
+N260. [Done] Typed runtime state и focus-existing-window mailbox поверх `ui.lock` реализованы.
 
 ## Новые идеи после design-handoff, rich tray и Debug Console review
 
@@ -869,15 +869,15 @@ N386. [Done] Добавлен `PRIVACY.md`: local-only input/config/debug bounda
 N387. [Done] Добавлен `SECURITY.md`: FFI boundary и production-signing caveat.
 N388. [Done] Добавлен `CONTRIBUTING.md` с layering invariants и full gate.
 N389. [Done] Добавлен privacy-aware GitHub bug report template.
-N390. [Done] После config consistency review набор вырос до 86 library + 17 binary tests.
+N390. [Done] После existing-window activation review набор вырос до 90 library + 17 binary tests.
 N391. [Done] Debug events хранят `DecisionReason` и structured source fields вместо display strings.
 N392. [Partial] `DecisionReason` и lazy formatting готовы; маленький `DiagnosticsSink` остается отдельным следующим шагом.
 N393. [Done] `power_events.rs` наблюдает NSWorkspace sleep/wake независимо от видимости settings window.
 N394. [Done] После wake permissions/tap state перепроверяются, re-arm/restart сериализован и ограничен recovery window.
 N395. [Done] External CLI и открытый GUI больше не перезаписывают config по last-writer-wins.
 N396. [Done] Exact TOML revision CAS отклоняет stale GUI/tray save и reload-ит внешний config.
-N397. [Problem] Второй GUI launch корректно блокируется, но не фокусирует существующее окно.
-N398. [Improve] Добавить маленький local IPC activation command поверх `ui.lock`.
+N397. [Done] Второй GUI launch не строит AppKit objects и фокусирует существующее окно.
+N398. [Done] Маленький local `ui.activate` mailbox реализован поверх `ui.lock`.
 N399. [Problem] Debug export по-прежнему пишет в фиксированную папку без Save Panel/Reveal.
 N400. [Improve] Следующий product slice: native Save Panel, structured export и Reveal in Finder.
 
@@ -896,6 +896,9 @@ N400. [Improve] Следующий product slice: native Save Panel, structured 
 - CLI config mutations теперь выполняют read-modify-write под persistent sibling lock; два конкурентных CLI процесса сохраняют обе независимые правки.
 - GUI и tray сохраняют через exact-revision CAS: внешний CLI/manual edit не теряется, stale local action откатывается, новый disk snapshot применяется к окну и live tap.
 - Persistent lock file намеренно не удаляется после unlock, чтобы новый inode не создал две независимые группы владельцев lock.
+- `activation.rs` объединяет single-instance claim и focus delivery в одном `acquire_or_activate`, поэтому второй process не может случайно построить еще одну иконку.
+- Activation request публикуется atomic rename и адресуется PID владельца; stale/malformed requests потребляются без ложного focus или бесконечного retry.
+- Focus обрабатывается после close-to-hide в том же tick, а `Visible(true)` всегда идет перед macOS `Focus`, поэтому relaunch выигрывает редкий одновременный Cmd-W.
 
 ## Итерация 2: Product UX and Design
 
@@ -1099,7 +1102,7 @@ N400. [Improve] Следующий product slice: native Save Panel, structured 
 365. [Done] Exact TOML revision CAS отклоняет stale GUI/tray save вместо last-writer-wins.
 366. [Done] CLI использует locked `update`, GUI/tray - `save_if_unchanged` с reload конфликта.
 367. [Done] Базовый single-instance behavior есть: `run.lock` для tap и `ui.lock` для окна/tray.
-368. [Improve] Relaunch should focus existing settings window, not just fail on `ui.lock`.
+368. [Done] Relaunch publishes `ui.activate`; the owner reveals and focuses its existing window.
 369. [Problem] `OnceLock` blocks multiple install attempts in one process.
 370. [Improve] Runtime should own tap lifecycle explicitly.
 371. [Problem] Нет graceful shutdown tests.

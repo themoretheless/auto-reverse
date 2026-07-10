@@ -9,6 +9,10 @@ writes only when the user asks, under the local Auto Reverse application-support
 directory. Configuration and per-device vendor/product IDs are stored locally in
 `~/Library/Application Support/Auto Reverse/config.toml`.
 
+Runtime coordination files (`run.lock`, `ui.lock`, `config.toml.lock`, and the
+transient `ui.activate` mailbox) stay in that same local directory. They contain
+only lock state or process IDs, never scroll events, device names, or settings.
+
 Accessibility and Input Monitoring are required by macOS to observe and modify
 scroll events. Auto Reverse does not record key presses, pointer coordinates, or
 application content. A future update that adds any network behavior must make it
