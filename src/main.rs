@@ -108,12 +108,10 @@ fn run_event_tap() -> AppResult<()> {
     }
 
     println!(
-        "auto-reverse: config changes made while this is running have no effect until restart. \
-         Neither this headless `run` process nor the merged `ui` process watches the config \
-         file for external edits - `ui` only applies changes made through its own settings \
-         window (written straight to its shared in-memory config), so a CLI command like \
-         `enable`/`disable` run while `ui` is open has no effect on it either, and can be \
-         silently overwritten by `ui`'s next save."
+        "auto-reverse: config changes made while this headless `run` process is running have \
+         no effect until restart. An open `ui` process does not continuously watch external \
+         edits either, but its next window or tray save compares the exact TOML revision: a \
+         newer CLI or manual edit is reloaded instead of being silently overwritten."
     );
 
     // install_and_run acquires the exclusive daemon_lock itself, as the
@@ -224,8 +222,8 @@ fn load_config_for_diagnostics(
 
     let config = AppConfig::default();
     if create_config {
-        store.save(&config)?;
-        Ok((config, ConfigDiagnosticState::Created))
+        let snapshot = store.load_or_create_snapshot()?;
+        Ok((snapshot.config, ConfigDiagnosticState::Created))
     } else {
         Ok((config, ConfigDiagnosticState::MissingUsingDefaults))
     }
@@ -238,16 +236,14 @@ fn init_config() -> AppResult<()> {
         return Ok(());
     }
 
-    store.save(&AppConfig::default())?;
+    store.load_or_create()?;
     println!("created config: {}", store.path().display());
     Ok(())
 }
 
 fn set_enabled(enabled: bool) -> AppResult<()> {
     let store = ConfigStore::default();
-    let mut config = store.load_or_create()?;
-    config.enabled = enabled;
-    store.save(&config)?;
+    store.update(|config| config.enabled = enabled)?;
     println!(
         "auto-reverse is now {}",
         if enabled { "enabled" } else { "disabled" }
@@ -257,10 +253,8 @@ fn set_enabled(enabled: bool) -> AppResult<()> {
 
 fn toggle_enabled() -> AppResult<()> {
     let store = ConfigStore::default();
-    let mut config = store.load_or_create()?;
-    config.enabled = !config.enabled;
-    let enabled = config.enabled;
-    store.save(&config)?;
+    let snapshot = store.update(|config| config.enabled = !config.enabled)?;
+    let enabled = snapshot.config.enabled;
     println!(
         "auto-reverse is now {}",
         if enabled { "enabled" } else { "disabled" }
@@ -276,10 +270,7 @@ fn set_startup_enabled(enabled: bool) -> AppResult<()> {
     };
 
     let store = ConfigStore::default();
-    let config_result = store.load_or_create().and_then(|mut config| {
-        config.start_at_login = enabled;
-        store.save(&config)
-    });
+    let config_result = store.update(|config| config.start_at_login = enabled);
     if let Err(error) = config_result {
         // The launch agent was already changed above; without this note the
         // user has no way to know config and agent now disagree.

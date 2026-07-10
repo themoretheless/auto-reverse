@@ -13,7 +13,7 @@ independently.
 5. [Done] Add a process-local 15-minute pause with an explicit resume action.
 6. [Done] Store structured debug reason enums instead of hot-path display strings.
 7. [Implemented] Observe sleep/wake and re-arm a disabled or stopped tap safely; real sleep/wake manual QA remains open.
-8. [Next] Serialize external CLI and GUI config writes or detect stale revisions.
+8. [Done] Serialize CLI writes with a persistent lock; reject and reload stale GUI/tray revisions.
 9. [Next] Focus the existing settings window when a second launch hits `ui.lock`.
 10. [Next] Add integration tests with isolated `HOME` and config paths.
 

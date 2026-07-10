@@ -53,11 +53,11 @@
 //! Event Manager level - see that module's doc comment for why this is
 //! done there and not via `NSApplicationDelegate`.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use eframe::egui::{self, Color32, RichText, ViewportCommand};
 
-use crate::config::{AppConfig, ConfigStore, DeviceRule};
+use crate::config::{AppConfig, ConfigRevision, ConfigStore, DeviceRule};
 use crate::platform::macos::{
     daemon_lock, hid, login_item, permissions, power_events, quit_handler, tray,
 };
@@ -197,6 +197,9 @@ struct SettingsApp {
     /// Shared with the background CGEventTap thread - this is what makes
     /// config changes apply live instead of requiring a restart.
     shared_config: Arc<RwLock<AppConfig>>,
+    /// Exact TOML revision loaded by the long-lived editor. Shared with tray
+    /// persistence so neither UI surface can overwrite a newer CLI write.
+    config_revision: Arc<Mutex<Option<ConfigRevision>>>,
     /// Process-local pause shared by the UI, tray and tap hot path.
     runtime_control: Arc<RuntimeControl>,
     devices: Vec<hid::DeviceInfo>,
@@ -262,12 +265,13 @@ impl SettingsApp {
         let permissions_ready = permissions::request_missing_permissions();
 
         let store = ConfigStore::default();
-        let (config, load_error) = match store.load_or_create() {
-            Ok(config) => (config, None),
-            Err(error) => (AppConfig::default(), Some(error.to_string())),
+        let (config, config_revision, load_error) = match store.load_or_create_snapshot() {
+            Ok(snapshot) => (snapshot.config, Some(snapshot.revision), None),
+            Err(error) => (AppConfig::default(), None, Some(error.to_string())),
         };
 
         let shared_config = Arc::new(RwLock::new(config.clone()));
+        let config_revision = Arc::new(Mutex::new(config_revision));
         let runtime_control = Arc::new(RuntimeControl::default());
 
         let login_item_error = None;
@@ -276,6 +280,7 @@ impl SettingsApp {
             store,
             config,
             shared_config,
+            config_revision,
             runtime_control,
             devices: Vec::new(),
             devices_error: None,
@@ -338,8 +343,28 @@ impl SettingsApp {
     /// both the old failed edit and the new one together, well after the
     /// user made the first one and after it appeared to fail.
     fn save(&mut self) {
-        match self.store.save(&self.config) {
-            Ok(()) => {
+        let expected_revision = {
+            let revision = self
+                .config_revision
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            revision.clone()
+        };
+        let Some(expected_revision) = expected_revision else {
+            self.save_error = Some(
+                "config was not loaded successfully, so this edit was not saved; fix the config file and reopen Auto Reverse"
+                    .to_string(),
+            );
+            self.sync_config_from_shared();
+            return;
+        };
+
+        match self
+            .store
+            .save_if_unchanged(&self.config, &expected_revision)
+        {
+            Ok(revision) => {
+                self.set_config_revision(revision);
                 self.save_error = None;
                 let mut guard = match self.shared_config.write() {
                     Ok(guard) => guard,
@@ -347,15 +372,83 @@ impl SettingsApp {
                 };
                 *guard = self.config.clone();
             }
+            Err(error) if error.is_config_changed() => {
+                let conflict = error.to_string();
+                match self.reload_external_config() {
+                    Ok(true) => {
+                        self.save_error = Some(format!(
+                            "{conflict}. The newer external settings were reloaded; apply your edit again."
+                        ));
+                    }
+                    Ok(false) => {
+                        self.save_error = Some(conflict);
+                        self.sync_config_from_shared();
+                    }
+                    Err(reload_error) => {
+                        self.save_error = Some(format!(
+                            "{conflict}; reloading the newer config also failed: {reload_error}"
+                        ));
+                        self.sync_config_from_shared();
+                    }
+                }
+            }
             Err(error) => {
                 self.save_error = Some(error.to_string());
-                let guard = match self.shared_config.read() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                self.config = guard.clone();
+                self.sync_config_from_shared();
             }
         }
+    }
+
+    fn set_config_revision(&self, revision: ConfigRevision) {
+        let mut current = self
+            .config_revision
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *current = Some(revision);
+    }
+
+    /// Reloads a newer external revision into both the widgets and the live
+    /// event-tap config. Returns `false` when the disk revision is already the
+    /// one this process knows, which distinguishes an ordinary I/O failure
+    /// from a real stale-write conflict.
+    fn reload_external_config(&mut self) -> Result<bool, String> {
+        let snapshot = self
+            .store
+            .load_snapshot()
+            .map_err(|error| error.to_string())?;
+        let already_current = {
+            let current = self
+                .config_revision
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            current.as_ref() == Some(&snapshot.revision)
+        };
+        if already_current {
+            return Ok(false);
+        }
+
+        let enabled_before = {
+            let guard = match self.shared_config.read() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            guard.enabled
+        };
+        self.config = snapshot.config;
+        {
+            let mut guard = match self.shared_config.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            *guard = self.config.clone();
+        }
+        self.set_config_revision(snapshot.revision);
+        self.load_error = None;
+
+        if enabled_before != self.config.enabled {
+            self.handle_enabled_changed(permissions_ready());
+        }
+        Ok(true)
     }
 
     fn start_tap_thread(&mut self) {
@@ -446,19 +539,28 @@ impl eframe::App for SettingsApp {
         // is the right one.
         if self.tray.is_none() {
             let store_for_tray = self.store.clone();
+            let revision_for_tray = Arc::clone(&self.config_revision);
             match tray::build(
                 Arc::clone(&self.shared_config),
                 Arc::clone(&self.runtime_control),
                 move |config| {
-                    // Same disk-save path SettingsApp::save() uses - see that
-                    // function's doc comment. A tray-driven toggle must not
-                    // diverge from what the settings window itself persists,
-                    // so this reuses ConfigStore::save on the identical
-                    // shared_config the tray already wrote through, rather
-                    // than re-implementing a second write path.
-                    store_for_tray
-                        .save(config)
-                        .map_err(|error| error.to_string())
+                    let expected = {
+                        let current = revision_for_tray
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        current.clone().ok_or_else(|| {
+                            "config was not loaded successfully; tray edit was not saved"
+                                .to_string()
+                        })?
+                    };
+                    let revision = store_for_tray
+                        .save_if_unchanged(config, &expected)
+                        .map_err(|error| error.to_string())?;
+                    let mut current = revision_for_tray
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    *current = Some(revision);
+                    Ok(())
                 },
             ) {
                 Ok(handle) => self.tray = Some(handle),
@@ -542,10 +644,17 @@ impl eframe::App for SettingsApp {
             }
             Some(tray::TrayAction::SaveFailed) => {
                 self.sync_config_from_shared();
-                self.save_error = Some(
-                    tray::take_last_save_error()
-                        .unwrap_or_else(|| "tray change could not be saved".to_string()),
-                );
+                let error = tray::take_last_save_error()
+                    .unwrap_or_else(|| "tray change could not be saved".to_string());
+                self.save_error = Some(match self.reload_external_config() {
+                    Ok(true) => format!(
+                        "{error}. A newer external config was reloaded; repeat the tray action."
+                    ),
+                    Ok(false) => error,
+                    Err(reload_error) => {
+                        format!("{error}; checking for an external update failed: {reload_error}")
+                    }
+                });
             }
             Some(tray::TrayAction::PauseChanged) => {}
             None => {}

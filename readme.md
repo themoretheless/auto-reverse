@@ -7,7 +7,8 @@ Auto Reverse is a Rust/macOS utility for reverse scrolling. The target product i
 Implemented:
 
 - macOS `CGEventTap` for scroll events;
-- TOML config with `config_version`;
+- TOML config with `config_version`, a persistent cross-process lock, atomic
+  CLI transactions, and exact-revision conflict detection for GUI/tray saves;
 - global enable/disable;
 - vertical and horizontal reverse flags;
 - mouse, trackpad, Magic Mouse and unknown-device config flags;
@@ -111,7 +112,7 @@ Then launch the bundled app:
 open "target/debug/Auto Reverse.app"
 ```
 
-Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and both permissions are granted, sharing one live config with the window so changes made in that window apply immediately with no restart. If the app was opened before permissions were granted, it keeps watching the permission state and retries starting the tap once both checks become ready; if startup failed or stopped immediately, turning Reverse scrolling off clears that pending attempt so turning it on again can retry cleanly. A menu-bar icon stays up for as long as the process runs: it uses an opposing-arrows template glyph plus a separate colored status dot for active/paused/permission-blocked states. Its native menu includes Reverse Scrolling, device quick-picks, Open Settings, Open Debug Console, and Quit; holding Option while opening the icon opens the Debug Console directly. Closing the settings window hides it rather than quitting. A separate `ui.lock` prevents duplicate windows/menu-bar icons, and an exclusive tap lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. External CLI edits made while the settings window is already open do not update that running window; use the window itself, or quit and reopen it. For terminal diagnostics through the bundled identity:
+Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and both permissions are granted, sharing one live config with the window so changes made in that window apply immediately with no restart. If the app was opened before permissions were granted, it keeps watching the permission state and retries starting the tap once both checks become ready; if startup failed or stopped immediately, turning Reverse scrolling off clears that pending attempt so turning it on again can retry cleanly. A menu-bar icon stays up for as long as the process runs: it uses an opposing-arrows template glyph plus a separate colored status dot for active/paused/permission-blocked states. Its native menu includes Reverse Scrolling, device quick-picks, Open Settings, Open Debug Console, and Quit; holding Option while opening the icon opens the Debug Console directly. Closing the settings window hides it rather than quitting. A separate `ui.lock` prevents duplicate windows/menu-bar icons, and an exclusive tap lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. External CLI edits made while the settings window is already open are not live-watched. They are nevertheless protected: the next GUI/tray save detects the exact TOML revision mismatch, reloads the newer disk state, and asks the user to repeat the local action instead of silently overwriting it. Reopen the window to apply an external edit immediately. For terminal diagnostics through the bundled identity:
 
 Debug Console rows keep raw source metadata in memory and derive display text
 only while the console is searching or rendering. Export preserves the raw HID
@@ -142,6 +143,13 @@ Override path for testing:
 ```bash
 AUTO_REVERSE_CONFIG=/tmp/auto-reverse.toml cargo run -- doctor
 ```
+
+Config writes use a persistent sibling lock file (`config.toml.lock`). CLI
+read-modify-write commands hold that lock for the complete transaction; the
+long-lived GUI and tray additionally compare the exact TOML revision they
+loaded before replacing the file. The lock file is intentionally not deleted,
+because replacing its inode would allow two processes to believe they both own
+the lock.
 
 Important fields:
 
@@ -204,7 +212,7 @@ src/runtime.rs                       lock-free process-local pause control
 src/scroll.rs                        pure reversal policy (no CoreGraphics)
 src/config/mod.rs                    facade re-exporting AppConfig/ConfigStore
 src/config/schema.rs                 what the settings ARE: fields, defaults, validation
-src/config/store.rs                  where they LIVE: paths, TOML I/O, atomic save
+src/config/store.rs                  paths, TOML I/O, atomic save, lock, snapshots/CAS
 src/platform/mod.rs                  cfg-gated platform adapters
 src/platform/macos/mod.rs            macOS integration overview
 src/platform/macos/scroll_events.rs  CGEvent field mapping (read event, write decision)
@@ -651,10 +659,10 @@ items visible from the README without making the first read impossible.
 | 360 | Improve | Keep callback small and panic-free; wrap risky code. |
 | 361 | Problem | `toml::to_string_pretty` in save can fail but no recovery UX. |
 | 362 | Improve | Surface config write errors in UI. |
-| 363 | Problem | Нет config lock. |
-| 364 | Improve | Consider file lock if multiple CLI/UI instances write config. |
-| 365 | Problem | Last-writer-wins может терять settings. |
-| 366 | Improve | Runtime should serialize config writes. |
+| 363 | Done | Persistent `config.toml.lock` защищает cooperating config writers. |
+| 364 | Done | `File::lock` сериализует CLI/UI/tray операции на одном lock inode. |
+| 365 | Done | Exact TOML revision CAS отклоняет stale GUI/tray save вместо last-writer-wins. |
+| 366 | Done | CLI использует locked `update`, GUI/tray - `save_if_unchanged` с reload конфликта. |
 | 367 | Done | Базовый single-instance behavior есть: `run.lock` для tap и `ui.lock` для окна/tray. |
 | 368 | Improve | Relaunch should focus existing settings window, not just fail on `ui.lock`. |
 | 369 | Problem | `OnceLock` blocks multiple install attempts in one process. |

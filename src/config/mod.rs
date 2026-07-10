@@ -8,4 +8,4 @@ mod schema;
 mod store;
 
 pub use schema::{AppConfig, CONFIG_VERSION, DeviceRule};
-pub use store::ConfigStore;
+pub use store::{ConfigRevision, ConfigSnapshot, ConfigStore};

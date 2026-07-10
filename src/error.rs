@@ -16,6 +16,9 @@ pub enum AppError {
         source: toml::de::Error,
     },
     ConfigSerialize(toml::ser::Error),
+    ConfigChanged {
+        path: PathBuf,
+    },
     InvalidConfig(String),
     Platform(String),
     Usage(String),
@@ -28,6 +31,10 @@ impl AppError {
             path: path.into(),
             source,
         }
+    }
+
+    pub fn is_config_changed(&self) -> bool {
+        matches!(self, Self::ConfigChanged { .. })
     }
 }
 
@@ -43,6 +50,11 @@ impl fmt::Display for AppError {
                 write!(f, "failed to parse config `{}`: {source}", path.display())
             }
             Self::ConfigSerialize(source) => write!(f, "failed to serialize config: {source}"),
+            Self::ConfigChanged { path } => write!(
+                f,
+                "config `{}` changed in another process; reload it before saving again",
+                path.display()
+            ),
             Self::InvalidConfig(message) => write!(f, "invalid config: {message}"),
             Self::Platform(message) => write!(f, "platform error: {message}"),
             Self::Usage(message) => write!(f, "{message}"),
@@ -56,7 +68,10 @@ impl Error for AppError {
             Self::Io { source, .. } => Some(source),
             Self::ConfigParse { source, .. } => Some(source),
             Self::ConfigSerialize(source) => Some(source),
-            Self::InvalidConfig(_) | Self::Platform(_) | Self::Usage(_) => None,
+            Self::ConfigChanged { .. }
+            | Self::InvalidConfig(_)
+            | Self::Platform(_)
+            | Self::Usage(_) => None,
         }
     }
 }
