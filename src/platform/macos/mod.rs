@@ -20,6 +20,7 @@
 //!   different binaries/use cases, not meant to be unified.
 //! - `power_events` (gui only): `NSWorkspace` sleep/wake notifications used
 //!   to re-arm or restart the in-process event tap after wake.
+//! - `save_panel` (gui only): native CSV destination picker and Finder reveal.
 //! - `tray` (gui only): native AppKit menu-bar item for the merged
 //!   settings-window + event-tap process.
 //! - `quit_handler` (gui only): overrides the `kAEQuitApplication` Apple
@@ -40,6 +41,8 @@ pub mod permissions;
 pub mod power_events;
 #[cfg(feature = "gui")]
 pub mod quit_handler;
+#[cfg(feature = "gui")]
+pub mod save_panel;
 pub mod scroll_events;
 pub mod startup;
 #[cfg(feature = "gui")]

@@ -31,6 +31,12 @@ action when one exists.
 The implementation lives in `src/ui/theme.rs`. Controls use 4-8 px radii,
 zero letter-spacing, stable dimensions, and SF Pro / SF Mono when available.
 
+Debug export uses the native macOS Save Panel instead of an app-defined folder.
+Cancel is silent. A successful export shows one compact, single-line receipt;
+the filename truncates before the stable `Reveal in Finder` action, while the
+full path remains available on hover. Export and Reveal errors are distinct and
+stay inline with that action area.
+
 ## States
 
 - Active: reversal is enabled, permissions are ready, and no temporary pause exists.

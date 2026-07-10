@@ -26,7 +26,7 @@ independently.
 15. [Done] Route first launch with missing permissions to the Permissions tab.
 16. [Done] Protect Restore defaults with an explicit confirmation step.
 17. [Done] Open Accessibility and Input Monitoring panes independently.
-18. [Next] Add Save Panel / Reveal in Finder for Debug Console exports.
+18. [Implemented] Native Save Panel and Finder reveal are built; manual panel workflow QA remains open.
 19. [Next] Add stable device identity v2 using serial/location data where available.
 20. [Research] Determine whether public APIs can distinguish Magic Mouse gestures.
 

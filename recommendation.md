@@ -1,6 +1,6 @@
 # 900 рекомендаций, проблем и улучшений (500 базовых + N01-N400 follow-up)
 
-Список обновлен 2026-07-11 после повторного SOLID/DRY split, temporary pause, typed tap lifecycle, app-icon/CI/docs, structured diagnostics, sleep/wake recovery, config consistency, focus-existing-window и isolated CLI integration проходов. Он отражает текущий код: macOS event tap, TOML config с cross-process transaction lock и exact-revision CAS, CLI parser, permission recovery, raw-input guard, step size, два start-at-login пути, GUI `.app` bundle с `.icns`, rich menu bar, Debug Console, PID-addressed activation mailbox и открытые gaps до Scroll Reverser parity.
+Список обновлен 2026-07-11 после повторного SOLID/DRY split, temporary pause, typed tap lifecycle, app-icon/CI/docs, structured diagnostics, sleep/wake recovery, config consistency, focus-existing-window, isolated CLI integration и native export проходов. Он отражает текущий код: macOS event tap, TOML config с cross-process transaction lock и exact-revision CAS, CLI parser, permission recovery, raw-input guard, step size, два start-at-login пути, GUI `.app` bundle с `.icns`, rich menu bar, Debug Console с NSSavePanel/Finder reveal, PID-addressed activation mailbox и открытые gaps до Scroll Reverser parity.
 
 ## Планируемая переделка: единый процесс + menu bar + SMAppService — риски, записанные до реализации
 
@@ -501,7 +501,7 @@ N30. Добавить `pause --minutes`.
 N31. Добавить `resume`.
 N32. Добавить `status` как короткую версию `doctor`.
 N33. Добавить `logs` command.
-N34. Добавить ring buffer export.
+N34. [Done] Ring buffer имеет filtered structured CSV export.
 N35. Добавить human-readable reason для каждого pass-through decision.
 N36. Добавить test matrix for launch at login.
 N37. Добавить manual QA сценарий "reboot/login".
@@ -622,7 +622,7 @@ N148. [Done] CI выполняет fmt, GUI/lean checks, clippy, tests и bundle
 N149. [Problem] Нет release signing/notarization flow.
 N150. [Improve] Запланировать Developer ID, hardened runtime, notarization, stapling.
 N151. [Problem] Нет crash/log collection strategy, и это правильно для privacy, но осложняет support.
-N152. [Improve] Добавить local-only diagnostics export, без автоматической отправки.
+N152. [Done] Diagnostics export local-only и запускается только явным действием пользователя.
 N153. [Problem] Нет hot-path allocation audit после добавления `config.clone()` на каждое scroll event.
 N154. [Improve] Измерить clone cost или перейти на cheap immutable snapshot/ArcSwap.
 N155. [Problem] `RwLock` poison handling разный: в одном месте `expect`, в другом recover.
@@ -745,7 +745,7 @@ N265. [Done] Debug Console search теперь ищет по device, axis, delta
 N266. [Done] Добавить регрессионный тест на расширенный Debug Console search.
 N267. [Done] README больше не называет rich menu/status icon/debug console missing.
 N268. [Done] Architecture теперь знает про `debug_log.rs`, `quit_handler.rs`, rich `tray.rs` и design-handoff layout.
-N269. [Done] `src/ui.rs` больше не содержит theme helpers, Debug Console/export и tap lifecycle: они вынесены в отдельные модули.
+N269. [Done] UI coordinator, Debug renderer, export workflow и AppKit Save Panel разделены по модулям.
 N270. [Done] Первый SRP split выполнен: `ui/debug_console.rs`, `ui/runtime.rs`, `ui/theme.rs`; дальнейшее дробление settings/devices остается только при реальном росте этих частей.
 N271. [Problem] `src/platform/macos/tray.rs` тоже стал слишком широким: icon drawing, menu model, AppKit target/delegate, device-rule mutation.
 N272. [Improve] Разбить tray на `tray/icon.rs`, `tray/menu_model.rs`, `tray/appkit.rs`, `tray/actions.rs`.
@@ -765,8 +765,8 @@ N285. [Done] `on_disk_save` в tray больше не игнорирует save 
 N286. [Done] Tray save closure возвращает `Result`, а ошибка становится UI-visible warning.
 N287. [Done] Tray toggle откатывает shared config при disk failure, чтобы runtime не расходился с сохраненным config.
 N288. [Done] Добавлен tray save-error notification slot через `TrayAction::SaveFailed` + `take_last_save_error`.
-N289. [Problem] Debug Console Export пишет файл сразу в Application Support без пользовательского выбора.
-N290. [Improve] Добавить Save Panel или хотя бы Reveal in Finder после export.
+N289. [Done] Debug Console Export пишет только после выбора пути в native Save Panel.
+N290. [Done] После export доступен Reveal in Finder для точного выбранного файла.
 N291. [Partial] CSV теперь structured, но config snapshot в export пока не включен.
 N292. [Done] CSV экспортирует source_pid, synthetic, device_kind, raw device name, hardware ID и reason_code.
 N293. [Problem] CSV filename uses epoch millis, not human-readable local timestamp.
@@ -801,8 +801,8 @@ N321. [Done] Bundle содержит branded `AutoReverse.icns` для Finder/Sy
 N322. [Done] `.icns` строится из того же opposing-arrows Concept B, отдельно от template menu glyph.
 N323. [Done] Info.plist содержит `CFBundleIconFile = AutoReverse`.
 N324. [Done] `scripts/build-app-bundle.sh` генерирует полный iconset и `.icns` из `assets/AppIcon.svg`.
-N325. [Problem] Debug Console export folder may accumulate files forever.
-N326. [Improve] Add "Open Debug Logs folder" and optional cleanup guidance.
+N325. [Done] App-managed export folder больше не растет автоматически: destination выбирает пользователь.
+N326. [Done] Structured receipt открывает точный export через Reveal in Finder.
 N327. [Done] Missing permissions больше не открывают пользователя на нерелевантной General tab.
 N328. [Done] Первый запуск с missing TCC сразу выбирает Permissions и дает отдельные targeted actions.
 N329. [Problem] `show_menu_bar_icon` config field remains stored-but-ignored and now conflicts with tray as primary UI.
@@ -869,7 +869,7 @@ N386. [Done] Добавлен `PRIVACY.md`: local-only input/config/debug bounda
 N387. [Done] Добавлен `SECURITY.md`: FFI boundary и production-signing caveat.
 N388. [Done] Добавлен `CONTRIBUTING.md` с layering invariants и full gate.
 N389. [Done] Добавлен privacy-aware GitHub bug report template.
-N390. [Done] Набор вырос до 90 library + 17 binary + 4 black-box integration tests.
+N390. [Done] Набор вырос до 93 library + 17 binary + 4 black-box integration tests.
 N391. [Done] Debug events хранят `DecisionReason` и structured source fields вместо display strings.
 N392. [Partial] `DecisionReason` и lazy formatting готовы; маленький `DiagnosticsSink` остается отдельным следующим шагом.
 N393. [Done] `power_events.rs` наблюдает NSWorkspace sleep/wake независимо от видимости settings window.
@@ -878,8 +878,8 @@ N395. [Done] External CLI и открытый GUI больше не переза
 N396. [Done] Exact TOML revision CAS отклоняет stale GUI/tray save и reload-ит внешний config.
 N397. [Done] Второй GUI launch не строит AppKit objects и фокусирует существующее окно.
 N398. [Done] Маленький local `ui.activate` mailbox реализован поверх `ui.lock`.
-N399. [Problem] Debug export по-прежнему пишет в фиксированную папку без Save Panel/Reveal.
-N400. [Improve] Следующий product slice: native Save Panel, structured export и Reveal in Finder.
+N399. [Done] Debug export больше не пишет в фиксированную папку: используется NSSavePanel.
+N400. [Done] Native Save Panel, structured receipt, atomic export и Reveal in Finder реализованы.
 
 ### Финальный review третьего прохода: найдено и исправлено
 
@@ -902,6 +902,9 @@ N400. [Improve] Следующий product slice: native Save Panel, structured 
 - `tests/cli_integration.rs` запускает настоящий Cargo-built binary, а не внутренние функции; path resolution и process environment теперь проверяются end-to-end.
 - Каждый CLI test очищает inherited config/LaunchAgent/XDG overrides и владеет отдельным temp HOME с Drop cleanup, поэтому не может записать пользовательский config или plist.
 - Параллельные `disable` и `enable-startup` сохраняют независимые поля, а JSON status подтверждает isolated LaunchAgent/config sync.
+- `platform/macos/save_panel.rs` изолирует NSSavePanel/NSWorkspace, `ui/debug_console/export.rs` владеет CSV/atomic file workflow, renderer не импортирует AppKit или filesystem APIs.
+- Cancel в Save Panel не меняет receipt/error state; success хранит path+event count, длинное display-name обрезается, а полный путь остается в tooltip.
+- Export и Reveal имеют отдельные error states; atomic temp+rename не оставляет выбранный CSV частично записанным при write failure.
 
 ## Итерация 2: Product UX and Design
 
@@ -1015,8 +1018,8 @@ N400. [Improve] Следующий product slice: native Save Panel, structured 
 278. [Improve] Добавить command to open preferences when UI exists.
 279. [Problem] Нет `doctor --json`.
 280. [Improve] JSON diagnostics помогут support.
-281. [Problem] Нет diagnostics export.
-282. [Improve] Export redacted diagnostics file.
+281. [Done] Debug Console экспортирует filtered structured events через native Save Panel.
+282. [Partial] CSV local-only и structured; отдельный redaction/config-snapshot режим еще открыт.
 283. [Problem] Нет copy-to-clipboard action.
 284. [Improve] Diagnostics UI: copy summary.
 285. [Problem] Нет manual test window.

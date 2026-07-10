@@ -1,23 +1,24 @@
 //! Debug Console viewport and its local presentation state.
 //!
 //! Keeping this surface separate from `SettingsApp` makes the main UI
-//! coordinator responsible only for opening/closing the viewport. Filtering,
-//! table rendering and local CSV export stay together in this module.
+//! coordinator responsible only for opening/closing the viewport. Filtering
+//! and table rendering stay here; `export` owns CSV/file workflow.
 
 use eframe::egui::{self, Color32, RichText};
-use std::fmt::Write as _;
 
-use crate::config::ConfigStore;
 use crate::platform::macos::debug_log;
 
 use super::theme::{status_dot, styled_button};
+
+mod export;
 
 #[derive(Default)]
 pub(super) struct State {
     filter: Filter,
     search: String,
     export_error: Option<String>,
-    export_success: Option<String>,
+    reveal_error: Option<String>,
+    last_export: Option<export::Receipt>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -68,14 +69,18 @@ fn contents(ui: &mut egui::Ui, state: &mut State) {
                 debug_log::clear();
             }
             if styled_button(ui, "Export…", egui::vec2(10.0, 5.0)).clicked() {
-                match export_events(&filtered_events(&all_events, state)) {
-                    Ok(path) => {
-                        state.export_success = Some(format!("Exported to {}", path.display()));
+                match export::run(
+                    &filtered_events(&all_events, state),
+                    state.last_export.as_ref(),
+                ) {
+                    Ok(Some(receipt)) => {
+                        state.last_export = Some(receipt);
                         state.export_error = None;
+                        state.reveal_error = None;
                     }
+                    Ok(None) => {}
                     Err(error) => {
                         state.export_error = Some(error);
-                        state.export_success = None;
                     }
                 }
             }
@@ -96,8 +101,28 @@ fn contents(ui: &mut egui::Ui, state: &mut State) {
                 .small(),
         );
     }
-    if let Some(success) = &state.export_success {
-        ui.label(RichText::new(success).small().weak());
+    if let Some(error) = &state.reveal_error {
+        ui.label(
+            RichText::new(format!("Reveal failed: {error}"))
+                .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
+                .small(),
+        );
+    }
+    if let Some(receipt) = state.last_export.clone() {
+        ui.horizontal(|ui| {
+            let summary_width = (ui.available_width() - 120.0).max(80.0);
+            ui.add_sized(
+                [summary_width, 22.0],
+                egui::Label::new(RichText::new(receipt.summary()).small().weak()).truncate(),
+            )
+            .on_hover_text(receipt.path().display().to_string());
+            if styled_button(ui, "Reveal in Finder", egui::vec2(8.0, 3.0)).clicked() {
+                match export::reveal(&receipt) {
+                    Ok(()) => state.reveal_error = None,
+                    Err(error) => state.reveal_error = Some(error),
+                }
+            }
+        });
     }
 
     ui.separator();
@@ -272,115 +297,4 @@ fn format_timestamp(timestamp_ms: u128) -> String {
     let seconds = (total_ms / 1000) % 60;
     let millis = total_ms % 1000;
     format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
-}
-
-fn export_events(events: &[debug_log::DebugEvent]) -> Result<std::path::PathBuf, String> {
-    let config_path = ConfigStore::default_path();
-    let export_dir = config_path
-        .parent()
-        .ok_or_else(|| "could not determine config directory".to_string())?
-        .join("Debug Logs");
-    std::fs::create_dir_all(&export_dir).map_err(|error| error.to_string())?;
-
-    let now_ms = debug_log::now_millis();
-    let file_path = export_dir.join(format!("debug-events-{now_ms}.csv"));
-    let csv = events_to_csv(events);
-
-    std::fs::write(&file_path, csv).map_err(|error| error.to_string())?;
-    Ok(file_path)
-}
-
-fn events_to_csv(events: &[debug_log::DebugEvent]) -> String {
-    let mut csv = String::from(
-        "timestamp_ms,device,device_kind,device_name,vendor_id,product_id,source_pid,synthetic,axis,raw_delta,output_delta,category,reason_code,decision\n",
-    );
-
-    for event in events {
-        let device_description = event.device_description();
-        let decision_text = event.decision_text();
-        let device_name = event.device_name.as_deref().unwrap_or_default();
-        let (vendor_id, product_id) = event
-            .hardware
-            .map(|hardware| {
-                (
-                    format!("0x{:04x}", hardware.vendor_id),
-                    format!("0x{:04x}", hardware.product_id),
-                )
-            })
-            .unwrap_or_default();
-
-        writeln!(
-            csv,
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
-            event.timestamp_ms,
-            csv_escape(&device_description),
-            event.device_kind.as_str(),
-            csv_escape(device_name),
-            vendor_id,
-            product_id,
-            event.source_pid,
-            event.synthetic,
-            event.axis.code(),
-            event.raw_delta,
-            event.output_delta,
-            event.category().code(),
-            event.reason.code(),
-            csv_escape(&decision_text),
-        )
-        .expect("writing to a String cannot fail");
-    }
-
-    csv
-}
-
-fn csv_escape(value: &str) -> String {
-    if value.contains(',') || value.contains('"') || value.contains(['\n', '\r']) {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value.to_string()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::device::{DeviceKind, HardwareId};
-    use std::sync::Arc;
-
-    #[test]
-    fn csv_escape_quotes_commas_quotes_and_newlines() {
-        assert_eq!(csv_escape("plain"), "plain");
-        assert_eq!(csv_escape("a,b"), "\"a,b\"");
-        assert_eq!(csv_escape("a\"b"), "\"a\"\"b\"");
-        assert_eq!(csv_escape("a\nb"), "\"a\nb\"");
-        assert_eq!(csv_escape("a\rb"), "\"a\rb\"");
-    }
-
-    #[test]
-    fn csv_export_contains_raw_structured_source_and_reason_fields() {
-        let event = debug_log::DebugEvent {
-            timestamp_ms: 42,
-            device_kind: DeviceKind::Mouse,
-            device_name: Some(Arc::from("MX, Master\n3S")),
-            hardware: Some(HardwareId {
-                vendor_id: 0x046d,
-                product_id: 0xb034,
-            }),
-            source_pid: 123,
-            synthetic: true,
-            axis: debug_log::Axis::Vertical,
-            raw_delta: 1,
-            output_delta: -1,
-            reason: debug_log::DecisionReason::SyntheticEvent,
-        };
-
-        let csv = events_to_csv(&[event]);
-
-        assert!(csv.starts_with(
-            "timestamp_ms,device,device_kind,device_name,vendor_id,product_id,source_pid,synthetic,axis,raw_delta,output_delta,category,reason_code,decision\n"
-        ));
-        assert!(csv.contains("Mouse wheel · MX, Master 3S"));
-        assert!(csv.contains("\"MX, Master\n3S\""));
-        assert!(csv.contains("0x046d,0xb034,123,true,vertical,1,-1,ignored,synthetic_event"));
-    }
 }

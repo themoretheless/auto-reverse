@@ -31,7 +31,8 @@ Implemented:
   and Quit;
 - local Debug Console with search, decision filters, clear, and a bounded
   structured ring buffer; CSV export includes stable reason codes, source PID,
-  synthetic flag, device kind, raw HID name, and vendor/product IDs;
+  synthetic flag, device kind, raw HID name, and vendor/product IDs; a native
+  Save Panel chooses the destination and the receipt can reveal it in Finder;
 - process-local 15-minute pause that leaves persisted settings untouched;
 - typed event-tap lifecycle with explicit started/already-running/stopped/failed
   events rather than timeout-inferred booleans;
@@ -122,7 +123,10 @@ Double-clicking the bundle opens the settings window (`ui`), which also starts t
 Debug Console rows keep raw source metadata in memory and derive display text
 only while the console is searching or rendering. Export preserves the raw HID
 name in its own escaped CSV field while normalizing whitespace only in the
-human-readable `device` column. Debug data remains local to this Mac.
+human-readable `device` column. The Save Panel writes only after the user picks
+a destination, uses atomic replacement, and offers Reveal in Finder after
+success. Cancel does not create a file or erase the previous receipt. Debug data
+remains local to this Mac.
 
 The bundle uses the real Mach-O binary as `CFBundleExecutable`
 (`Contents/MacOS/auto-reverse`) rather than a shell launcher. With no
@@ -228,6 +232,7 @@ src/platform/macos/event_tap.rs      CGEventTap runtime loop, config shared via 
 src/platform/macos/power_events.rs   NSWorkspace sleep/wake observer and atomic signal
 src/platform/macos/daemon_lock.rs    flock: only one live CGEventTap at a time, any launch path
 src/platform/macos/activation.rs     second GUI launch -> existing-window focus mailbox
+src/platform/macos/save_panel.rs     native CSV destination picker + Finder reveal
 src/platform/macos/debug_log.rs      structured decisions + local Debug Console ring buffer
 src/platform/macos/quit_handler.rs   AppleEvent quit interception so only tray Quit exits
 src/platform/macos/login_item.rs     SMAppService.mainAppService() wrapper (gui feature only)
@@ -236,7 +241,8 @@ src/platform/macos/tray/device_rules.rs pure tray quick-pick rule mutation
 src/ui.rs                            settings app coordinator and tab contents
 src/ui/runtime.rs                    typed tap lifecycle and explicit event channel
 src/ui/theme.rs                      handoff tokens and custom egui controls
-src/ui/debug_console.rs              Debug Console viewport/filter/export
+src/ui/debug_console.rs              Debug Console viewport/filter/table
+src/ui/debug_console/export.rs       CSV serialization, atomic write, export receipt
 tests/cli_integration.rs             real binary in isolated HOME/config sandboxes
 ```
 
@@ -584,8 +590,8 @@ items visible from the README without making the first read impossible.
 | 278 | Improve | Добавить command to open preferences when UI exists. |
 | 279 | Problem | Нет `doctor --json`. |
 | 280 | Improve | JSON diagnostics помогут support. |
-| 281 | Problem | Нет diagnostics export. |
-| 282 | Improve | Export redacted diagnostics file. |
+| 281 | Done | Debug Console экспортирует filtered structured events через native Save Panel. |
+| 282 | Partial | CSV local-only и structured; отдельный redaction/config-snapshot режим еще открыт. |
 | 283 | Problem | Нет copy-to-clipboard action. |
 | 284 | Improve | Diagnostics UI: copy summary. |
 | 285 | Problem | Нет manual test window. |

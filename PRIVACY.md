@@ -5,8 +5,9 @@ direction. It does not transmit events, device identifiers, configuration, or
 diagnostics over a network and contains no telemetry or analytics client.
 
 The Debug Console keeps at most 500 recent decisions in process memory. Export
-writes only when the user asks, under the local Auto Reverse application-support
-directory. Configuration and per-device vendor/product IDs are stored locally in
+writes only when the user asks and confirms a destination in the native Save
+Panel; Auto Reverse never uploads or automatically relocates that CSV.
+Configuration and per-device vendor/product IDs are stored locally in
 `~/Library/Application Support/Auto Reverse/config.toml`.
 
 Runtime coordination files (`run.lock`, `ui.lock`, `config.toml.lock`, and the

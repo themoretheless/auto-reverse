@@ -34,7 +34,7 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Cmd-W, Cmd-Q, Dock Quit, tray Quit |  |  |  |  |
 |  |  | Hide window, launch app again: one icon and focused existing window |  |  |  |  |
 |  |  | Menu, device submenu, Option-click console |  |  |  |  |
-|  |  | Debug search/filter/export/clear |  |  |  |  |
+|  |  | Debug filter/clear; Save Panel cancel/save/overwrite; Reveal in Finder |  |  |  |  |
 |  |  | Finder and System Settings app icon |  |  |  |  |
 
 Also verify high contrast, larger text, remote desktop with raw-input guard,
