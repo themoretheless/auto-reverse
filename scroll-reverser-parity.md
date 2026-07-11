@@ -162,7 +162,7 @@
 | Area | Target behavior | Status | Gap / next action |
 | --- | --- | --- | --- |
 | Core | Reverse scroll direction | Done | Physical wheel and continuous precision paths are tested separately. |
-| Devices | Mouse and trackpad independent settings | Partial | Discrete per-device rules work live; Magic Mouse still follows trackpad classification. |
+| Devices | Mouse and trackpad independent settings | Partial | Discrete rules use serial/location identity and distinguish identical models when HID exposes a qualifier; Magic Mouse still follows trackpad classification. |
 | Axes | Vertical and horizontal toggles | Done | Both policy and CGEvent field writes have regression tests. |
 | Wheel | Step size control | Partial | Implemented; detection-driven conditional visibility is still open. |
 | UI | Menu bar app with preferences | Done | Handoff 1b/1e implemented. |

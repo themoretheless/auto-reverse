@@ -1,18 +1,19 @@
 use serde::{Deserialize, Serialize};
 
-use crate::device::{DeviceKind, HardwareId};
 use crate::error::{AppError, AppResult};
 
 pub const CONFIG_VERSION: u32 = 1;
 
-/// A per-physical-device override: matches one exact vendor/product pair
-/// and pins its reversal on or off regardless of the per-kind flags.
+/// A per-device override. `serial_number` identifies one physical device when
+/// available; `location_id` is the port-level fallback. Omitting both keeps
+/// the legacy behavior and matches every device with this vendor/product pair.
 /// TOML supports hex literals, so a rule reads naturally:
 ///
 /// ```toml
 /// [[device_rules]]
 /// vendor_id = 0x046d
 /// product_id = 0xc52b
+/// serial_number = "ABC123"       # preferred when available
 /// name = "Logitech MX Master"  # optional, display only
 /// reverse = true
 /// ```
@@ -21,14 +22,12 @@ pub struct DeviceRule {
     pub vendor_id: u32,
     pub product_id: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serial_number: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub reverse: bool,
-}
-
-impl DeviceRule {
-    pub fn matches(&self, hardware: HardwareId) -> bool {
-        self.vendor_id == hardware.vendor_id && self.product_id == hardware.product_id
-    }
 }
 
 // deny_unknown_fields is deliberately NOT used here: it would make
@@ -96,38 +95,41 @@ impl AppConfig {
         }
 
         for (index, rule) in self.device_rules.iter().enumerate() {
-            let duplicate = self.device_rules[..index].iter().any(|earlier| {
-                earlier.vendor_id == rule.vendor_id && earlier.product_id == rule.product_id
-            });
+            if let Some(serial) = &rule.serial_number {
+                if serial.trim().is_empty() {
+                    return Err(AppError::InvalidConfig(format!(
+                        "device_rules[{index}].serial_number must not be empty"
+                    )));
+                }
+                if serial.trim() != serial {
+                    return Err(AppError::InvalidConfig(format!(
+                        "device_rules[{index}].serial_number must not have surrounding whitespace"
+                    )));
+                }
+            }
+            if rule.serial_number.is_some() && rule.location_id.is_some() {
+                return Err(AppError::InvalidConfig(format!(
+                    "device_rules[{index}] must use serial_number or location_id, not both"
+                )));
+            }
+            if rule.location_id == Some(0) {
+                return Err(AppError::InvalidConfig(format!(
+                    "device_rules[{index}].location_id must be non-zero"
+                )));
+            }
+
+            let duplicate = self.device_rules[..index]
+                .iter()
+                .any(|earlier| earlier.has_same_selector(rule));
             if duplicate {
                 return Err(AppError::InvalidConfig(format!(
-                    "duplicate device_rules entry for vendor_id=0x{:04x} product_id=0x{:04x}",
-                    rule.vendor_id, rule.product_id
+                    "duplicate device_rules selector: {}",
+                    rule.selector_description()
                 )));
             }
         }
 
         Ok(())
-    }
-
-    /// Full reversal policy: an exact per-device rule wins when the event's
-    /// hardware is known; otherwise the per-kind flag decides.
-    pub fn should_reverse(&self, device_kind: DeviceKind, hardware: Option<HardwareId>) -> bool {
-        if let Some(hardware) = hardware
-            && let Some(rule) = self.device_rules.iter().find(|rule| rule.matches(hardware))
-        {
-            return rule.reverse;
-        }
-        self.should_reverse_device(device_kind)
-    }
-
-    pub fn should_reverse_device(&self, device_kind: DeviceKind) -> bool {
-        match device_kind {
-            DeviceKind::Mouse => self.reverse_mouse,
-            DeviceKind::Trackpad => self.reverse_trackpad,
-            DeviceKind::MagicMouse => self.reverse_magic_mouse,
-            DeviceKind::Unknown => self.reverse_unknown,
-        }
     }
 
     /// One plain-English sentence describing what this config actually does.
@@ -153,9 +155,8 @@ impl AppConfig {
             // claim nothing is reversed while the tap reverses that device.
             let pinned_on = self.device_rules.iter().filter(|rule| rule.reverse).count();
             if pinned_on > 0 {
-                return format!(
-                    "reversing only {pinned_on} specific device(s) pinned by per-device rules"
-                );
+                let noun = if pinned_on == 1 { "rule" } else { "rules" };
+                return format!("reversing only devices enabled by {pinned_on} per-device {noun}");
             }
             return "enabled, but no device is currently set to reverse".to_string();
         }
@@ -183,6 +184,8 @@ impl AppConfig {
 
 #[cfg(test)]
 mod tests {
+    use crate::device::{DeviceIdentity, DeviceKind, HardwareId};
+
     use super::*;
 
     #[test]
@@ -209,29 +212,24 @@ mod tests {
 
     #[test]
     fn device_rule_overrides_the_kind_flag_in_both_directions() {
-        let logitech = HardwareId {
+        let logitech = DeviceIdentity::hardware_only(HardwareId {
             vendor_id: 0x046d,
             product_id: 0xc52b,
-        };
-        let razer = HardwareId {
+        });
+        let razer = DeviceIdentity::hardware_only(HardwareId {
             vendor_id: 0x1532,
             product_id: 0x0067,
-        };
+        });
         let config = AppConfig {
             reverse_mouse: true,
-            device_rules: vec![DeviceRule {
-                vendor_id: 0x046d,
-                product_id: 0xc52b,
-                name: None,
-                reverse: false,
-            }],
+            device_rules: vec![DeviceRule::for_hardware(logitech.hardware, None, false)],
             ..AppConfig::default()
         };
 
-        // The rule pins this exact device off even though mice reverse.
-        assert!(!config.should_reverse(DeviceKind::Mouse, Some(logitech)));
+        // The legacy rule pins this hardware model off even though mice reverse.
+        assert!(!config.should_reverse(DeviceKind::Mouse, Some(&logitech)));
         // A device without a rule falls back to the kind flag.
-        assert!(config.should_reverse(DeviceKind::Mouse, Some(razer)));
+        assert!(config.should_reverse(DeviceKind::Mouse, Some(&razer)));
         // Unknown hardware falls back to the kind flag too.
         assert!(config.should_reverse(DeviceKind::Mouse, None));
     }
@@ -245,18 +243,20 @@ mod tests {
         let config = AppConfig {
             reverse_mouse: false,
             reverse_trackpad: false,
-            device_rules: vec![DeviceRule {
-                vendor_id: 0x046d,
-                product_id: 0xc52b,
-                name: None,
-                reverse: true,
-            }],
+            device_rules: vec![DeviceRule::for_hardware(
+                HardwareId {
+                    vendor_id: 0x046d,
+                    product_id: 0xc52b,
+                },
+                None,
+                true,
+            )],
             ..AppConfig::default()
         };
 
         assert_eq!(
             config.plain_english_summary(),
-            "reversing only 1 specific device(s) pinned by per-device rules"
+            "reversing only devices enabled by 1 per-device rule"
         );
 
         // A do-not-reverse-only rule set really does reverse nothing, so
@@ -264,12 +264,14 @@ mod tests {
         let exempt_only = AppConfig {
             reverse_mouse: false,
             reverse_trackpad: false,
-            device_rules: vec![DeviceRule {
-                vendor_id: 0x046d,
-                product_id: 0xc52b,
-                name: None,
-                reverse: false,
-            }],
+            device_rules: vec![DeviceRule::for_hardware(
+                HardwareId {
+                    vendor_id: 0x046d,
+                    product_id: 0xc52b,
+                },
+                None,
+                false,
+            )],
             ..AppConfig::default()
         };
         assert_eq!(
@@ -280,12 +282,14 @@ mod tests {
 
     #[test]
     fn duplicate_device_rules_are_rejected() {
-        let rule = DeviceRule {
-            vendor_id: 1,
-            product_id: 2,
-            name: None,
-            reverse: true,
-        };
+        let rule = DeviceRule::for_hardware(
+            HardwareId {
+                vendor_id: 1,
+                product_id: 2,
+            },
+            None,
+            true,
+        );
         let config = AppConfig {
             device_rules: vec![rule.clone(), rule],
             ..AppConfig::default()
@@ -301,6 +305,7 @@ mod tests {
              [[device_rules]]\n\
              vendor_id = 0x046d\n\
              product_id = 0xc52b\n\
+             serial_number = \"ABC123\"\n\
              name = \"Logitech MX Master\"\n\
              reverse = true\n",
         )
@@ -308,11 +313,81 @@ mod tests {
 
         assert_eq!(config.device_rules.len(), 1);
         assert_eq!(config.device_rules[0].vendor_id, 0x046d);
+        assert_eq!(
+            config.device_rules[0].serial_number.as_deref(),
+            Some("ABC123")
+        );
         assert!(config.device_rules[0].reverse);
 
         let serialized = toml::to_string_pretty(&config).unwrap();
         let reparsed: AppConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(reparsed, config);
+    }
+
+    #[test]
+    fn legacy_hardware_wide_rule_still_loads_without_a_version_bump() {
+        let config: AppConfig = toml::from_str(
+            "config_version = 1\n\
+             [[device_rules]]\n\
+             vendor_id = 0x046d\n\
+             product_id = 0xc52b\n\
+             reverse = false\n",
+        )
+        .unwrap();
+
+        assert!(config.validate().is_ok());
+        assert!(config.device_rules[0].is_hardware_wide());
+        assert_eq!(config.device_rules[0].serial_number, None);
+        assert_eq!(config.device_rules[0].location_id, None);
+    }
+
+    #[test]
+    fn different_serials_for_identical_hardware_are_valid() {
+        let hardware = HardwareId {
+            vendor_id: 1,
+            product_id: 2,
+        };
+        let config = AppConfig {
+            device_rules: vec![
+                DeviceRule {
+                    serial_number: Some("mouse-a".to_string()),
+                    ..DeviceRule::for_hardware(hardware, None, true)
+                },
+                DeviceRule {
+                    serial_number: Some("mouse-b".to_string()),
+                    ..DeviceRule::for_hardware(hardware, None, false)
+                },
+            ],
+            ..AppConfig::default()
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn ambiguous_or_empty_identity_qualifiers_are_rejected() {
+        let hardware = HardwareId {
+            vendor_id: 1,
+            product_id: 2,
+        };
+        let both = AppConfig {
+            device_rules: vec![DeviceRule {
+                serial_number: Some("mouse-a".to_string()),
+                location_id: Some(7),
+                ..DeviceRule::for_hardware(hardware, None, true)
+            }],
+            ..AppConfig::default()
+        };
+        assert!(both.validate().is_err());
+
+        let blank = AppConfig {
+            device_rules: vec![DeviceRule {
+                serial_number: Some("  ".to_string()),
+                ..DeviceRule::for_hardware(hardware, None, true)
+            }],
+            ..AppConfig::default()
+        };
+        assert!(blank.validate().is_err());
     }
 
     #[test]

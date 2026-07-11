@@ -274,7 +274,7 @@ impl TrayHandle {
 /// shared config plus a snapshot of the device list taken the last time the
 /// menu was rebuilt, so `ToggleDevice(index)` (fired from a click, which
 /// only carries the sender, not our Rust index) can be resolved back to a
-/// concrete `HardwareId` in `logic()`.
+/// concrete `DeviceIdentity` in `logic()`.
 struct MenuActionTargetIvars {
     shared_config: Arc<RwLock<AppConfig>>,
     runtime_control: Arc<RuntimeControl>,
@@ -573,14 +573,16 @@ fn rebuild_menu(
     } else {
         let submenu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str("Devices"));
         for (index, device) in devices.iter().enumerate() {
-            let label = device
+            let mut label = device
                 .name
                 .clone()
                 .unwrap_or_else(|| "Unnamed device".to_string());
+            if let Some(qualifier) = device.identity.compact_qualifier() {
+                label.push_str(" · ");
+                label.push_str(&qualifier);
+            }
             let current_rule = config
-                .device_rules
-                .iter()
-                .find(|rule| rule.matches(device.hardware))
+                .preferred_device_rule(&device.identity)
                 .map(|rule| rule.reverse);
             // The tray's quick-pick only has a binary checkmark, but
             // device_rules is really three-way (Default/Reverse/Don't

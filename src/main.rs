@@ -428,10 +428,7 @@ fn list_devices() -> AppResult<()> {
     } else {
         println!("connected pointing devices:");
         for device in &devices {
-            let rule = config
-                .device_rules
-                .iter()
-                .find(|rule| rule.matches(device.hardware));
+            let rule = config.matching_device_rule(&device.identity);
             let rule_note = match rule {
                 Some(rule) if rule.reverse => "  [rule: reverse]",
                 Some(_) => "  [rule: do not reverse]",
@@ -439,7 +436,7 @@ fn list_devices() -> AppResult<()> {
             };
             println!(
                 "  {}  {}{}{}",
-                device.hardware,
+                device.identity,
                 device.name.as_deref().unwrap_or("(unnamed)"),
                 device
                     .transport
@@ -455,15 +452,15 @@ fn list_devices() -> AppResult<()> {
     if config.device_rules.is_empty() {
         println!(
             "no device_rules configured; add a [[device_rules]] block with vendor_id/product_id \
-             from the list above to pin one device's direction"
+             plus serial_number or location_id when shown above; without a qualifier the rule is \
+             shared by that whole hardware model"
         );
     } else {
         println!("configured device rules:");
         for rule in &config.device_rules {
             println!(
-                "  vendor_id=0x{:04x} product_id=0x{:04x} reverse={}{}",
-                rule.vendor_id,
-                rule.product_id,
+                "  {} reverse={}{}",
+                rule.selector_description(),
                 rule.reverse,
                 rule.name
                     .as_deref()
@@ -504,21 +501,21 @@ fn simulate(options: SimulateOptions) -> AppResult<()> {
     // simulating that combination would let the debugging tool imply device
     // rules work for trackpad/Magic Mouse scrolling. Drop the hardware and
     // say so, rather than producing a decision that cannot happen for real.
-    let hardware = if options.continuous && options.hardware.is_some() {
+    let identity = if options.continuous && options.identity.is_some() {
         println!(
-            "note: ignoring --vendor-id/--product-id because --continuous true; the real tap \
-             cannot attribute continuous scrolling to a device"
+            "note: ignoring device identity flags because --continuous true; the real tap cannot \
+             attribute continuous scrolling to a device"
         );
         None
     } else {
-        options.hardware
+        options.identity
     };
 
     let config = ConfigStore::default().load_or_create()?;
     let event = ScrollEvent {
         synthetic: options.synthetic,
         source_pid: options.source_pid,
-        hardware,
+        identity: identity.map(Arc::new),
         ..ScrollEvent::new(
             options.device_kind,
             options.delta_vertical,
@@ -595,7 +592,9 @@ fn print_help() {
            --synthetic true|false|yes|no|1|0\n\
            --source-pid <integer>\n\
            --vendor-id <integer|0xHEX>   (with --product-id: test a device rule)\n\
-           --product-id <integer|0xHEX>"
+           --product-id <integer|0xHEX>\n\
+           --serial-number <text>         (optional exact-device qualifier)\n\
+           --location-id <integer|0xHEX>  (optional connection-port fallback)"
     );
 }
 

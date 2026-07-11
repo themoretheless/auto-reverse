@@ -4,8 +4,7 @@
 //! Layering, from pure to platform-bound (each layer only depends on the
 //! ones above it):
 //! - [`error`], [`device`], [`input`]: shared vocabulary types.
-//! - [`config`]: what the settings are (`schema`) and where they live
-//!   (`store`).
+//! - [`config`]: schema, pure physical-device rule resolution, and storage.
 //! - [`runtime`]: process-local controls such as temporary pause.
 //! - [`scroll`]: the pure reversal policy - config + event in, decision
 //!   out. No OS types anywhere.

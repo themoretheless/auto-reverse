@@ -1,4 +1,6 @@
-use auto_reverse::device::{DeviceKind, HardwareId};
+use std::sync::Arc;
+
+use auto_reverse::device::{DeviceIdentity, DeviceKind, HardwareId};
 use auto_reverse::error::{AppError, AppResult};
 
 pub const BOOL_HELP_VALUES: &str = "true|false|yes|no|1|0";
@@ -54,7 +56,7 @@ impl Default for StartupStatusOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SimulateOptions {
     pub device_kind: DeviceKind,
     pub delta_vertical: i64,
@@ -62,7 +64,7 @@ pub struct SimulateOptions {
     pub continuous: bool,
     pub synthetic: bool,
     pub source_pid: i64,
-    pub hardware: Option<HardwareId>,
+    pub identity: Option<DeviceIdentity>,
 }
 
 impl Default for SimulateOptions {
@@ -74,7 +76,7 @@ impl Default for SimulateOptions {
             continuous: false,
             synthetic: false,
             source_pid: 0,
-            hardware: None,
+            identity: None,
         }
     }
 }
@@ -140,6 +142,8 @@ fn parse_simulate(args: &[String]) -> AppResult<SimulateOptions> {
     let mut options = SimulateOptions::default();
     let mut vendor_id: Option<u32> = None;
     let mut product_id: Option<u32> = None;
+    let mut serial_number: Option<Arc<str>> = None;
+    let mut location_id: Option<u32> = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -178,6 +182,28 @@ fn parse_simulate(args: &[String]) -> AppResult<SimulateOptions> {
                 index += 1;
                 product_id = Some(parse_u32(args.get(index), "--product-id")?);
             }
+            "--serial-number" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| AppError::Usage("--serial-number needs a value".to_string()))?;
+                if value.trim().is_empty() {
+                    return Err(AppError::Usage(
+                        "--serial-number must not be empty".to_string(),
+                    ));
+                }
+                serial_number = Some(Arc::from(value.trim()));
+            }
+            "--location-id" => {
+                index += 1;
+                let value = parse_u32(args.get(index), "--location-id")?;
+                if value == 0 {
+                    return Err(AppError::Usage(
+                        "--location-id must be non-zero".to_string(),
+                    ));
+                }
+                location_id = Some(value);
+            }
             flag => {
                 return Err(AppError::Usage(format!(
                     "unknown simulate flag `{flag}`; run `auto-reverse help`"
@@ -187,12 +213,21 @@ fn parse_simulate(args: &[String]) -> AppResult<SimulateOptions> {
         index += 1;
     }
 
-    options.hardware = match (vendor_id, product_id) {
-        (Some(vendor_id), Some(product_id)) => Some(HardwareId {
-            vendor_id,
-            product_id,
-        }),
-        (None, None) => None,
+    options.identity = match (vendor_id, product_id) {
+        (Some(vendor_id), Some(product_id)) => Some(DeviceIdentity::new(
+            HardwareId {
+                vendor_id,
+                product_id,
+            },
+            serial_number,
+            location_id,
+        )),
+        (None, None) if serial_number.is_none() && location_id.is_none() => None,
+        (None, None) => {
+            return Err(AppError::Usage(
+                "--serial-number/--location-id require --vendor-id and --product-id".to_string(),
+            ));
+        }
         _ => {
             return Err(AppError::Usage(
                 "--vendor-id and --product-id must be given together".to_string(),
@@ -326,7 +361,7 @@ mod tests {
                 continuous: true,
                 synthetic: true,
                 source_pid: 42,
-                hardware: None,
+                identity: None,
             })
         );
     }
@@ -345,19 +380,42 @@ mod tests {
         assert_eq!(
             command,
             Command::Simulate(SimulateOptions {
-                hardware: Some(HardwareId {
+                identity: Some(DeviceIdentity::hardware_only(HardwareId {
                     vendor_id: 0x046d,
                     product_id: 1,
-                }),
+                })),
                 ..SimulateOptions::default()
             })
         );
     }
 
     #[test]
+    fn simulate_parses_stable_identity_qualifiers() {
+        let Command::Simulate(options) = parse_args(&strings(&[
+            "simulate",
+            "--vendor-id",
+            "0x046d",
+            "--product-id",
+            "1",
+            "--serial-number",
+            "mouse-a",
+            "--location-id",
+            "0x2a",
+        ]))
+        .unwrap() else {
+            panic!("expected simulate command");
+        };
+
+        let identity = options.identity.expect("identity");
+        assert_eq!(identity.serial_number.as_deref(), Some("mouse-a"));
+        assert_eq!(identity.location_id, Some(42));
+    }
+
+    #[test]
     fn simulate_rejects_one_hardware_id_without_the_other() {
         assert!(parse_args(&strings(&["simulate", "--vendor-id", "0x046d"])).is_err());
         assert!(parse_args(&strings(&["simulate", "--product-id", "0xc52b"])).is_err());
+        assert!(parse_args(&strings(&["simulate", "--serial-number", "mouse-a"])).is_err());
     }
 
     #[test]

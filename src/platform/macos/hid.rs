@@ -33,7 +33,7 @@ use core_foundation_sys::base::{CFIndex, CFRelease};
 use core_foundation_sys::runloop::{CFRunLoopRef, kCFRunLoopDefaultMode};
 use core_foundation_sys::set::{CFSetGetCount, CFSetGetValues, CFSetRef};
 
-use crate::device::HardwareId;
+use crate::device::{DeviceIdentity, HardwareId};
 use crate::error::{AppError, AppResult};
 
 type IOHIDManagerRef = *mut c_void;
@@ -57,7 +57,10 @@ const KEY_DEVICE_USAGE: &str = "DeviceUsage";
 const KEY_VENDOR_ID: &str = "VendorID";
 const KEY_PRODUCT_ID: &str = "ProductID";
 const KEY_PRODUCT: &str = "Product";
+const KEY_SERIAL_NUMBER: &str = "SerialNumber";
+const KEY_LOCATION_ID: &str = "LocationID";
 const KEY_TRANSPORT: &str = "Transport";
+const IDENTITY_CACHE_MAX_IDLE: Duration = Duration::from_secs(5);
 
 // Plain extern "C", NOT "C-unwind": IOHIDManager invokes this from C
 // dispatch inside a CFRunLoop callout. A Rust panic must not unwind across
@@ -95,14 +98,15 @@ unsafe extern "C" {
     fn IOHIDElementGetDevice(element: IOHIDElementRef) -> IOHIDDeviceRef;
 }
 
-/// The most recent wheel tick seen from any matched device, plus that
-/// device's shared `Product` name (read from the same `IOHIDDeviceRef` the
-/// callback already has in hand - no extra IOHIDManager call). Written by
+/// The most recent wheel tick seen from any matched device, plus its cached
+/// identity and shared `Product` name (read from the same `IOHIDDeviceRef` the
+/// callback already has in hand). Written by
 /// the HID callback, read by the event tap callback; both run on the main
 /// run loop thread, so the Mutex is uncontended - it exists to satisfy
 /// `static` soundness, not for real cross-thread traffic.
 struct RecentWheel {
-    hardware: HardwareId,
+    device_token: usize,
+    identity: Arc<DeviceIdentity>,
     name: Option<Arc<str>>,
     at: Instant,
 }
@@ -110,11 +114,11 @@ struct RecentWheel {
 static LAST_WHEEL: Mutex<Option<RecentWheel>> = Mutex::new(None);
 
 /// One consistent view of the last attributed wheel tick. Returning the
-/// hardware id and display name together avoids taking `LAST_WHEEL` twice
+/// identity and display name together avoids taking `LAST_WHEEL` twice
 /// for one CGEvent and guarantees both fields came from the same HID tick.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WheelSnapshot {
-    pub hardware: HardwareId,
+    pub identity: Arc<DeviceIdentity>,
     pub name: Option<Arc<str>>,
 }
 
@@ -157,13 +161,13 @@ pub fn start_wheel_monitor() -> AppResult<()> {
 }
 
 /// The device that produced a wheel tick within `max_age`, if any. The
-/// product name is captured by the same callback as the hardware id.
+/// product name is captured by the same callback as the identity.
 pub fn recent_wheel_snapshot(max_age: Duration) -> Option<WheelSnapshot> {
     let last = LAST_WHEEL.lock().ok()?;
     last.as_ref()
         .filter(|recent| recent.at.elapsed() <= max_age)
         .map(|recent| WheelSnapshot {
-            hardware: recent.hardware,
+            identity: Arc::clone(&recent.identity),
             name: recent.name.clone(),
         })
 }
@@ -197,18 +201,32 @@ extern "C" fn wheel_value_callback(
             return;
         }
 
-        if let Some(hardware) = hardware_id_of(device)
-            && let Ok(mut last) = LAST_WHEEL.lock()
-        {
-            // Product names are stable for a connected device. Reuse the
-            // existing Arc for consecutive ticks instead of cloning and then
-            // re-wrapping a String for every CGEvent diagnostics row.
-            let name = match last.as_ref() {
-                Some(previous) if previous.hardware == hardware => previous.name.clone(),
-                _ => string_property(device, KEY_PRODUCT).map(Arc::<str>::from),
+        if let Ok(mut last) = LAST_WHEEL.lock() {
+            let device_token = device as usize;
+            // All IOKit identity/name properties are stable while this
+            // IOHIDDeviceRef is connected. Reuse their Arcs on consecutive
+            // ticks so the event hot path performs no string allocation.
+            let cached = last
+                .as_ref()
+                .filter(|previous| {
+                    previous.device_token == device_token
+                        && previous.at.elapsed() <= IDENTITY_CACHE_MAX_IDLE
+                })
+                .map(|previous| (Arc::clone(&previous.identity), previous.name.clone()));
+            let (identity, name) = if let Some(cached) = cached {
+                cached
+            } else {
+                let Some(identity) = device_identity_of(device) else {
+                    return;
+                };
+                (
+                    Arc::new(identity),
+                    string_property(device, KEY_PRODUCT).map(Arc::<str>::from),
+                )
             };
             *last = Some(RecentWheel {
-                hardware,
+                device_token,
+                identity,
                 name,
                 at: Instant::now(),
             });
@@ -219,7 +237,7 @@ extern "C" fn wheel_value_callback(
 /// A connected pointing device, as shown by the `devices` CLI command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceInfo {
-    pub hardware: HardwareId,
+    pub identity: DeviceIdentity,
     pub name: Option<String>,
     pub transport: Option<String>,
 }
@@ -247,9 +265,9 @@ pub fn list_pointing_devices() -> AppResult<Vec<DeviceInfo>> {
             CFSetGetValues(device_set, refs.as_mut_ptr());
             for device in refs {
                 let device = device as IOHIDDeviceRef;
-                if let Some(hardware) = hardware_id_of(device) {
+                if let Some(identity) = device_identity_of(device) {
                     devices.push(DeviceInfo {
-                        hardware,
+                        identity,
                         name: string_property(device, KEY_PRODUCT),
                         transport: string_property(device, KEY_TRANSPORT),
                     });
@@ -259,8 +277,8 @@ pub fn list_pointing_devices() -> AppResult<Vec<DeviceInfo>> {
         }
         CFRelease(manager as CFTypeRef);
 
-        devices.sort_by_key(|d| (d.hardware.vendor_id, d.hardware.product_id));
-        devices.dedup();
+        devices.sort_by(|left, right| left.identity.cmp(&right.identity));
+        devices.dedup_by(|left, right| left.identity == right.identity);
         Ok(devices)
     }
 }
@@ -285,6 +303,14 @@ unsafe fn hardware_id_of(device: IOHIDDeviceRef) -> Option<HardwareId> {
         vendor_id: u32::try_from(vendor_id).ok()?,
         product_id: u32::try_from(product_id).ok()?,
     })
+}
+
+unsafe fn device_identity_of(device: IOHIDDeviceRef) -> Option<DeviceIdentity> {
+    let hardware = unsafe { hardware_id_of(device)? };
+    let serial_number = unsafe { string_property(device, KEY_SERIAL_NUMBER) }.map(Arc::<str>::from);
+    let location_id = unsafe { number_property(device, KEY_LOCATION_ID) }
+        .and_then(|value| u32::try_from(value).ok());
+    Some(DeviceIdentity::new(hardware, serial_number, location_id))
 }
 
 unsafe fn number_property(device: IOHIDDeviceRef, key: &'static str) -> Option<i64> {

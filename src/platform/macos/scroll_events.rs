@@ -3,10 +3,12 @@
 //! [`ScrollEvent`], and which fields to write to apply a
 //! [`TransformDecision`] back. No policy lives here - that's `crate::scroll`.
 
+use std::sync::Arc;
+
 use core_graphics::event::{CGEvent, CGEventField, EventField};
 
 use crate::config::AppConfig;
-use crate::device::{DeviceKind, HardwareId};
+use crate::device::{DeviceIdentity, DeviceKind};
 use crate::input::ScrollEvent;
 use crate::scroll::{self, TransformDecision};
 
@@ -27,7 +29,7 @@ pub fn event_source_pid(event: &CGEvent) -> i64 {
 pub fn event_from_cg_event(
     event: &CGEvent,
     device_kind: DeviceKind,
-    hardware: Option<HardwareId>,
+    identity: Option<Arc<DeviceIdentity>>,
 ) -> ScrollEvent {
     ScrollEvent {
         device_kind,
@@ -37,7 +39,7 @@ pub fn event_from_cg_event(
         continuous: !is_physical_mouse_wheel(event),
         synthetic: false,
         source_pid: event.get_integer_value_field(EventField::EVENT_SOURCE_UNIX_PROCESS_ID),
-        hardware,
+        identity,
     }
 }
 
@@ -78,12 +80,13 @@ pub fn apply_config_in_place(
     event: &CGEvent,
     config: &AppConfig,
     device_kind: DeviceKind,
-    hardware: Option<HardwareId>,
+    identity: Option<Arc<DeviceIdentity>>,
 ) -> TransformDecision {
-    let normalized = event_from_cg_event(event, device_kind, hardware);
+    let normalized = event_from_cg_event(event, device_kind, identity);
+    let continuous = normalized.continuous;
     let decision = scroll::transform_event(config, normalized);
 
-    if normalized.continuous {
+    if continuous {
         if decision.vertical_reversed {
             negate_precise_axis(
                 event,

@@ -27,7 +27,7 @@ independently.
 16. [Done] Protect Restore defaults with an explicit confirmation step.
 17. [Done] Open Accessibility and Input Monitoring panes independently.
 18. [Implemented] Native Save Panel and Finder reveal are built; manual panel workflow QA remains open.
-19. [Next] Add stable device identity v2 using serial/location data where available.
+19. [Implemented] Serial-first device identity with location fallback is built; identical-device/reconnect manual QA remains open.
 20. [Research] Determine whether public APIs can distinguish Magic Mouse gestures.
 
 ## P2 - Distribution and maintenance

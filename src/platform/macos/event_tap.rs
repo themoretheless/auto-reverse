@@ -19,7 +19,7 @@ use super::{daemon_lock, hid, scroll_events};
 #[cfg(feature = "gui")]
 use super::debug_log;
 #[cfg(feature = "gui")]
-use crate::device::{DeviceKind, HardwareId};
+use crate::device::{DeviceIdentity, DeviceKind};
 
 /// How recently a HID wheel tick must have arrived for a discrete CGEvent
 /// to be attributed to that device. Both callbacks share one run loop
@@ -235,7 +235,9 @@ fn handle_event(
             } else {
                 hid::recent_wheel_snapshot(WHEEL_ATTRIBUTION_WINDOW)
             };
-            let hardware = wheel_snapshot.as_ref().map(|snapshot| snapshot.hardware);
+            let identity = wheel_snapshot
+                .as_ref()
+                .map(|snapshot| Arc::clone(&snapshot.identity));
 
             // Hot path: hold the read lock only long enough to clone the
             // config, then drop it before touching the CGEvent fields. A
@@ -258,17 +260,16 @@ fn handle_event(
                 TransformDecision::passthrough(scroll_events::event_from_cg_event(
                     event,
                     device_kind,
-                    hardware,
+                    identity,
                 ))
             } else {
-                scroll_events::apply_config_in_place(event, &config, device_kind, hardware)
+                scroll_events::apply_config_in_place(event, &config, device_kind, identity)
             };
 
             #[cfg(feature = "gui")]
             record_debug_event(
                 &config,
                 device_kind,
-                hardware,
                 wheel_snapshot.and_then(|snapshot| snapshot.name),
                 temporarily_paused,
                 decision,
@@ -284,7 +285,7 @@ fn handle_event(
 /// the ring buffer. Does not recompute or duplicate any part of
 /// `scroll::transform_event`'s policy - `decision` is exactly what that
 /// function already returned; the "why" behind Ignored/Passed is derived
-/// from the same `config`/`device_kind`/`hardware` values already in scope
+/// from the same `config`/`device_kind`/identity values already in scope
 /// in `handle_event`, using the same public accessors (`config.enabled`,
 /// `config.should_reverse`, `config.reverse_only_raw_input`) the pure policy
 /// itself is built on, not a second reimplementation of it.
@@ -292,12 +293,13 @@ fn handle_event(
 fn record_debug_event(
     config: &AppConfig,
     device_kind: DeviceKind,
-    hardware: Option<HardwareId>,
     device_name: Option<Arc<str>>,
     temporarily_paused: bool,
     decision: TransformDecision,
 ) {
     let timestamp_ms = debug_log::now_millis();
+    let identity = decision.original.identity.as_deref();
+    let hardware = identity.map(|value| value.hardware);
 
     // Two rows (vertical/horizontal) whenever the event carries a nonzero
     // delta on that axis - mirrors the handoff's per-axis rows exactly.
@@ -327,7 +329,7 @@ fn record_debug_event(
         let reason = decision_reason(
             config,
             device_kind,
-            hardware,
+            identity,
             decision.original.synthetic,
             decision.original.source_pid,
             temporarily_paused,
@@ -357,7 +359,7 @@ fn record_debug_event(
 fn decision_reason(
     config: &AppConfig,
     device_kind: DeviceKind,
-    hardware: Option<HardwareId>,
+    identity: Option<&DeviceIdentity>,
     synthetic: bool,
     source_pid: i64,
     temporarily_paused: bool,
@@ -379,7 +381,7 @@ fn decision_reason(
         return debug_log::DecisionReason::Reversed;
     }
 
-    if !config.should_reverse(device_kind, hardware) {
+    if !config.should_reverse(device_kind, identity) {
         // Only reachable when reversal is genuinely off for this
         // device/kind (no rule, or an explicit Don't-reverse rule) -
         // checked before, not after, the device_kind == Trackpad case
@@ -392,12 +394,9 @@ fn decision_reason(
         // off), contradicting a "Reversed" row from the same gesture's
         // vertical axis. See
         // trackpad_off_by_default_reads_natural_only_when_should_reverse_is_false.
-        let has_dont_reverse_rule = hardware.is_some_and(|hw| {
-            config
-                .device_rules
-                .iter()
-                .any(|rule| rule.matches(hw) && !rule.reverse)
-        });
+        let has_dont_reverse_rule = identity
+            .and_then(|value| config.matching_device_rule(value))
+            .is_some_and(|rule| !rule.reverse);
         return if device_kind == DeviceKind::Unknown {
             debug_log::DecisionReason::UnknownDeviceNotReversed
         } else if has_dont_reverse_rule {
@@ -412,7 +411,7 @@ fn decision_reason(
         };
     }
 
-    // should_reverse(device_kind, hardware) is true here, so this axis's
+    // should_reverse(device_kind, identity) is true here, so this axis's
     // own direction flag (reverse_vertical/reverse_horizontal) is what's
     // off - a real, deliberate "not this direction" outcome, not an error.
     debug_log::DecisionReason::AxisDisabled
@@ -467,24 +466,20 @@ mod debug_log_decision_tests {
         use crate::config::DeviceRule;
         use crate::device::HardwareId;
 
-        let hardware = HardwareId {
+        let identity = DeviceIdentity::hardware_only(HardwareId {
             vendor_id: 0x1234,
             product_id: 0x5678,
-        };
+        });
         let config = config_with(|c| {
             c.reverse_mouse = true;
-            c.device_rules.push(DeviceRule {
-                vendor_id: hardware.vendor_id,
-                product_id: hardware.product_id,
-                name: None,
-                reverse: false,
-            });
+            c.device_rules
+                .push(DeviceRule::for_hardware(identity.hardware, None, false));
         });
 
         let reason = decision_reason(
             &config,
             DeviceKind::Mouse,
-            Some(hardware),
+            Some(&identity),
             false,
             0,
             false,

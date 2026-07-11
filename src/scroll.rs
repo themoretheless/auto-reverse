@@ -7,7 +7,7 @@
 use crate::config::AppConfig;
 use crate::input::ScrollEvent;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransformDecision {
     pub original: ScrollEvent,
     pub transformed: ScrollEvent,
@@ -32,7 +32,7 @@ pub struct TransformDecision {
 impl TransformDecision {
     pub fn passthrough(event: ScrollEvent) -> Self {
         Self {
-            original: event,
+            original: event.clone(),
             transformed: event,
             reversed: false,
             vertical_reversed: false,
@@ -41,26 +41,25 @@ impl TransformDecision {
         }
     }
 
-    pub fn changed(self) -> bool {
+    pub fn changed(&self) -> bool {
         self.original.delta_vertical != self.transformed.delta_vertical
             || self.original.delta_horizontal != self.transformed.delta_horizontal
     }
 }
 
 pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecision {
-    let mut transformed = event;
-    let mut reversed = false;
-    let mut vertical_reversed = false;
-    let mut horizontal_reversed = false;
-    let mut step_size_applied = false;
-
     let skip_as_injected = config.reverse_only_raw_input && event.source_pid != 0;
 
     if !config.enabled || event.synthetic || skip_as_injected {
         return TransformDecision::passthrough(event);
     }
 
-    let should_reverse = config.should_reverse(event.device_kind, event.hardware);
+    let mut transformed = event.clone();
+    let mut reversed = false;
+    let mut vertical_reversed = false;
+    let mut horizontal_reversed = false;
+    let mut step_size_applied = false;
+    let should_reverse = config.should_reverse(event.device_kind, event.identity.as_deref());
 
     // Gated on should_reverse too: step size is an accompaniment to
     // reversal for this device, not an independent global multiplier - a
@@ -140,7 +139,7 @@ mod tests {
     fn default_config_leaves_trackpad_scroll_untouched() {
         let event = ScrollEvent::new(DeviceKind::Trackpad, 4, 0, true);
 
-        let decision = transform_event(&AppConfig::default(), event);
+        let decision = transform_event(&AppConfig::default(), event.clone());
 
         assert_eq!(decision.transformed, event);
         assert!(!decision.changed());
@@ -174,7 +173,7 @@ mod tests {
     #[test]
     fn horizontal_scroll_is_opt_in() {
         let event = ScrollEvent::new(DeviceKind::Mouse, 0, 7, false);
-        let default_decision = transform_event(&AppConfig::default(), event);
+        let default_decision = transform_event(&AppConfig::default(), event.clone());
 
         let config = AppConfig {
             reverse_horizontal: true,
@@ -195,7 +194,7 @@ mod tests {
         };
         let event = ScrollEvent::new(DeviceKind::Mouse, 1, 0, false);
 
-        let decision = transform_event(&config, event);
+        let decision = transform_event(&config, event.clone());
 
         assert_eq!(decision.transformed, event);
         assert!(!decision.step_size_applied);
@@ -210,7 +209,7 @@ mod tests {
         };
         let event = ScrollEvent::new(DeviceKind::Mouse, 1, 2, false);
 
-        let decision = transform_event(&config, event);
+        let decision = transform_event(&config, event.clone());
 
         assert_eq!(decision.transformed, event);
         assert!(!decision.changed());
@@ -227,7 +226,7 @@ mod tests {
             ..ScrollEvent::new(DeviceKind::Mouse, 1, 0, false)
         };
 
-        let decision = transform_event(&config, injected);
+        let decision = transform_event(&config, injected.clone());
 
         assert_eq!(decision.transformed, injected);
         assert!(!decision.changed());
@@ -249,29 +248,33 @@ mod tests {
     #[test]
     fn device_rule_pins_a_specific_mouse_off_while_other_mice_still_reverse() {
         use crate::config::DeviceRule;
-        use crate::device::HardwareId;
+        use std::sync::Arc;
+
+        use crate::device::{DeviceIdentity, HardwareId};
 
         let config = AppConfig {
             device_rules: vec![DeviceRule {
                 vendor_id: 0x046d,
                 product_id: 0xc52b,
+                serial_number: None,
+                location_id: None,
                 name: None,
                 reverse: false,
             }],
             ..AppConfig::default()
         };
         let ruled_mouse = ScrollEvent {
-            hardware: Some(HardwareId {
+            identity: Some(Arc::new(DeviceIdentity::hardware_only(HardwareId {
                 vendor_id: 0x046d,
                 product_id: 0xc52b,
-            }),
+            }))),
             ..ScrollEvent::new(DeviceKind::Mouse, 1, 0, false)
         };
         let other_mouse = ScrollEvent {
-            hardware: Some(HardwareId {
+            identity: Some(Arc::new(DeviceIdentity::hardware_only(HardwareId {
                 vendor_id: 0x1532,
                 product_id: 0x0067,
-            }),
+            }))),
             ..ScrollEvent::new(DeviceKind::Mouse, 1, 0, false)
         };
 
@@ -290,7 +293,7 @@ mod tests {
         };
         let event = ScrollEvent::new(DeviceKind::MagicMouse, 1, 0, true);
 
-        let decision = transform_event(&config, event);
+        let decision = transform_event(&config, event.clone());
 
         assert_eq!(decision.transformed, event);
         assert!(!decision.changed());

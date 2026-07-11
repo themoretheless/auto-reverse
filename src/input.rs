@@ -1,8 +1,9 @@
 use std::fmt;
+use std::sync::Arc;
 
-use crate::device::{DeviceKind, HardwareId};
+use crate::device::{DeviceIdentity, DeviceKind};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScrollEvent {
     pub device_kind: DeviceKind,
     pub delta_vertical: i64,
@@ -18,8 +19,9 @@ pub struct ScrollEvent {
     /// Which specific physical device produced this scroll, when the HID
     /// wheel monitor could attribute it (discrete mouse wheels only - the
     /// CGEvent itself carries no device identity). None means "unknown
-    /// hardware", and per-device rules simply don't apply.
-    pub hardware: Option<HardwareId>,
+    /// device", and per-device rules simply don't apply. The Arc keeps
+    /// serial/location strings allocation-free across wheel events.
+    pub identity: Option<Arc<DeviceIdentity>>,
 }
 
 impl ScrollEvent {
@@ -36,7 +38,7 @@ impl ScrollEvent {
             continuous,
             synthetic: false,
             source_pid: 0,
-            hardware: None,
+            identity: None,
         }
     }
 }
@@ -51,8 +53,8 @@ impl fmt::Display for ScrollEvent {
             self.delta_horizontal,
             if self.continuous { ", continuous" } else { "" }
         )?;
-        if let Some(hardware) = self.hardware {
-            write!(f, " [{hardware}]")?;
+        if let Some(identity) = &self.identity {
+            write!(f, " [{identity}]")?;
         }
         Ok(())
     }

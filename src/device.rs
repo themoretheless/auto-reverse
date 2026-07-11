@@ -1,5 +1,6 @@
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -12,13 +13,71 @@ pub enum DeviceKind {
     Unknown,
 }
 
-/// Identity of a specific physical HID device, as reported by IOKit.
-/// Vendor and product IDs are the stable pair a user can target with a
-/// per-device config rule ("this exact Logitech, not mice in general").
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Hardware model reported by IOKit. Multiple physical devices can share the
+/// same vendor/product pair, so this is not a complete device identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct HardwareId {
     pub vendor_id: u32,
     pub product_id: u32,
+}
+
+/// Best available identity for one physical HID device.
+///
+/// Serial number is preferred because it normally survives reconnects and
+/// port changes. `location_id` is a useful fallback for devices that expose no
+/// serial, but identifies the connection location and can change when the
+/// device is moved to another USB port. Both qualifiers are optional so old
+/// vendor/product-only rules remain usable.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct DeviceIdentity {
+    pub hardware: HardwareId,
+    pub serial_number: Option<Arc<str>>,
+    pub location_id: Option<u32>,
+}
+
+impl DeviceIdentity {
+    pub fn new(
+        hardware: HardwareId,
+        serial_number: Option<Arc<str>>,
+        location_id: Option<u32>,
+    ) -> Self {
+        let serial_number = serial_number.and_then(|serial| {
+            let trimmed = serial.trim();
+            if trimmed.is_empty() {
+                None
+            } else if trimmed.len() == serial.len() {
+                Some(serial)
+            } else {
+                Some(Arc::from(trimmed))
+            }
+        });
+
+        Self {
+            hardware,
+            serial_number,
+            location_id: location_id.filter(|location| *location != 0),
+        }
+    }
+
+    pub fn hardware_only(hardware: HardwareId) -> Self {
+        Self::new(hardware, None, None)
+    }
+
+    /// Compact, privacy-conscious discriminator shared by settings and tray.
+    /// Full serials remain available through `Display` for explicit CLI use.
+    pub fn compact_qualifier(&self) -> Option<String> {
+        if let Some(serial) = &self.serial_number {
+            let suffix_reversed: String = serial.chars().rev().take(12).collect();
+            let suffix: String = suffix_reversed.chars().rev().collect();
+            return Some(if suffix.len() == serial.len() {
+                format!("serial {serial}")
+            } else {
+                format!("serial …{suffix}")
+            });
+        }
+        self.location_id
+            .map(|location| format!("port 0x{location:08x}"))
+    }
 }
 
 impl fmt::Display for HardwareId {
@@ -28,6 +87,19 @@ impl fmt::Display for HardwareId {
             "vendor_id=0x{:04x} product_id=0x{:04x}",
             self.vendor_id, self.product_id
         )
+    }
+}
+
+impl fmt::Display for DeviceIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.hardware)?;
+        if let Some(serial) = &self.serial_number {
+            write!(f, " serial_number={serial:?}")?;
+        }
+        if let Some(location) = self.location_id {
+            write!(f, " location_id=0x{location:08x}")?;
+        }
+        Ok(())
     }
 }
 
@@ -114,5 +186,44 @@ mod tests {
         ] {
             assert_eq!(kind.to_string().parse::<DeviceKind>().unwrap(), kind);
         }
+    }
+
+    #[test]
+    fn device_identity_normalizes_unusable_qualifiers() {
+        let hardware = HardwareId {
+            vendor_id: 1,
+            product_id: 2,
+        };
+
+        let normalized = DeviceIdentity::new(hardware, Some(Arc::from("  ABC-123  ")), Some(0));
+        assert_eq!(normalized.serial_number.as_deref(), Some("ABC-123"));
+        assert_eq!(normalized.location_id, None);
+
+        let blank = DeviceIdentity::new(hardware, Some(Arc::from("  ")), Some(7));
+        assert_eq!(blank.serial_number, None);
+        assert_eq!(blank.location_id, Some(7));
+    }
+
+    #[test]
+    fn compact_qualifier_bounds_serial_and_names_location_as_port() {
+        let hardware = HardwareId {
+            vendor_id: 1,
+            product_id: 2,
+        };
+        let serial = DeviceIdentity::new(hardware, Some(Arc::from("1234567890abcdef")), Some(42));
+        let location = DeviceIdentity::new(hardware, None, Some(42));
+
+        assert_eq!(
+            serial.compact_qualifier().as_deref(),
+            Some("serial …567890abcdef")
+        );
+        assert_eq!(
+            location.compact_qualifier().as_deref(),
+            Some("port 0x0000002a")
+        );
+        assert_eq!(
+            DeviceIdentity::hardware_only(hardware).compact_qualifier(),
+            None
+        );
     }
 }

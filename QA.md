@@ -27,6 +27,11 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Magic Trackpad |  |  |  |  |
 |  |  | Magic Mouse documented fallback |  |  |  |  |
 |  |  | Per-device Reverse / Don't reverse |  |  |  |  |
+|  |  | Two identical VID/PID mice with different serials stay independent |  |  |  |  |
+|  |  | Identical mice have distinct bounded labels in Settings and tray |  |  |  |  |
+|  |  | Serial-less mouse: same-port reconnect keeps location rule |  |  |  |  |
+|  |  | Serial-less mouse: moving ports shows a new identity without changing its sibling |  |  |  |  |
+|  |  | Legacy vendor/product rule is shown as inherited and remains shared |  |  |  |  |
 |  |  | Pause 15 minutes / Resume now |  |  |  |  |
 |  |  | Missing then granted permissions |  |  |  |  |
 |  |  | Start at Login after reboot |  |  |  |  |

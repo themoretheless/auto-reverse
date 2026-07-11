@@ -37,6 +37,20 @@ the filename truncates before the stable `Reveal in Finder` action, while the
 full path remains available on hover. Export and Reveal errors are distinct and
 stay inline with that action area.
 
+## Device rows
+
+The Devices tab keeps the product name primary and a compact monospaced identity
+secondary. It shows vendor/product plus at most the last 12 serial characters;
+the tray submenu uses the same bounded discriminator next to the product name.
+When no serial exists both surfaces name `location_id` as a port fallback instead
+of pretending that value follows the mouse forever. Stable row IDs include the
+full identity, so two visually identical mice never share one egui control.
+
+`Default` means there is no concrete serial/port override. If an old
+vendor/product-only rule still applies, a separate muted line names that shared
+inherited behavior. Editing one serial-qualified row never silently removes the
+fallback used by an identical sibling.
+
 ## States
 
 - Active: reversal is enabled, permissions are ready, and no temporary pause exists.

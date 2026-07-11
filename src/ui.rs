@@ -57,7 +57,8 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use eframe::egui::{self, Color32, RichText, ViewportCommand};
 
-use crate::config::{AppConfig, ConfigRevision, ConfigStore, DeviceRule};
+use crate::config::{AppConfig, ConfigRevision, ConfigStore, with_device_rule_selection};
+use crate::device::DeviceIdentity;
 use crate::platform::macos::{
     activation, daemon_lock, hid, login_item, permissions, power_events, quit_handler, tray,
 };
@@ -1044,42 +1045,50 @@ fn device_rules(
 
     for device in devices {
         let current = config
-            .device_rules
-            .iter()
-            .find(|rule| rule.matches(device.hardware))
+            .preferred_device_rule(&device.identity)
             .map(|rule| rule.reverse);
+        let inherited_note = if current.is_none() {
+            config.matching_device_rule(&device.identity).map(|rule| {
+                let scope = if rule.is_hardware_wide() {
+                    "Shared model rule"
+                } else {
+                    "Port fallback"
+                };
+                format!(
+                    "{scope}: {}",
+                    if rule.reverse {
+                        "Reverse"
+                    } else {
+                        "Don't reverse"
+                    }
+                )
+            })
+        } else {
+            None
+        };
 
         let label = device.name.clone().unwrap_or_else(|| "Unnamed".to_string());
-        let hardware = format!(
-            "{:04x}:{:04x}",
-            device.hardware.vendor_id, device.hardware.product_id
-        );
+        let identity_label = compact_device_identity(&device.identity);
         let mut selection = current;
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(&label);
-                ui.label(RichText::new(&hardware).small().monospace().weak());
+                ui.label(RichText::new(&identity_label).small().monospace().weak());
+                if let Some(note) = &inherited_note {
+                    ui.label(RichText::new(note).small().weak());
+                }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                device_rule_chip(
-                    ui,
-                    (device.hardware.vendor_id, device.hardware.product_id),
-                    &mut selection,
-                );
+                device_rule_chip(ui, ("device-rule", &device.identity), &mut selection);
             });
         });
         if selection != current {
-            config
-                .device_rules
-                .retain(|rule| !rule.matches(device.hardware));
-            if let Some(reverse) = selection {
-                config.device_rules.push(DeviceRule {
-                    vendor_id: device.hardware.vendor_id,
-                    product_id: device.hardware.product_id,
-                    name: device.name.clone(),
-                    reverse,
-                });
-            }
+            config.device_rules = with_device_rule_selection(
+                &config.device_rules,
+                &device.identity,
+                device.name.as_deref(),
+                selection,
+            );
             changed = true;
         }
     }
@@ -1097,6 +1106,19 @@ fn device_rules(
     });
 
     (changed, wants_refresh)
+}
+
+fn compact_device_identity(identity: &DeviceIdentity) -> String {
+    let mut label = format!(
+        "{:04x}:{:04x}",
+        identity.hardware.vendor_id, identity.hardware.product_id
+    );
+    if let Some(qualifier) = identity.compact_qualifier() {
+        label.push_str(&format!(" · {qualifier}"));
+    } else {
+        label.push_str(" · model-wide ID");
+    }
+    label
 }
 
 /// Pure check, independent of any widget - both permissions granted. Used
@@ -1198,4 +1220,41 @@ fn footer(
             .monospace()
             .weak(),
     );
+}
+
+#[cfg(test)]
+mod device_identity_label_tests {
+    use std::sync::Arc;
+
+    use crate::device::HardwareId;
+
+    use super::*;
+
+    fn hardware() -> HardwareId {
+        HardwareId {
+            vendor_id: 0x046d,
+            product_id: 0xc52b,
+        }
+    }
+
+    #[test]
+    fn serial_label_keeps_a_bounded_distinguishing_suffix() {
+        let identity =
+            DeviceIdentity::new(hardware(), Some(Arc::from("1234567890abcdef")), Some(42));
+
+        assert_eq!(
+            compact_device_identity(&identity),
+            "046d:c52b · serial …567890abcdef"
+        );
+    }
+
+    #[test]
+    fn location_fallback_is_named_as_a_port() {
+        let identity = DeviceIdentity::new(hardware(), None, Some(42));
+
+        assert_eq!(
+            compact_device_identity(&identity),
+            "046d:c52b · port 0x0000002a"
+        );
+    }
 }

@@ -17,9 +17,9 @@ Implemented:
 - Accessibility and Input Monitoring checks;
 - local macOS `.app` bundle for Privacy & Security;
 - LaunchAgent start at login via `enable-startup`/`disable-startup`;
-- per-device rules: `[[device_rules]]` pins one exact mouse (vendor/product
-  ID) on or off, attributed via an IOHIDManager wheel monitor; `devices`
-  lists connected pointing devices with their IDs;
+- per-device rules: `[[device_rules]]` pins one physical wheel mouse on or off
+  using vendor/product plus a serial number when available, otherwise its IOKit
+  connection location; old vendor/product-only rules remain model-wide;
 - egui settings window (`ui`, default `gui` feature); opening it starts the
   scroll event tap in the same process when enabled and permissions are ready,
   deduped against any other already-running tap via `daemon_lock`;
@@ -31,8 +31,9 @@ Implemented:
   and Quit;
 - local Debug Console with search, decision filters, clear, and a bounded
   structured ring buffer; CSV export includes stable reason codes, source PID,
-  synthetic flag, device kind, raw HID name, and vendor/product IDs; a native
-  Save Panel chooses the destination and the receipt can reveal it in Finder;
+  synthetic flag, device kind, raw HID name, and vendor/product IDs, while
+  serial/location qualifiers stay out of automatic exports; a native Save Panel
+  chooses the destination and the receipt can reveal it in Finder;
 - process-local 15-minute pause that leaves persisted settings untouched;
 - typed event-tap lifecycle with explicit started/already-running/stopped/failed
   events rather than timeout-inferred booleans;
@@ -67,6 +68,7 @@ cargo run -- ui
 cargo run -- show-config
 cargo run -- simulate --device mouse --dy 1 --dx 2 --continuous false
 cargo run -- simulate --device mouse --dy 1 --vendor-id 0x046d --product-id 0xc54d
+cargo run -- simulate --device mouse --dy 1 --vendor-id 0x046d --product-id 0xc54d --serial-number ABC123
 cargo run -- enable
 cargo run -- disable
 cargo run -- toggle
@@ -174,16 +176,27 @@ reverse_unknown = false
 discrete_scroll_step_size = 3
 reverse_only_raw_input = false
 
-# Optional: pin one exact device regardless of the per-kind flags above.
+# Optional: pin one physical device regardless of the per-kind flags above.
 # Run `auto-reverse devices` to see YOUR devices' IDs and paste them here -
 # the values below are placeholders, not real hardware. Discrete wheels
 # only; trackpad and Magic Mouse continuous scrolling cannot be attributed.
 [[device_rules]]
 vendor_id = 0x1234       # from `auto-reverse devices`
 product_id = 0x5678      # from `auto-reverse devices`
+serial_number = "ABC123" # preferred when the device exposes one
 name = "My mouse"        # optional, display only
 reverse = false
 ```
+
+Use `location_id = 0x12345678` instead of `serial_number` when `devices`
+reports no usable serial. A location rule distinguishes identical devices on
+their current ports, but moving the device to another USB port can change that
+value. Omitting both qualifiers preserves the old model-wide behavior and
+matches every device with that vendor/product pair. The settings UI shows only
+a bounded serial suffix, keeps inherited model-wide rules explicit, and never
+removes a sibling device's shared fallback when one exact rule is edited.
+Some low-cost firmware reports the same placeholder serial for every unit; use
+the printed `location_id` manually in that case.
 
 Current limitation: `reverse_magic_mouse` is present for parity, but the live classifier cannot distinguish Magic Mouse from trackpad yet because both report continuous scroll through the current public event-tap signal.
 
@@ -215,18 +228,19 @@ src/main.rs                          CLI entrypoint and command orchestration
 src/cli.rs                           command/flag parser and CLI option structs
 src/lib.rs                           library facade documenting the layering
 src/error.rs                         shared AppError / AppResult
-src/device.rs                        DeviceKind + conservative classifier
-src/input.rs                         normalized ScrollEvent
+src/device.rs                        DeviceKind + HardwareId/DeviceIdentity vocabulary
+src/input.rs                         normalized ScrollEvent with optional shared identity
 src/runtime.rs                       lock-free process-local pause control
 src/scroll.rs                        pure reversal policy (no CoreGraphics)
 src/config/mod.rs                    facade re-exporting AppConfig/ConfigStore
-src/config/schema.rs                 what the settings ARE: fields, defaults, validation
+src/config/schema.rs                 fields, defaults and validation
+src/config/device_rules.rs           pure selector priority, matching and mutation
 src/config/store.rs                  paths, TOML I/O, atomic save, lock, snapshots/CAS
 src/platform/mod.rs                  cfg-gated platform adapters
 src/platform/macos/mod.rs            macOS integration overview
 src/platform/macos/scroll_events.rs  CGEvent field mapping (read event, write decision)
 src/platform/macos/permissions.rs    Accessibility + Input Monitoring TCC calls
-src/platform/macos/hid.rs            IOHIDManager wheel monitor (per-device attribution)
+src/platform/macos/hid.rs            IOHIDManager identity + wheel attribution/cache
 src/platform/macos/startup.rs        LaunchAgent start-at-login support (headless `run`)
 src/platform/macos/event_tap.rs      CGEventTap runtime loop, config shared via Arc<RwLock<_>>
 src/platform/macos/power_events.rs   NSWorkspace sleep/wake observer and atomic signal
@@ -337,8 +351,8 @@ items visible from the README without making the first read impossible.
 | 25 | Problem | Continuous scroll сейчас консервативно считается trackpad. |
 | 26 | Improve | Явно показывать этот gap в CLI и UI. |
 | 27 | Done | Non-continuous scroll считается mouse. |
-| 28 | Problem | Нет stable device id. |
-| 29 | Improve | Добавить `DeviceId` и `DeviceInfo`. |
+| 28 | Done | `DeviceIdentity` использует serial, затем port/location fallback. |
+| 29 | Done | `DeviceIdentity` и `DeviceInfo` проведены через HID, UI, tray и policy. |
 | 30 | Problem | Нет device registry. |
 | 31 | Improve | Хранить known devices и last_seen metadata. |
 | 32 | Problem | Unknown device config есть, но discovery отсутствует. |

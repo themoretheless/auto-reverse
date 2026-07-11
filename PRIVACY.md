@@ -7,8 +7,15 @@ diagnostics over a network and contains no telemetry or analytics client.
 The Debug Console keeps at most 500 recent decisions in process memory. Export
 writes only when the user asks and confirms a destination in the native Save
 Panel; Auto Reverse never uploads or automatically relocates that CSV.
-Configuration and per-device vendor/product IDs are stored locally in
-`~/Library/Application Support/Auto Reverse/config.toml`.
+Configuration and per-device vendor/product IDs plus an optional HID serial
+number or connection-location ID are stored locally in
+`~/Library/Application Support/Auto Reverse/config.toml`. The Devices tab and
+tray show only a bounded serial suffix; the explicitly invoked `devices` CLI command
+prints the full local identity so a rule can be diagnosed or written.
+
+Debug Console CSV exports deliberately include vendor/product IDs and the
+device's display name, but not serial numbers or location IDs. Those stronger
+identifiers are used only for local rule matching and are never transmitted.
 
 Runtime coordination files (`run.lock`, `ui.lock`, `config.toml.lock`, and the
 transient `ui.activate` mailbox) stay in that same local directory. They contain
