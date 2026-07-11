@@ -1,9 +1,10 @@
-//! Auto Reverse - reverses physical mouse-wheel scrolling on macOS while
-//! leaving the trackpad untouched.
+//! Auto Reverse - independently controls physical mouse-wheel, trackpad, and
+//! Magic Mouse scrolling direction on macOS.
 //!
 //! Layering, from pure to platform-bound (each layer only depends on the
 //! ones above it):
 //! - [`error`], [`device`], [`input`]: shared vocabulary types.
+//! - [`device_classifier`]: pure device-source classification state.
 //! - [`config`]: schema, pure physical-device rule resolution, and storage.
 //! - [`runtime`]: process-local controls such as temporary pause.
 //! - [`scroll`]: the pure reversal policy - config + event in, decision
@@ -14,6 +15,7 @@
 
 pub mod config;
 pub mod device;
+pub mod device_classifier;
 pub mod error;
 pub mod input;
 pub mod platform;

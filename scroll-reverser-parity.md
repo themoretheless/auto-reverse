@@ -6,9 +6,11 @@
 
 ## Источники
 
-- Official home page: https://pilotmoon.com/scrollreverser/
-- GitHub repository: https://github.com/pilotmoon/Scroll-Reverser
-- Quartz Event Services reference: https://developer.apple.com/documentation/coregraphics/quartz_event_services
+- [Official home page](https://pilotmoon.com/scrollreverser/)
+- [GitHub repository](https://github.com/pilotmoon/Scroll-Reverser)
+- [Scroll Reverser `MouseTap.m` at the audited commit](https://github.com/pilotmoon/Scroll-Reverser/blob/187bf3945b6107cd8486327c6165f32e523535a4/MouseTap.m)
+- [Apple `NSEvent`](https://developer.apple.com/documentation/appkit/nsevent)
+- [Quartz Event Services](https://developer.apple.com/documentation/coregraphics/quartz_event_services)
 
 ## P0: обязательные фичи
 
@@ -25,7 +27,8 @@
 - Event tap/input listener слой для scroll events.
 - Gesture/input слой для определения trackpad vs mouse.
 - Классификация trackpad через gesture-сигнал, когда доступны два или больше пальца.
-- Fallback-классификация как mouse, если gesture-сигнал недоступен.
+- Safe fallback к trackpad policy, если passive gesture tap не установился;
+  внутри активной momentum-сессии сохранять последний continuous source.
 - Защита от повторного reverse synthetic events.
 - Pass-through mode при ошибке permissions или platform hook.
 - Permissions model для Accessibility.
@@ -162,7 +165,7 @@
 | Area | Target behavior | Status | Gap / next action |
 | --- | --- | --- | --- |
 | Core | Reverse scroll direction | Done | Physical wheel and continuous precision paths are tested separately. |
-| Devices | Mouse and trackpad independent settings | Partial | Discrete rules use serial/location identity and distinguish identical models when HID exposes a qualifier; Magic Mouse still follows trackpad classification. |
+| Devices | Mouse, trackpad and Magic Mouse independent settings | Implemented | Public two-finger timing classifier and separate live toggles are wired; physical hardware and rapid-alternation QA remains open. |
 | Axes | Vertical and horizontal toggles | Done | Both policy and CGEvent field writes have regression tests. |
 | Wheel | Step size control | Partial | Implemented; detection-driven conditional visibility is still open. |
 | UI | Menu bar app with preferences | Done | Handoff 1b/1e implemented. |

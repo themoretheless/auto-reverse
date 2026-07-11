@@ -23,5 +23,9 @@ only lock state or process IDs, never scroll events, device names, or settings.
 
 Accessibility and Input Monitoring are required by macOS to observe and modify
 scroll events. Auto Reverse does not record key presses, pointer coordinates, or
-application content. A future update that adds any network behavior must make it
-explicit, opt-in where appropriate, and update this document before release.
+application content. Its passive AppKit gesture tap stores only whether a
+gesture had at least two touching fingers and a monotonic observation time; it
+does not retain touch positions, identities, pressure, gesture content, or raw
+events, and none of that state is exported. A future update that adds any
+network behavior must make it explicit, opt-in where appropriate, and update
+this document before release.

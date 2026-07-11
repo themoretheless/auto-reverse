@@ -23,9 +23,10 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 | --- | --- | --- | --- | --- | --- | --- |
 |  |  | Discrete vertical wheel |  |  |  |  |
 |  |  | Horizontal / tilt wheel |  |  |  |  |
-|  |  | Built-in trackpad natural scrolling |  |  |  |  |
-|  |  | Magic Trackpad |  |  |  |  |
-|  |  | Magic Mouse documented fallback |  |  |  |  |
+|  |  | Built-in trackpad: two-finger scroll and momentum use Trackpad policy |  |  |  |  |
+|  |  | Magic Trackpad: two-finger scroll and momentum use Trackpad policy |  |  |  |  |
+|  |  | Magic Mouse continuous scroll uses independent Magic Mouse policy |  |  |  |  |
+|  |  | Rapidly alternate Magic Mouse and trackpad around 222/333 ms windows |  |  |  |  |
 |  |  | Per-device Reverse / Don't reverse |  |  |  |  |
 |  |  | Two identical VID/PID mice with different serials stay independent |  |  |  |  |
 |  |  | Identical mice have distinct bounded labels in Settings and tray |  |  |  |  |
@@ -36,6 +37,7 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Missing then granted permissions |  |  |  |  |
 |  |  | Start at Login after reboot |  |  |  |  |
 |  |  | Sleep/wake: hidden app re-arms live tap or restarts one stopped tap |  |  |  |  |
+|  |  | Sleep/wake preserves Magic Mouse/trackpad classification |  |  |  |  |
 |  |  | Cmd-W, Cmd-Q, Dock Quit, tray Quit |  |  |  |  |
 |  |  | Hide window, launch app again: one icon and focused existing window |  |  |  |  |
 |  |  | Menu, device submenu, Option-click console |  |  |  |  |
@@ -43,4 +45,5 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Finder and System Settings app icon |  |  |  |  |
 
 Also verify high contrast, larger text, remote desktop with raw-input guard,
-Notification Center/system gestures, and two simultaneously connected mice.
+Notification Center, shake-to-locate and other system gestures remain intact,
+and two simultaneously connected mice.

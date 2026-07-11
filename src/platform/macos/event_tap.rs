@@ -9,12 +9,11 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 use std::time::Duration;
 
 use crate::config::AppConfig;
-use crate::device::conservative_kind_from_continuity;
 use crate::error::{AppError, AppResult};
 use crate::runtime::RuntimeControl;
 use crate::scroll::TransformDecision;
 
-use super::{daemon_lock, hid, scroll_events};
+use super::{daemon_lock, gesture, hid, scroll_events};
 
 #[cfg(feature = "gui")]
 use super::debug_log;
@@ -34,39 +33,55 @@ unsafe extern "C" {
 
 static CONFIG: OnceLock<Arc<RwLock<AppConfig>>> = OnceLock::new();
 static RUNTIME_CONTROL: OnceLock<Arc<RuntimeControl>> = OnceLock::new();
-static TAP_PORT: Mutex<Option<usize>> = Mutex::new(None);
+static TAP_PORTS: Mutex<TapPorts> = Mutex::new(TapPorts {
+    active: None,
+    gesture: None,
+});
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TapPorts {
+    active: Option<usize>,
+    gesture: Option<usize>,
+}
 
 /// Keeps the raw CFMachPort pointer registered only while the owning
 /// `CGEventTap` value is alive. The mutex serializes wake-thread rearming with
 /// run-loop teardown so `CGEventTapEnable` can never observe a freed port.
 struct TapPortRegistration {
-    port: usize,
+    ports: TapPorts,
 }
 
 impl TapPortRegistration {
-    fn new(port: usize) -> AppResult<Self> {
+    fn new(active: usize, gesture: Option<usize>) -> AppResult<Self> {
         let mut registered = tap_port_guard();
-        if registered.is_some() {
+        if registered.active.is_some() || registered.gesture.is_some() {
             return Err(AppError::Platform(
                 "an event tap port is already registered in this process".to_string(),
             ));
         }
-        *registered = Some(port);
-        Ok(Self { port })
+        let ports = TapPorts {
+            active: Some(active),
+            gesture,
+        };
+        *registered = ports;
+        Ok(Self { ports })
     }
 }
 
 impl Drop for TapPortRegistration {
     fn drop(&mut self) {
         let mut registered = tap_port_guard();
-        if *registered == Some(self.port) {
-            *registered = None;
+        if *registered == self.ports {
+            *registered = TapPorts {
+                active: None,
+                gesture: None,
+            };
         }
     }
 }
 
-fn tap_port_guard() -> MutexGuard<'static, Option<usize>> {
-    match TAP_PORT.lock() {
+fn tap_port_guard() -> MutexGuard<'static, TapPorts> {
+    match TAP_PORTS.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     }
@@ -77,10 +92,13 @@ fn tap_port_guard() -> MutexGuard<'static, Option<usize>> {
 /// concurrent run-loop return from dropping the backing `CGEventTap` first.
 pub fn rearm_if_installed() -> bool {
     let registered = tap_port_guard();
-    let Some(port) = *registered else {
+    let Some(active) = registered.active else {
         return false;
     };
-    unsafe { CGEventTapEnable(port as CFMachPortRef, true) };
+    unsafe { CGEventTapEnable(active as CFMachPortRef, true) };
+    if let Some(gesture) = registered.gesture {
+        unsafe { CGEventTapEnable(gesture as CFMachPortRef, true) };
+    }
     true
 }
 
@@ -93,10 +111,12 @@ pub enum TapRunOutcome {
     Stopped,
 }
 
-/// Installs a system-wide event tap that reverses scroll direction for
-/// physical mouse wheels, then blocks running the current thread's run loop
-/// forever. Returns `Err(())` if macOS refused to create the tap, which is
-/// almost always a missing Input Monitoring / Accessibility permission.
+/// Installs a system-wide event tap that applies the configured direction to
+/// mouse, trackpad, and Magic Mouse scrolling, then blocks running the current
+/// thread's run loop forever. Returns an error if macOS refused to create the
+/// active tap, which is almost always a missing Input Monitoring /
+/// Accessibility permission. Failure of the optional passive gesture tap is
+/// non-fatal and falls back to conservative continuous-source behavior.
 ///
 /// `config` is shared (`Arc<RwLock<_>>`) rather than owned outright so a
 /// caller running this on a background thread (the merged GUI process) can
@@ -195,8 +215,25 @@ pub fn install_and_run_with_ready(
         ),
     }
 
-    let _tap_port_registration =
-        TapPortRegistration::new(event_tap.mach_port().as_concrete_TypeRef() as usize)?;
+    let gesture_monitor = match gesture::GestureMonitor::start() {
+        Ok(monitor) => {
+            println!(
+                "auto-reverse: public gesture monitor started; Magic Mouse/trackpad heuristic enabled"
+            );
+            Some(monitor)
+        }
+        Err(error) => {
+            eprintln!(
+                "auto-reverse: gesture monitor failed ({error}); continuous scrolling falls back to trackpad"
+            );
+            None
+        }
+    };
+
+    let _tap_port_registration = TapPortRegistration::new(
+        event_tap.mach_port().as_concrete_TypeRef() as usize,
+        gesture_monitor.as_ref().map(gesture::GestureMonitor::port),
+    )?;
     CFRunLoop::get_current().add_source(&loop_source, unsafe { kCFRunLoopCommonModes });
     event_tap.enable();
     on_ready();
@@ -222,7 +259,7 @@ fn handle_event(
             };
 
             let continuous = !scroll_events::is_physical_mouse_wheel(event);
-            let device_kind = conservative_kind_from_continuity(continuous);
+            let device_kind = gesture::classify_scroll(event, continuous);
             // Attribute only genuine hardware wheel ticks: discrete
             // (continuous scrolling never produces HID wheel values) AND
             // originating from the HID system (source_pid == 0). An event
@@ -555,14 +592,32 @@ mod tap_port_tests {
 
     #[test]
     fn registration_rejects_overlap_and_clears_on_drop() {
-        assert!(tap_port_guard().is_none());
+        assert_eq!(
+            *tap_port_guard(),
+            TapPorts {
+                active: None,
+                gesture: None
+            }
+        );
 
-        let registration = TapPortRegistration::new(0x1234).expect("first registration");
-        assert_eq!(*tap_port_guard(), Some(0x1234));
-        assert!(TapPortRegistration::new(0x5678).is_err());
-        assert_eq!(*tap_port_guard(), Some(0x1234));
+        let registration =
+            TapPortRegistration::new(0x1234, Some(0x5678)).expect("first registration");
+        assert_eq!(
+            *tap_port_guard(),
+            TapPorts {
+                active: Some(0x1234),
+                gesture: Some(0x5678)
+            }
+        );
+        assert!(TapPortRegistration::new(0x9abc, None).is_err());
 
         drop(registration);
-        assert!(tap_port_guard().is_none());
+        assert_eq!(
+            *tap_port_guard(),
+            TapPorts {
+                active: None,
+                gesture: None
+            }
+        );
     }
 }

@@ -17,7 +17,9 @@ scripts/check-app-bundle.sh
 ```
 
 Tests should reproduce the behavior being fixed, especially for scroll-field
-mapping, config rollback, lifecycle transitions, and device-rule precedence.
+mapping, classifier timing/momentum transitions, config rollback, lifecycle
+transitions, and device-rule precedence. Keep gesture event type 29 out of the
+`core-graphics` Rust enum and keep private multitouch APIs out of the project.
 Black-box CLI tests must use a unique temporary `HOME` and clear inherited
 config, LaunchAgent, and XDG path overrides before spawning the binary.
 Visual changes must update `DESIGN.md` when they change the selected handoff and

@@ -8,16 +8,34 @@ default = ["gui"]
 # The settings window (`auto-reverse ui`), merged with the CGEventTap into
 # one process: a native AppKit menu-bar item and SMAppService-based
 # login-item registration (objc2-service-management) on top of eframe.
-# Off => a lean CLI-only build: cargo build --no-default-features. All
-# three are macOS target-specific dependencies (see below) so this feature
-# alone does not pull them into a non-macOS `cargo check --lib`.
+# Off => a lean CLI-only build: cargo build --no-default-features. The lean
+# build retains only the small AppKit event/touch surface needed by the public
+# Magic Mouse/trackpad classifier; it does not include eframe, windows, menus,
+# images, or login-item integration.
 gui = [
     "dep:eframe",
-    "dep:objc2-app-kit",
     "dep:objc2-service-management",
     "dep:objc2-foundation",
-    "dep:objc2",
     "dep:block2",
+    "objc2-app-kit/NSAppearance",
+    "objc2-app-kit/NSImage",
+    "objc2-app-kit/NSImageView",
+    "objc2-app-kit/NSStatusBar",
+    "objc2-app-kit/NSStatusItem",
+    "objc2-app-kit/NSStatusBarButton",
+    "objc2-app-kit/NSMenu",
+    "objc2-app-kit/NSMenuItem",
+    "objc2-app-kit/NSBezierPath",
+    "objc2-app-kit/NSCell",
+    "objc2-app-kit/NSColor",
+    "objc2-app-kit/NSGraphicsContext",
+    "objc2-app-kit/NSApplication",
+    "objc2-app-kit/NSPanel",
+    "objc2-app-kit/NSSavePanel",
+    "objc2-app-kit/NSWindow",
+    "objc2-app-kit/NSWorkspace",
+    "objc2-app-kit/block2",
+    "objc2-app-kit/objc2-core-foundation",
 ]
 
 [dependencies]
@@ -38,30 +56,16 @@ eframe = { version = "0.35", default-features = false, features = [
     "accesskit",
 ], optional = true }
 objc2-app-kit = { version = "0.3", default-features = false, features = [
-    "NSAppearance",
-    "NSImage",
-    "NSImageView",
-    "NSStatusBar",
-    "NSStatusItem",
-    "NSStatusBarButton",
-    "NSView",
-    "NSMenu",
-    "NSMenuItem",
     "NSEvent",
-    "NSBezierPath",
-    "NSCell",
-    "NSColor",
-    "NSGraphicsContext",
-    "NSApplication",
-    "NSPanel",
     "NSResponder",
-    "NSSavePanel",
-    "NSWindow",
-    "NSWorkspace",
-    "block2",
-    "objc2-core-foundation",
-], optional = true }
+    "NSTouch",
+    "NSView",
+    "objc2-core-graphics",
+] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = [
+    "CGEventTypes",
+] }
 objc2-service-management = { version = "0.3.2", optional = true }
 objc2-foundation = { version = "0.3", optional = true }
-objc2 = { version = "0.6", optional = true }
+objc2 = "0.6"
 block2 = { version = "0.6", optional = true }

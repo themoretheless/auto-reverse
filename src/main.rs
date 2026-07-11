@@ -17,7 +17,7 @@ use std::process;
 use std::sync::{Arc, RwLock};
 
 use auto_reverse::config::{AppConfig, ConfigStore};
-use auto_reverse::device;
+use auto_reverse::device_classifier;
 use auto_reverse::error::{AppError, AppResult};
 use auto_reverse::input::ScrollEvent;
 use auto_reverse::platform::macos::{event_tap, hid, permissions, startup};
@@ -170,11 +170,18 @@ fn doctor(options: DoctorOptions) -> AppResult<()> {
         "input monitoring permission: {}",
         permissions::permission_status(input_monitoring)
     );
-    println!("device classifier: {}", device::CLASSIFIER_DESCRIPTION);
     println!(
-        "known gap: reverse_magic_mouse and reverse_unknown have no effect yet - the classifier \
-         above can only ever produce Mouse or Trackpad, so a real Magic Mouse is governed by \
-         reverse_trackpad and DeviceKind::Unknown is unreachable outside `simulate`"
+        "device classifier: {}",
+        device_classifier::CLASSIFIER_DESCRIPTION
+    );
+    println!(
+        "classifier note: Magic Mouse vs trackpad uses a public two-finger timing heuristic; if \
+         the passive gesture monitor cannot start, continuous scrolling safely falls back to \
+         trackpad behavior"
+    );
+    println!(
+        "known gap: reverse_unknown has no live effect yet because DeviceKind::Unknown is \
+         unreachable outside `simulate`"
     );
     println!(
         "known gap: show_menu_bar_icon, check_for_updates, include_beta_updates, and \

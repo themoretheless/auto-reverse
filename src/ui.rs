@@ -9,10 +9,10 @@
 //!
 //! Honesty rules the layout follows:
 //! - No control is shown for config fields that do nothing today
-//!   (`reverse_magic_mouse`, `reverse_unknown`, the menu-bar/update
-//!   placeholders). Rendering dead switches would be lying with widgets.
-//! - The trackpad toggle says it also covers a real Magic Mouse, because
-//!   the tap cannot tell them apart.
+//!   (`reverse_unknown` and the menu-bar/update placeholders). Rendering dead
+//!   switches would be lying with widgets.
+//! - Mouse wheel, trackpad, and Magic Mouse each have a live policy toggle;
+//!   the latter two are separated by the public gesture timing classifier.
 //!
 //! ## Merged process (`ui` == settings window + scroll reversal)
 //!
@@ -852,7 +852,15 @@ impl SettingsApp {
                     changed |= styled_checkbox(
                         ui,
                         &mut self.config.reverse_trackpad,
-                        RichText::new("Trackpad (includes Magic Mouse)").size(13.0),
+                        RichText::new("Trackpad").size(13.0),
+                        16.0,
+                        4.0,
+                    )
+                    .changed();
+                    changed |= styled_checkbox(
+                        ui,
+                        &mut self.config.reverse_magic_mouse,
+                        RichText::new("Magic Mouse").size(13.0),
                         16.0,
                         4.0,
                     )

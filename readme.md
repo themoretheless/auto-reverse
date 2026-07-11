@@ -12,6 +12,9 @@ Implemented:
 - global enable/disable;
 - vertical and horizontal reverse flags;
 - mouse, trackpad, Magic Mouse and unknown-device config flags;
+- independent live mouse, trackpad, and Magic Mouse policies: a separate
+  listen-only AppKit gesture tap observes public two-finger signals, while a
+  pure timing state machine carries the source through momentum scrolling;
 - wheel step size;
 - raw-input guard through `source_pid`;
 - Accessibility and Input Monitoring checks;
@@ -53,7 +56,6 @@ Still missing:
 
 - guided onboarding beyond the compact permission-first state;
 - hide/show menu bar icon;
-- gesture/HID classifier for Magic Mouse vs trackpad;
 - packaging/signing/update flow.
 
 ## Commands
@@ -141,7 +143,7 @@ explicit CLI arguments still work through the same bundled executable.
 
 ## Config
 
-`run` actually triggers both OS consent dialogs now (`AXIsProcessTrustedWithOptions` for Accessibility, `CGRequestListenEventAccess` for Input Monitoring), not just passive checks; `doctor` reports both permission states without prompting and prints the fix instructions when something is missing. An earlier experimental `SourceClassifier` (a touch-count/phase heuristic meant to separate Magic Mouse from trackpad) was removed as dead code: it was never wired into the real event tap (nothing in the codebase feeds it real touch data), and its own passing tests created false confidence that the distinction already worked. See `recommendation.md` for the full list of verified findings and fixes across 3 review iterations.
+`run` actually triggers both OS consent dialogs now (`AXIsProcessTrustedWithOptions` for Accessibility, `CGRequestListenEventAccess` for Input Monitoring), not just passive checks; `doctor` reports both permission states without prompting and prints the fix instructions when something is missing. Magic Mouse/trackpad classification is now wired into the real runtime: a separate listen-only `NSEventTypeGesture` tap counts touching fingers through public AppKit APIs, and `src/device_classifier.rs` turns those observations plus the public momentum phase into a device kind. No private MultitouchSupport API is used. See `recommendation.md` for the verified three-pass implementation and review record.
 
 Default path on macOS:
 
@@ -198,7 +200,15 @@ removes a sibling device's shared fallback when one exact rule is edited.
 Some low-cost firmware reports the same placeholder serial for every unit; use
 the printed `location_id` manually in that case.
 
-Current limitation: `reverse_magic_mouse` is present for parity, but the live classifier cannot distinguish Magic Mouse from trackpad yet because both report continuous scroll through the current public event-tap signal.
+`reverse_magic_mouse` is live and independent from `reverse_trackpad`. The
+distinction is intentionally best-effort: a two-finger gesture observed within
+222 ms identifies a trackpad, momentum keeps the last continuous source, and a
+normal continuous event after 333 ms without a fresh touch is Magic Mouse-like.
+If the passive monitor cannot start, all continuous scrolling falls back to the
+trackpad policy, preserving the previous conservative behavior. Rapidly
+alternating a trackpad and Magic Mouse, accessibility gestures, or a third-party
+high-resolution wheel can still be classified imperfectly. Per-device rules
+remain limited to discrete HID wheel devices.
 
 ## Start At Login
 
@@ -229,6 +239,7 @@ src/cli.rs                           command/flag parser and CLI option structs
 src/lib.rs                           library facade documenting the layering
 src/error.rs                         shared AppError / AppResult
 src/device.rs                        DeviceKind + HardwareId/DeviceIdentity vocabulary
+src/device_classifier.rs             pure gesture/timing source state machine + fallback
 src/input.rs                         normalized ScrollEvent with optional shared identity
 src/runtime.rs                       lock-free process-local pause control
 src/scroll.rs                        pure reversal policy (no CoreGraphics)
@@ -241,6 +252,7 @@ src/platform/macos/mod.rs            macOS integration overview
 src/platform/macos/scroll_events.rs  CGEvent field mapping (read event, write decision)
 src/platform/macos/permissions.rs    Accessibility + Input Monitoring TCC calls
 src/platform/macos/hid.rs            IOHIDManager identity + wheel attribution/cache
+src/platform/macos/gesture.rs        passive AppKit gesture tap + classifier adapter
 src/platform/macos/startup.rs        LaunchAgent start-at-login support (headless `run`)
 src/platform/macos/event_tap.rs      CGEventTap runtime loop, config shared via Arc<RwLock<_>>
 src/platform/macos/power_events.rs   NSWorkspace sleep/wake observer and atomic signal
@@ -260,8 +272,10 @@ src/ui/debug_console/export.rs       CSV serialization, atomic write, export rec
 tests/cli_integration.rs             real binary in isolated HOME/config sandboxes
 ```
 
-The macOS framework crates (`core-foundation`, `core-graphics`) are
-target-specific dependencies: the pure core compiles without them.
+The macOS framework crates are target-specific dependencies. The lean build
+keeps only the small AppKit event/touch surface required by the classifier and
+does not include eframe, windows, menus, images, or login-item integration; the
+pure domain modules themselves still import no OS framework.
 
 The remaining useful split is narrower: keep the AppKit icon/menu adapter in
 `tray.rs`, move structured diagnostics behind a small sink, and split settings
@@ -293,7 +307,8 @@ Build the app surface:
 
 Make it releasable:
 
-- Magic Mouse/trackpad distinction;
+- physical Magic Mouse/trackpad and rapid-alternation validation of the
+  implemented public gesture classifier;
 - manual sleep/wake validation of the implemented recovery path;
 - packaging/signing;
 - localization;
@@ -346,10 +361,10 @@ items visible from the README without making the first read impossible.
 | 20 | Done | `DeviceKind::as_str` уменьшает DRY-дублирование. |
 | 21 | Done | `Display` и `FromStr` используют единый device-name контракт. |
 | 22 | Done | `DeviceKind` покрывает mouse, trackpad, Magic Mouse, unknown. |
-| 23 | Problem | Magic Mouse пока не определяется live classifier. |
-| 24 | Improve | Добавить отдельный gesture/HID classifier. |
-| 25 | Problem | Continuous scroll сейчас консервативно считается trackpad. |
-| 26 | Improve | Явно показывать этот gap в CLI и UI. |
+| 23 | Done | Magic Mouse определяется live как отдельный best-effort continuous source. |
+| 24 | Done | Добавлен отдельный public AppKit gesture classifier без private API. |
+| 25 | Done | Continuous scroll различается по two-finger timing signal и momentum phase. |
+| 26 | Done | `doctor`, README и UI честно показывают отдельную Magic Mouse policy и heuristic caveat. |
 | 27 | Done | Non-continuous scroll считается mouse. |
 | 28 | Done | `DeviceIdentity` использует serial, затем port/location fallback. |
 | 29 | Done | `DeviceIdentity` и `DeviceInfo` проведены через HID, UI, tray и policy. |
@@ -379,8 +394,8 @@ items visible from the README without making the first read impossible.
 | 53 | Done | Horizontal reverse выключен по умолчанию. |
 | 54 | Done | Mouse reverse включен по умолчанию. |
 | 55 | Done | Trackpad reverse выключен по умолчанию. |
-| 56 | Problem | Magic Mouse reverse включен в config, но live classifier не умеет его применить. |
-| 57 | Improve | Временно пометить `reverse_magic_mouse` как planned в docs/UI. |
+| 56 | Done | `reverse_magic_mouse` применяется live через `DeviceKind::MagicMouse`. |
+| 57 | Done | UI показывает отдельный рабочий Magic Mouse checkbox. |
 | 58 | Done | Step size применяется к non-continuous wheel delta. |
 | 59 | Problem | Step size logic живет рядом с reverse logic. |
 | 60 | Improve | Вынести wheel step в `scroll::wheel`. |
@@ -446,9 +461,9 @@ items visible from the README without making the first read impossible.
 | 120 | Problem | Нет теста для `reverse_unknown`. |
 | 121 | Improve | Добавить unknown-device transform test. |
 | 122 | Done | Pure transform покрывает Magic Mouse config. |
-| 123 | Improve | Live Magic Mouse distinction все еще требует gesture/HID classifier. |
-| 124 | Problem | Live classifier не покрыт integration contract. |
-| 125 | Improve | Добавить tests для `conservative_kind_from_continuity`. |
+| 123 | Done | Live Magic Mouse distinction подключен через passive gesture adapter. |
+| 124 | Done | Pure classifier contract отделен от AppKit и покрывает timing/momentum transitions. |
+| 125 | Done | Conservative fallback и gesture classifier покрыты unit tests. |
 | 126 | Done | Device parse/display round-trip покрыт. |
 | 127 | Problem | Нет serde round-trip для `DeviceKind`. |
 | 128 | Improve | Добавить TOML test для `magic-mouse`. |

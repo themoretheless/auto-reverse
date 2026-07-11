@@ -145,7 +145,10 @@ impl AppConfig {
             targets.push("a physical mouse wheel");
         }
         if self.reverse_trackpad {
-            targets.push("trackpad scrolling (this also covers a real Magic Mouse)");
+            targets.push("trackpad scrolling");
+        }
+        if self.reverse_magic_mouse {
+            targets.push("Magic Mouse scrolling");
         }
         if targets.is_empty() {
             // Per-device rules can turn a device ON even when every
@@ -167,7 +170,13 @@ impl AppConfig {
             (false, true) => "horizontal",
             (false, false) => "no axis - nothing will actually flip",
         };
-        let base = format!("reversing {axes} scroll for {}", targets.join(" and "));
+        let target_summary = match targets.as_slice() {
+            [only] => (*only).to_string(),
+            [first, second] => format!("{first} and {second}"),
+            [first, second, third] => format!("{first}, {second}, and {third}"),
+            _ => unreachable!("the config has exactly three device-kind flags"),
+        };
+        let base = format!("reversing {axes} scroll for {target_summary}");
         if self.device_rules.is_empty() {
             base
         } else {
@@ -243,6 +252,7 @@ mod tests {
         let config = AppConfig {
             reverse_mouse: false,
             reverse_trackpad: false,
+            reverse_magic_mouse: false,
             device_rules: vec![DeviceRule::for_hardware(
                 HardwareId {
                     vendor_id: 0x046d,
@@ -264,6 +274,7 @@ mod tests {
         let exempt_only = AppConfig {
             reverse_mouse: false,
             reverse_trackpad: false,
+            reverse_magic_mouse: false,
             device_rules: vec![DeviceRule::for_hardware(
                 HardwareId {
                     vendor_id: 0x046d,
@@ -277,6 +288,36 @@ mod tests {
         assert_eq!(
             exempt_only.plain_english_summary(),
             "enabled, but no device is currently set to reverse"
+        );
+    }
+
+    #[test]
+    fn summary_names_trackpad_and_magic_mouse_as_separate_targets() {
+        let config = AppConfig {
+            reverse_mouse: false,
+            reverse_trackpad: true,
+            reverse_magic_mouse: true,
+            ..AppConfig::default()
+        };
+
+        assert_eq!(
+            config.plain_english_summary(),
+            "reversing vertical scroll for trackpad scrolling and Magic Mouse scrolling"
+        );
+    }
+
+    #[test]
+    fn summary_punctuates_all_three_targets_readably() {
+        let config = AppConfig {
+            reverse_mouse: true,
+            reverse_trackpad: true,
+            reverse_magic_mouse: true,
+            ..AppConfig::default()
+        };
+
+        assert_eq!(
+            config.plain_english_summary(),
+            "reversing vertical scroll for a physical mouse wheel, trackpad scrolling, and Magic Mouse scrolling"
         );
     }
 

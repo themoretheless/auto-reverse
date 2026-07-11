@@ -9,12 +9,15 @@ mouse-wheel scroll direction via a CGEventTap while leaving the trackpad
 untouched. It is layered so pure logic never touches OS frameworks:
 
 - `src/scroll.rs` - pure reversal policy (no CoreGraphics imports)
+- `src/device_classifier.rs` - pure Magic Mouse/trackpad timing and momentum
+  state machine, plus the conservative fallback
 - `src/config/` - `schema.rs` (fields, defaults, validation) + `store.rs`
   (paths, TOML I/O, atomic save), re-exported through `mod.rs`
 - `src/platform/macos/` - ALL unsafe/FFI code: `scroll_events.rs` (CGEvent
   field mapping), `permissions.rs` (Accessibility + Input Monitoring TCC),
   `hid.rs` (IOHIDManager wheel monitor attributing discrete scrolls to a
-  specific vendor/product ID), `startup.rs` (LaunchAgent start-at-login),
+  serial/location-qualified identity), `gesture.rs` (public listen-only
+  AppKit gesture tap), `startup.rs` (LaunchAgent start-at-login),
   `event_tap.rs` (tap runtime), `tray.rs` (native AppKit status item),
   `login_item.rs` (`SMAppService.mainAppService()` for the GUI bundle)
 - `src/ui.rs` - egui settings window; starts the tap in-process on a
@@ -31,8 +34,10 @@ continuous scrolling (trackpad, Magic Mouse) is synthesized from touch data
 and never appears as a HID wheel value, so rules cannot target it. `devices`
 lists connected pointing devices with their IDs.
 
-The macOS crates are target-specific dependencies; `cargo check --lib`
-builds on any OS, the binary is macOS-only (explicit `compile_error!`).
+The macOS crates are target-specific dependencies. The lean build keeps only
+the minimal AppKit event/touch bindings needed by the classifier and excludes
+eframe/windows/menus/login-item support; the binary is macOS-only (explicit
+`compile_error!`).
 
 Key invariants, both empirically verified - do not "fix" them backwards:
 
@@ -44,11 +49,17 @@ Key invariants, both empirically verified - do not "fix" them backwards:
   `Boolean` (`unsigned char`), NOT a C99 bool - they are bound as `u8`
   with an explicit `!= 0` on purpose (Rust `bool` has a 0x00/0x01
   validity invariant; other bindings would be unsound).
+- AppKit's gesture event type is 29, but `core-graphics` 0.25 models event
+  types as a Rust enum that omits 29. The passive callback therefore takes a
+  raw `u32`; passing this event through that enum would be invalid. The
+  callback has its own autorelease pool and uses only public AppKit APIs.
 
 Known accepted limitations (documented in `doctor` output and
-`recommendation.md`): a Magic Mouse cannot be distinguished from the
-trackpad through the public CGEventTap API, so `reverse_magic_mouse` and
-`reverse_unknown` currently have no effect; four config fields
+`recommendation.md`): Magic Mouse vs trackpad is a public best-effort
+two-finger timing heuristic, not physical identity; failed passive-monitor
+startup falls back to the trackpad policy, and rapid device alternation or
+third-party smooth wheels may classify imperfectly. `reverse_unknown` has no
+live source yet. Four config fields
 (`show_menu_bar_icon`, `check_for_updates`, `include_beta_updates`,
 `show_discrete_scroll_options`) are stored for planned UI/updater behavior
 but are not applied by the runtime yet. `start_at_login` has two intentional

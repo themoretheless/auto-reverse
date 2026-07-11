@@ -11,6 +11,13 @@ The callback changes only documented scroll delta fields. It never writes key,
 button, pointer-position, or application data. Synthetic/injected events can be
 ignored with `reverse_only_raw_input`. Diagnostics are bounded and local-only.
 
+Magic Mouse/trackpad classification uses a second listen-only session event tap
+and public `NSEvent`/`NSTouch` APIs. It counts touching fingers but does not
+modify gesture events. The raw FFI callback represents the AppKit-only gesture
+event type as `u32` because the `core-graphics` Rust enum omits value 29; this
+avoids constructing an invalid Rust enum discriminant. No private
+MultitouchSupport framework or copied IOHID event SPI is used.
+
 The second-launch `ui.activate` mailbox accepts only the PID of the process that
 already owns `ui.lock`. A local process able to write the application-support
 directory can at most request that the settings window come to the front; the

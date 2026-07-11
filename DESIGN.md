@@ -51,6 +51,15 @@ vendor/product-only rule still applies, a separate muted line names that shared
 inherited behavior. Editing one serial-qualified row never silently removes the
 fallback used by an identical sibling.
 
+## Source controls
+
+The General tab presents Mouse wheel, Trackpad, and Magic Mouse as three
+separate checkboxes in one compact vertical group. Their labels are literal and
+short; the interface does not hide implementation caveats inside a control or
+pretend that per-device identity exists for continuous gestures. The third row
+uses the same 16 px control geometry and 4 px row gap, so adding the live Magic
+Mouse policy does not resize controls or disturb the stable section hierarchy.
+
 ## States
 
 - Active: reversal is enabled, permissions are ready, and no temporary pause exists.

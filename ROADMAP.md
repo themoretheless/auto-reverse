@@ -28,7 +28,9 @@ independently.
 17. [Done] Open Accessibility and Input Monitoring panes independently.
 18. [Implemented] Native Save Panel and Finder reveal are built; manual panel workflow QA remains open.
 19. [Implemented] Serial-first device identity with location fallback is built; identical-device/reconnect manual QA remains open.
-20. [Research] Determine whether public APIs can distinguish Magic Mouse gestures.
+20. [Implemented] A public listen-only AppKit gesture tap now distinguishes
+    two-finger trackpad scrolling from Magic Mouse-like continuous scrolling;
+    physical-device, rapid-alternation, and system-gesture QA remains open.
 
 ## P2 - Distribution and maintenance
 
