@@ -21,6 +21,11 @@ Runtime coordination files (`run.lock`, `ui.lock`, `config.toml.lock`, and the
 transient `ui.activate` mailbox) stay in that same local directory. They contain
 only lock state or process IDs, never scroll events, device names, or settings.
 
+The uninstall workflow preserves this local configuration by default. User
+data is removed only when `scripts/uninstall-app-bundle.sh` is invoked with
+`--remove-user-data`; that option is limited to Auto Reverse's Application
+Support directory and local `auto-reverse.log`.
+
 Accessibility and Input Monitoring are required by macOS to observe and modify
 scroll events. Auto Reverse does not record key presses, pointer coordinates, or
 application content. Its passive AppKit gesture tap stores only whether a

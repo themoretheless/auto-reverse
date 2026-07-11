@@ -18,6 +18,15 @@ event type as `u32` because the `core-graphics` Rust enum omits value 29; this
 avoids constructing an invalid Rust enum discriminant. No private
 MultitouchSupport framework or copied IOHID event SPI is used.
 
+The installer stages updates beside the destination, validates bundle ID,
+Mach-O, plist, icon, LSUIElement mode, and signature, then swaps paths on the
+same volume. A failed final validation restores the previous bundle. Existing
+or damaged copies are recognized by exact bundle identity before replacement;
+symlink destinations and unexpected app names are refused. Process termination
+matches the exact installed executable path, not a broad process-name pattern.
+The uninstaller applies the same identity check before recursive removal and
+does not delete user data without an explicit flag.
+
 The second-launch `ui.activate` mailbox accepts only the PID of the process that
 already owns `ui.lock`. A local process able to write the application-support
 directory can at most request that the settings window come to the front; the

@@ -27,3 +27,5 @@ jobs:
         run: cargo test
       - name: Build and inspect app bundle
         run: scripts/build-app-bundle.sh
+      - name: Check install, update, and uninstall workflow
+        run: scripts/check-install-workflow.sh

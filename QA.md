@@ -14,6 +14,7 @@ physical wheel feels correct or that AppKit pixels are visible on every menu bar
 | Tests | `cargo test` | Required |
 | Bundle | `scripts/build-app-bundle.sh` | Required |
 | Bundle structure | `scripts/check-app-bundle.sh` | Required |
+| Install/update/uninstall | `scripts/check-install-workflow.sh` | Required |
 
 ## Manual macOS matrix
 
@@ -43,6 +44,11 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Menu, device submenu, Option-click console |  |  |  |  |
 |  |  | Debug filter/clear; Save Panel cancel/save/overwrite; Reveal in Finder |  |  |  |  |
 |  |  | Finder and System Settings app icon |  |  |  |  |
+|  |  | Fresh release install to `/Applications` launches one process |  |  |  |  |
+| 2026-07-11 | 26.6 | Update running `/Applications` app; config survives, release binary matches, new PID stays alive | N/A | N/A | Pass | Codex |
+|  |  | Uninstall removes both startup registrations and preserves config |  |  |  |  |
+|  |  | Reinstall after preserved-config uninstall restores settings |  |  |  |  |
+|  |  | `--remove-user-data` removes only Auto Reverse config/locks/log |  |  |  |  |
 
 Also verify high contrast, larger text, remote desktop with raw-input guard,
 Notification Center, shake-to-locate and other system gestures remain intact,

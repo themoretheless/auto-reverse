@@ -24,7 +24,10 @@ untouched. It is layered so pure logic never touches OS frameworks:
   background thread and keeps it live while the window is hidden
 - `src/main.rs` - CLI (`run`, `doctor`, `enable`, `disable`, `toggle`,
   `enable-startup`, `disable-startup`, `startup-status`, `devices`,
-  `init`, `config-path`, `show-config`, `simulate`, `help`)
+  `prepare-uninstall`, `init`, `config-path`, `show-config`, `simulate`, `help`)
+- `scripts/` - bundle build/check plus staged release install/update,
+  identity-checked uninstall, exact-path process control, and isolated workflow
+  smoke
 
 Per-device rules: `[[device_rules]]` config blocks (vendor_id/product_id/
 reverse) pin one exact physical device's direction; an exact rule wins over
@@ -72,6 +75,12 @@ binary to `Contents/MacOS/auto-reverse` and keep `CFBundleExecutable` pointed
 there. Do not reintroduce a shell launcher that execs a differently named
 binary; that broke macOS Control Center status-item scene creation.
 
+Install invariant: validate old destinations by identity only so a damaged app
+can be repaired, but validate source/stage/final bundles strictly. Stage and
+backup live beside the destination for same-volume moves and rollback. Never
+replace exact-path PID matching with broad `pkill auto-reverse`, and never
+delete config during uninstall without the explicit user-data flag.
+
 See `readme.md` (overview + module map), `architecture.md` (target
 architecture, SOLID/DRY layering), `recommendation.md` (backlog + verified
 review findings).
@@ -89,6 +98,7 @@ System Settings > Privacy & Security.
 - Test: `cargo test` (run a single test with `cargo test <test_name>`)
 - Format: `cargo fmt`
 - Lint: `cargo clippy --all-targets`
+- Install workflow: `scripts/check-install-workflow.sh`
 - Safe manual checks without touching real input: `cargo run -- simulate
   --device mouse --dy 1`, `cargo run -- show-config`, `cargo run -- doctor`
 - Config path override for tests: `AUTO_REVERSE_CONFIG=/tmp/x.toml`

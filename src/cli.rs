@@ -21,6 +21,7 @@ pub enum Command {
     Toggle,
     EnableStartup,
     DisableStartup,
+    PrepareUninstall,
     StartupStatus(StartupStatusOptions),
     ConfigPath,
     ShowConfig,
@@ -91,6 +92,10 @@ pub fn parse_args(args: &[String]) -> AppResult<Command> {
         Some("toggle") => Ok(Command::Toggle),
         Some("enable-startup") => Ok(Command::EnableStartup),
         Some("disable-startup") => Ok(Command::DisableStartup),
+        Some("prepare-uninstall") if args.len() == 1 => Ok(Command::PrepareUninstall),
+        Some("prepare-uninstall") => Err(AppError::Usage(
+            "prepare-uninstall does not accept flags".to_string(),
+        )),
         Some("startup-status") => parse_startup_status(&args[1..]),
         Some("config-path") => Ok(Command::ConfigPath),
         Some("show-config") => Ok(Command::ShowConfig),
@@ -425,6 +430,15 @@ mod tests {
             Command::Devices
         );
         assert_eq!(parse_args(&strings(&["ui"])).unwrap(), Command::Ui);
+    }
+
+    #[test]
+    fn prepare_uninstall_is_an_explicit_command() {
+        assert_eq!(
+            parse_args(&strings(&["prepare-uninstall"])).unwrap(),
+            Command::PrepareUninstall
+        );
+        assert!(parse_args(&strings(&["prepare-uninstall", "--force"])).is_err());
     }
 
     #[test]

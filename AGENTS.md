@@ -22,7 +22,8 @@ Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
 - CLI LaunchAgent startup support in `src/platform/macos/startup.rs`;
 - GUI login-item support via `SMAppService.mainAppService()` in
   `src/platform/macos/login_item.rs`;
-- a local `.app` bundle builder in `scripts/build-app-bundle.sh`.
+- a local `.app` bundle builder plus atomic install/update/uninstall workflow
+  under `scripts/`.
 
 The pure domain layer should stay free of CoreGraphics/AppKit imports. Keep OS
 framework code inside `platform/macos`.
@@ -45,6 +46,9 @@ framework code inside `platform/macos`.
 - Build: `cargo build`
 - Bundle: `scripts/build-app-bundle.sh`
 - Bundle smoke: `scripts/check-app-bundle.sh`
+- Install workflow smoke: `scripts/check-install-workflow.sh`
+- Install release app: `scripts/install-app-bundle.sh`
+- Uninstall app: `scripts/uninstall-app-bundle.sh`
 - Run GUI: `cargo run -- ui`
 - Run headless tap: `cargo run -- run`
 - Diagnostics: `cargo run -- doctor --no-create`

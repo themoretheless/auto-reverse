@@ -37,7 +37,10 @@ independently.
 21. [Done] Run fmt, default/lean checks, clippy, tests, and bundle smoke in CI.
 22. [Done] Add QA, design, privacy, security, and contribution documents.
 23. [Next] Add Developer ID signing, hardened runtime, notarization, and stapling.
-24. [Next] Add a release/install/uninstall workflow with stable bundle identity.
+24. [Implemented] Atomic release install/update and identity-checked uninstall
+    scripts are covered by an isolated workflow smoke; a running `/Applications`
+    update is verified, while fresh install, login-item cleanup, full uninstall,
+    and permission continuity QA remains open.
 25. [Decision] Choose an update strategy before enabling update-related config flags.
 
 ## Definition of Done

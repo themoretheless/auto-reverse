@@ -56,13 +56,15 @@ Still missing:
 
 - guided onboarding beyond the compact permission-first state;
 - hide/show menu bar icon;
-- packaging/signing/update flow.
+- Developer ID signing/notarization and an update strategy.
 
 ## Commands
 
 ```bash
 cargo build
 scripts/build-app-bundle.sh
+scripts/install-app-bundle.sh
+scripts/check-install-workflow.sh
 cargo run -- doctor
 cargo run -- doctor --no-create
 cargo run -- devices
@@ -110,6 +112,34 @@ target/debug/Auto Reverse.app
 The bundle contains `Contents/Resources/AutoReverse.icns`; the build script
 generates its complete Retina iconset from `assets/AppIcon.svg`, ad-hoc signs
 the local build, and validates the Mach-O/plist/icon/signature structure.
+
+For a stable daily path, build the release profile, atomically install it to
+`/Applications`, and launch it:
+
+```bash
+scripts/install-app-bundle.sh
+```
+
+Use `--debug`, `--no-open`, or `--destination /path/to/Auto\ Reverse.app` for
+development. An update first validates the source and existing bundle identity,
+stages a complete copy beside the destination, stops only processes whose
+command begins with that exact installed Mach-O path, swaps directories on the
+same volume, and restores the previous copy if final validation fails. It never
+merges new files into an old bundle.
+
+Uninstall the app while preserving config and per-device rules:
+
+```bash
+scripts/uninstall-app-bundle.sh
+```
+
+The uninstaller invokes the bundled `prepare-uninstall` command to remove both
+the `SMAppService` GUI login item and CLI LaunchAgent before deleting the
+identity-checked app. Add `--remove-user-data` only when the local config,
+runtime lock files, and `~/Library/Logs/auto-reverse.log` should also be erased.
+The install path and bundle identifier are stable, but an ad-hoc signature is
+still content-dependent; uninterrupted TCC identity across public updates
+requires the Developer ID/notarization work in roadmap item 23.
 
 Use that `.app` in macOS:
 
@@ -270,6 +300,12 @@ src/ui/theme.rs                      handoff tokens and custom egui controls
 src/ui/debug_console.rs              Debug Console viewport/filter/table
 src/ui/debug_console/export.rs       CSV serialization, atomic write, export receipt
 tests/cli_integration.rs             real binary in isolated HOME/config sandboxes
+scripts/lib/app-bundle.sh            shared bundle identity + exact-process helpers
+scripts/build-app-bundle.sh          debug/release bundle construction
+scripts/check-app-bundle.sh          strict or identity-only bundle validation
+scripts/install-app-bundle.sh        staged atomic install/update with rollback
+scripts/uninstall-app-bundle.sh      startup cleanup + identity-checked removal
+scripts/check-install-workflow.sh    isolated install/update/uninstall smoke
 ```
 
 The macOS framework crates are target-specific dependencies. The lean build
@@ -679,14 +715,14 @@ items visible from the README without making the first read impossible.
 | 338 | Improve | Label it "Ignore injected/remote scroll events". |
 | 339 | Problem | Нет support for restoring menu icon after hidden config mistake. |
 | 340 | Improve | Document `show_menu_bar_icon = true` recovery. |
-| 341 | Improve | Release packaging все еще не готов, но local dev `.app` bundle уже есть. |
+| 341 | Partial | Local release install/update/uninstall готов; production signing/notarization остается. |
 | 342 | Done | Local app bundle structure выбран: `target/<profile>/Auto Reverse.app`. |
 | 343 | Problem | Нет code signing. |
 | 344 | Improve | Plan Developer ID signing before public release. |
 | 345 | Problem | Нет notarization. |
 | 346 | Improve | Add notarization checklist. |
-| 347 | Problem | Нет installer/uninstaller. |
-| 348 | Done | Первый шаг packaging сделан: headless drag-and-run `.app` для Privacy & Security. |
+| 347 | Done | Есть atomic installer/updater и identity-checked uninstaller. |
+| 348 | Done | Packaging включает debug/release bundle, stable install path, rollback и isolated workflow smoke. |
 | 349 | Done | LaunchAgent implementation добавлен в `platform/macos/startup.rs`. |
 | 350 | Done | Add `SMAppService` path when the app bundle exists. |
 | 351 | Partial | Wake recovery реализован; реальный sleep/wake на собранном bundle еще не отмечен в QA. |

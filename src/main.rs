@@ -21,6 +21,8 @@ use auto_reverse::device_classifier;
 use auto_reverse::error::{AppError, AppResult};
 use auto_reverse::input::ScrollEvent;
 use auto_reverse::platform::macos::{event_tap, hid, permissions, startup};
+#[cfg(feature = "gui")]
+use auto_reverse::platform::macos::{login_item, login_item::LoginItemStatus};
 use auto_reverse::scroll;
 use cli::{Command, DoctorOptions, OutputFormat, SimulateOptions, StartupStatusOptions};
 
@@ -47,6 +49,7 @@ fn run() -> AppResult<()> {
         Command::Toggle => toggle_enabled(),
         Command::EnableStartup => set_startup_enabled(true),
         Command::DisableStartup => set_startup_enabled(false),
+        Command::PrepareUninstall => prepare_uninstall(),
         Command::StartupStatus(options) => startup_status(options),
         Command::ConfigPath => {
             println!("{}", ConfigStore::default_path().display());
@@ -294,6 +297,66 @@ fn set_startup_enabled(enabled: bool) -> AppResult<()> {
         warn_if_dev_tree_binary();
     }
     Ok(())
+}
+
+/// Removes both startup registrations before an installer deletes the app.
+/// File removal deliberately stays in `scripts/uninstall-app-bundle.sh`, where
+/// the destination is verified as our bundle before recursive deletion.
+fn prepare_uninstall() -> AppResult<()> {
+    println!(
+        "GUI login item: {}",
+        disable_gui_login_item_for_uninstall()?
+    );
+
+    let startup_status = startup::disable()?;
+    println!("CLI LaunchAgent: {}", startup_status.summary());
+
+    let store = ConfigStore::default();
+    if store.exists() {
+        match store.update(|config| config.start_at_login = false) {
+            Ok(_) => println!(
+                "config retained with start_at_login=false: {}",
+                store.path().display()
+            ),
+            Err(error) => eprintln!(
+                "auto-reverse: startup registrations were removed, but the retained config \
+                 could not be updated ({error}): {}",
+                store.path().display()
+            ),
+        }
+    } else {
+        println!("config: not present ({})", store.path().display());
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "gui")]
+fn disable_gui_login_item_for_uninstall() -> AppResult<String> {
+    match login_item::status() {
+        LoginItemStatus::Enabled | LoginItemStatus::RequiresApproval => {
+            login_item::unregister().map_err(|error| {
+                AppError::Platform(format!("could not unregister the GUI login item: {error}"))
+            })?;
+            let status = login_item::status();
+            if matches!(
+                status,
+                LoginItemStatus::Enabled | LoginItemStatus::RequiresApproval
+            ) {
+                return Err(AppError::Platform(format!(
+                    "GUI login item remained registered after cleanup: {}",
+                    status.summary()
+                )));
+            }
+            Ok(status.summary().to_string())
+        }
+        status => Ok(status.summary().to_string()),
+    }
+}
+
+#[cfg(not(feature = "gui"))]
+fn disable_gui_login_item_for_uninstall() -> AppResult<String> {
+    Ok("not available in this lean build; no GUI bundle service was changed".to_string())
 }
 
 /// A LaunchAgent pointing into target/ is fragile: every rebuild changes
@@ -584,6 +647,7 @@ fn print_help() {
            help                        Show this help\n\
          \n\
          Advanced commands:\n\
+           prepare-uninstall           Remove startup registrations before app deletion\n\
            devices                     List connected pointing devices and per-device rules\n\
            init                        Create the default config if it does not exist\n\
            config-path                 Print the config file path\n\

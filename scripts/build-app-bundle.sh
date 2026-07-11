@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "$script_dir/.." && pwd)"
+source "$script_dir/lib/app-bundle.sh"
+
 usage() {
   cat <<'USAGE'
 Usage:
@@ -40,8 +44,6 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd -- "$script_dir/.." && pwd)"
 cd "$repo_root"
 
 if [[ "$profile" == "release" ]]; then
@@ -51,8 +53,8 @@ else
 fi
 
 version="$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n 1)"
-binary="target/$profile/auto-reverse"
-app="target/$profile/Auto Reverse.app"
+binary="target/$profile/$AUTO_REVERSE_EXECUTABLE_NAME"
+app="target/$profile/$AUTO_REVERSE_APP_BASENAME"
 contents="$app/Contents"
 macos="$contents/MacOS"
 resources="$contents/Resources"
@@ -65,8 +67,8 @@ fi
 
 rm -rf "$app"
 mkdir -p "$macos" "$resources"
-cp "$binary" "$macos/auto-reverse"
-chmod 0755 "$macos/auto-reverse"
+cp "$binary" "$macos/$AUTO_REVERSE_EXECUTABLE_NAME"
+chmod 0755 "$macos/$AUTO_REVERSE_EXECUTABLE_NAME"
 
 if [[ ! -f "$icon_source" ]]; then
   echo "app icon source is missing: $icon_source" >&2
@@ -105,9 +107,9 @@ cat > "$contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key>
   <string>Auto Reverse</string>
   <key>CFBundleExecutable</key>
-  <string>auto-reverse</string>
+  <string>$AUTO_REVERSE_EXECUTABLE_NAME</string>
   <key>CFBundleIdentifier</key>
-  <string>com.auto-reverse.app</string>
+  <string>$AUTO_REVERSE_BUNDLE_IDENTIFIER</string>
   <key>CFBundleIconFile</key>
   <string>AutoReverse</string>
   <key>CFBundleInfoDictionaryVersion</key>
@@ -151,7 +153,7 @@ echo "Open the settings window with:"
 echo "  open \"$repo_root/$app\""
 echo
 echo "Run the background daemon instead (same identity, no window):"
-echo "  \"$repo_root/$macos/auto-reverse\" run"
+echo "  \"$repo_root/$macos/$AUTO_REVERSE_EXECUTABLE_NAME\" run"
 echo
 echo "For terminal diagnostics through the bundled executable:"
-echo "  \"$repo_root/$macos/auto-reverse\" doctor --no-create"
+echo "  \"$repo_root/$macos/$AUTO_REVERSE_EXECUTABLE_NAME\" doctor --no-create"

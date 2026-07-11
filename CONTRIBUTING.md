@@ -14,6 +14,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 scripts/build-app-bundle.sh
 scripts/check-app-bundle.sh
+scripts/check-install-workflow.sh
 ```
 
 Tests should reproduce the behavior being fixed, especially for scroll-field

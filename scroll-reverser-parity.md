@@ -179,6 +179,7 @@
 | Updates | Explicit update strategy | Open | Choose Sparkle/manual/no-updater before activating stored flags. |
 | Localization | Russian and English-ready strings | Open | User-facing copy still lives inline. |
 | Distribution | Signed/notarized release | Open | Local bundle is ad-hoc signed; Developer ID/notarization remains external release work. |
+| Install | Stable install, update and uninstall | Implemented | Atomic temp-destination smoke passes; real `/Applications` and login-item cleanup QA remains. |
 | Limits | Gestures not reversed | Documented | Keep compatibility notes and hardware QA current. |
 
 ## First implementation slices

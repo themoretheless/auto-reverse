@@ -2,6 +2,9 @@ use core_foundation::base::TCFType;
 use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::string::{CFString, CFStringRef};
+use std::env;
+use std::ffi::OsStr;
+use std::path::Path;
 
 // AXIsProcessTrustedWithOptions + kAXTrustedCheckOptionPrompt (AXUIElement.h)
 // is the documented way to make the OS actually show the Accessibility
@@ -75,6 +78,15 @@ pub fn request_missing_permissions() -> bool {
 /// Actionable guidance for the two privacy permissions a scroll-wheel event
 /// tap depends on, since macOS gives no in-process detail beyond "denied".
 pub fn print_permission_help() {
+    let permission_target = env::current_exe()
+        .ok()
+        .map(|executable| {
+            app_bundle_root(&executable)
+                .unwrap_or(&executable)
+                .display()
+                .to_string()
+        })
+        .unwrap_or_else(|| "the exact Auto Reverse.app or executable you launched".to_string());
     eprintln!(
         "auto-reverse needs two permissions to intercept scroll events:\n\
          \n\
@@ -82,11 +94,10 @@ pub fn print_permission_help() {
          2. Input Monitoring: {}\n\
          \n\
          If macOS just showed a permission dialog, approve it and re-run.\n\
-         Otherwise open System Settings > Privacy & Security, add Auto\n\
-         Reverse.app to whichever list(s) above say \"required\". Build it\n\
-         with `scripts/build-app-bundle.sh`, then use the \"+\" button and\n\
-         pick `target/debug/Auto Reverse.app`. If you are running the raw\n\
-         CLI instead of the app bundle, add that exact executable path.\n\
+         Otherwise open System Settings > Privacy & Security and use the\n\
+         \"+\" button in whichever list(s) above say \"required\". Add this\n\
+         exact app or executable: {permission_target}\n\
+         \n\
          Rebuilding can change the code identity, so remove and re-add the\n\
          app/binary if macOS keeps denying access.",
         permission_status(has_accessibility_trust()),
@@ -94,6 +105,34 @@ pub fn print_permission_help() {
     );
 }
 
+fn app_bundle_root(executable: &Path) -> Option<&Path> {
+    executable
+        .ancestors()
+        .find(|ancestor| ancestor.extension() == Some(OsStr::new("app")))
+}
+
 pub fn permission_status(granted: bool) -> &'static str {
     if granted { "granted" } else { "required" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_executable_reports_the_app_as_the_permission_target() {
+        let executable = Path::new("/Applications/Auto Reverse.app/Contents/MacOS/auto-reverse");
+        assert_eq!(
+            app_bundle_root(executable),
+            Some(Path::new("/Applications/Auto Reverse.app"))
+        );
+    }
+
+    #[test]
+    fn raw_cli_has_no_app_bundle_root() {
+        assert_eq!(
+            app_bundle_root(Path::new("/usr/local/bin/auto-reverse")),
+            None
+        );
+    }
 }
