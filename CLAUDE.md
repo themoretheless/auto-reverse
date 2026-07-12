@@ -25,9 +25,9 @@ untouched. It is layered so pure logic never touches OS frameworks:
 - `src/main.rs` - CLI (`run`, `doctor`, `enable`, `disable`, `toggle`,
   `enable-startup`, `disable-startup`, `startup-status`, `devices`,
   `prepare-uninstall`, `init`, `config-path`, `show-config`, `simulate`, `help`)
-- `scripts/` - bundle build/check plus staged release install/update,
-  identity-checked uninstall, exact-path process control, and isolated workflow
-  smoke
+- `scripts/` - hardened local bundle build/check, strict Developer ID and
+  notarization release orchestration, staged install/update, identity-checked
+  uninstall, exact-path process control, and isolated workflow smokes
 
 Per-device rules: `[[device_rules]]` config blocks (vendor_id/product_id/
 reverse) pin one exact physical device's direction; an exact rule wins over
@@ -81,9 +81,14 @@ backup live beside the destination for same-volume moves and rollback. Never
 replace exact-path PID matching with broad `pkill auto-reverse`, and never
 delete config during uninstall without the explicit user-data flag.
 
+Release invariant: local builds may be ad-hoc, but public artifacts must pass
+the Developer ID Application, hardened runtime, secure timestamp, `Accepted`
+notarization, stapled ticket, and Gatekeeper checks in `RELEASE.md`. Never
+replace those gates with Apple Development signing or plaintext credentials.
+
 See `readme.md` (overview + module map), `architecture.md` (target
 architecture, SOLID/DRY layering), `recommendation.md` (backlog + verified
-review findings).
+review findings), and `RELEASE.md` (canonical distribution checklist).
 
 Development caveat: macOS ties the Accessibility/Input Monitoring grants to
 the binary's identity, so every rebuild requires re-approving the binary in
@@ -99,6 +104,7 @@ System Settings > Privacy & Security.
 - Format: `cargo fmt`
 - Lint: `cargo clippy --all-targets`
 - Install workflow: `scripts/check-install-workflow.sh`
+- Release workflow: `scripts/check-release-workflow.sh`
 - Safe manual checks without touching real input: `cargo run -- simulate
   --device mouse --dy 1`, `cargo run -- show-config`, `cargo run -- doctor`
 - Config path override for tests: `AUTO_REVERSE_CONFIG=/tmp/x.toml`

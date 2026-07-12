@@ -146,7 +146,12 @@ trap - EXIT
 version="$(plutil -extract CFBundleShortVersionString raw "$destination/Contents/Info.plist")"
 echo "Installed Auto Reverse $version at $destination"
 echo "Bundle identifier: $AUTO_REVERSE_BUNDLE_IDENTIFIER"
-echo "Note: this local build is ad-hoc signed; stable public TCC identity still requires Developer ID signing."
+signature_details="$(codesign --display --verbose=2 "$destination" 2>&1)"
+if [[ "$signature_details" == *"Authority=Developer ID Application:"* ]]; then
+  echo "Signature: Developer ID Application (see RELEASE.md for the remaining distribution gates)."
+else
+  echo "Signature: local ad-hoc (use the RELEASE.md workflow for a stable public identity)."
+fi
 
 if [[ "$open_after_install" == true ]]; then
   open -n "$destination"

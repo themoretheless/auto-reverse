@@ -36,12 +36,16 @@ independently.
 
 21. [Done] Run fmt, default/lean checks, clippy, tests, and bundle smoke in CI.
 22. [Done] Add QA, design, privacy, security, and contribution documents.
-23. [Next] Add Developer ID signing, hardened runtime, notarization, and stapling.
+23. [Implemented] Developer ID signing, hardened runtime, secure timestamps,
+    notarization, stapling, Gatekeeper assessment, audit logs, and checksummed
+    artifacts are scripted and smoke-tested; a real Developer ID submission and
+    clean-machine release QA remain open because this Mac has only an Apple
+    Development certificate.
 24. [Implemented] Atomic release install/update and identity-checked uninstall
     scripts are covered by an isolated workflow smoke; a running `/Applications`
     update is verified, while fresh install, login-item cleanup, full uninstall,
     and permission continuity QA remains open.
-25. [Decision] Choose an update strategy before enabling update-related config flags.
+25. [Next] Choose an update strategy before enabling update-related config flags.
 
 ## Definition of Done
 

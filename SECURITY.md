@@ -42,6 +42,14 @@ input source was involved.
 
 ## Release requirements
 
-Public distribution still requires Developer ID signing, hardened runtime,
-notarization, and stapling. The current local bundle is ad-hoc signed and is not a
-production trust model.
+`scripts/release-app-bundle.sh` implements the public-distribution controls:
+Developer ID Application authority, hardened runtime, a secure timestamp,
+Keychain-only notary credentials, explicit `Accepted` status, saved audit log,
+stapled-ticket validation, Gatekeeper assessment, and a checksummed final ZIP.
+It refuses ad-hoc and Apple Development signatures. The intentionally empty
+`packaging/AutoReverse.entitlements` avoids unnecessary runtime exceptions.
+
+Local builds and the currently installed development bundle remain ad-hoc and
+are not a production trust model. This Mac has no Developer ID Application
+certificate, so a real notarization ticket and quarantined clean-machine
+assessment remain required manual release evidence. See `RELEASE.md`.

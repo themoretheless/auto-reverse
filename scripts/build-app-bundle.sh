@@ -9,6 +9,7 @@ usage() {
   cat <<'USAGE'
 Usage:
   scripts/build-app-bundle.sh [--debug|--release]
+      [--ad-hoc|--sign-identity IDENTITY]
 
 Builds a local macOS app bundle:
   target/debug/Auto Reverse.app
@@ -19,10 +20,16 @@ It also gives macOS Privacy & Security a stable .app target for granting
 Accessibility and Input Monitoring. The settings window also owns the live
 scroll event tap when enabled; the legacy `run` command is still available
 for headless diagnostics.
+
+Local builds use an ad-hoc signature by default. Passing a signing identity
+requires a Developer ID Application signature, secure timestamp, and hardened
+runtime suitable for the notarization workflow.
 USAGE
 }
 
 profile="debug"
+sign_identity="-"
+sign_selection=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --debug)
@@ -30,6 +37,27 @@ while [[ $# -gt 0 ]]; do
       ;;
     --release)
       profile="release"
+      ;;
+    --ad-hoc)
+      if [[ -n "$sign_selection" ]]; then
+        echo "choose only one of --ad-hoc or --sign-identity" >&2
+        exit 2
+      fi
+      sign_identity="-"
+      sign_selection="ad-hoc"
+      ;;
+    --sign-identity)
+      if [[ -n "$sign_selection" ]]; then
+        echo "choose only one of --ad-hoc or --sign-identity" >&2
+        exit 2
+      fi
+      shift
+      if [[ $# -eq 0 || -z "$1" ]]; then
+        echo "--sign-identity needs a non-empty identity" >&2
+        exit 2
+      fi
+      sign_identity="$1"
+      sign_selection="developer-id"
       ;;
     -h|--help)
       usage
@@ -59,6 +87,7 @@ contents="$app/Contents"
 macos="$contents/MacOS"
 resources="$contents/Resources"
 icon_source="assets/AppIcon.svg"
+entitlements="packaging/AutoReverse.entitlements"
 
 if [[ ! -x "$binary" ]]; then
   echo "built binary is missing or not executable: $binary" >&2
@@ -74,6 +103,11 @@ if [[ ! -f "$icon_source" ]]; then
   echo "app icon source is missing: $icon_source" >&2
   exit 1
 fi
+if [[ ! -f "$entitlements" ]]; then
+  echo "entitlements file is missing: $entitlements" >&2
+  exit 1
+fi
+plutil -lint "$entitlements" >/dev/null
 
 iconset="$resources/AppIcon.iconset"
 icon_base="$resources/AppIcon-1024.png"
@@ -134,14 +168,30 @@ cat > "$contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-if command -v codesign >/dev/null 2>&1; then
-  codesign --force --deep --sign - "$app" >/dev/null
-  sign_note="ad-hoc signed"
-else
-  sign_note="not signed: codesign not found"
+if ! command -v codesign >/dev/null 2>&1; then
+  echo "codesign is required to build a verifiable app bundle" >&2
+  exit 1
 fi
 
-scripts/check-app-bundle.sh "$profile"
+codesign_args=(
+  --force
+  --sign "$sign_identity"
+  --options runtime
+  --entitlements "$entitlements"
+)
+if [[ "$sign_identity" == "-" ]]; then
+  sign_note="ad-hoc signed with hardened runtime"
+else
+  codesign_args+=(--timestamp)
+  sign_note="Developer ID signed with hardened runtime and secure timestamp"
+fi
+codesign "${codesign_args[@]}" "$app" >/dev/null
+
+check_args=("$profile" --require-hardened-runtime)
+if [[ "$sign_identity" != "-" ]]; then
+  check_args+=(--require-developer-id --require-secure-timestamp)
+fi
+scripts/check-app-bundle.sh "${check_args[@]}"
 
 echo "Built $app ($sign_note)"
 echo

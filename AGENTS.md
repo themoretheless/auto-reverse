@@ -24,6 +24,8 @@ Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
   `src/platform/macos/login_item.rs`;
 - a local `.app` bundle builder plus atomic install/update/uninstall workflow
   under `scripts/`.
+- a strict Developer ID/hardened-runtime/notarization/stapling release pipeline
+  under `scripts/`, with its checklist in `RELEASE.md`.
 
 The pure domain layer should stay free of CoreGraphics/AppKit imports. Keep OS
 framework code inside `platform/macos`.
@@ -40,12 +42,17 @@ framework code inside `platform/macos`.
   gesture tap together.
 - The `.app` bundle must launch the real Mach-O binary at
   `Contents/MacOS/auto-reverse`; do not reintroduce a shell wrapper.
+- Public release artifacts must pass the Developer ID, secure timestamp,
+  notarization, stapling, and Gatekeeper gates in `RELEASE.md`; an ad-hoc or
+  Apple Development signature is never a distributable substitute.
 
 ## Commands
 
 - Build: `cargo build`
 - Bundle: `scripts/build-app-bundle.sh`
 - Bundle smoke: `scripts/check-app-bundle.sh`
+- Release workflow smoke: `scripts/check-release-workflow.sh`
+- Production release: `scripts/release-app-bundle.sh --help`
 - Install workflow smoke: `scripts/check-install-workflow.sh`
 - Install release app: `scripts/install-app-bundle.sh`
 - Uninstall app: `scripts/uninstall-app-bundle.sh`

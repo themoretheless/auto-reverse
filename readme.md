@@ -19,6 +19,9 @@ Implemented:
 - raw-input guard through `source_pid`;
 - Accessibility and Input Monitoring checks;
 - local macOS `.app` bundle for Privacy & Security;
+- a production release pipeline for Developer ID signing, hardened runtime,
+  secure timestamping, `notarytool`, stapling, Gatekeeper assessment, and a
+  checksummed final ZIP;
 - LaunchAgent start at login via `enable-startup`/`disable-startup`;
 - per-device rules: `[[device_rules]]` pins one physical wheel mouse on or off
   using vendor/product plus a serial number when available, otherwise its IOKit
@@ -56,13 +59,16 @@ Still missing:
 
 - guided onboarding beyond the compact permission-first state;
 - hide/show menu bar icon;
-- Developer ID signing/notarization and an update strategy.
+- a provisioned Developer ID/notary account and clean-machine release QA;
+- an update strategy.
 
 ## Commands
 
 ```bash
 cargo build
 scripts/build-app-bundle.sh
+scripts/check-release-workflow.sh
+scripts/release-app-bundle.sh --sign-identity "Developer ID Application: Name (TEAMID)" --keychain-profile auto-reverse-notary --plan
 scripts/install-app-bundle.sh
 scripts/check-install-workflow.sh
 cargo run -- doctor
@@ -110,8 +116,11 @@ target/debug/Auto Reverse.app
 ```
 
 The bundle contains `Contents/Resources/AutoReverse.icns`; the build script
-generates its complete Retina iconset from `assets/AppIcon.svg`, ad-hoc signs
-the local build, and validates the Mach-O/plist/icon/signature structure.
+generates its complete Retina iconset from `assets/AppIcon.svg`, signs local
+builds ad-hoc with hardened runtime and the least-privilege entitlement file,
+and validates the Mach-O/plist/icon/signature structure. Ad-hoc still means
+development-only: it has no stable public signing identity or notarization
+ticket.
 
 For a stable daily path, build the release profile, atomically install it to
 `/Applications`, and launch it:
@@ -137,9 +146,36 @@ The uninstaller invokes the bundled `prepare-uninstall` command to remove both
 the `SMAppService` GUI login item and CLI LaunchAgent before deleting the
 identity-checked app. Add `--remove-user-data` only when the local config,
 runtime lock files, and `~/Library/Logs/auto-reverse.log` should also be erased.
-The install path and bundle identifier are stable, but an ad-hoc signature is
-still content-dependent; uninterrupted TCC identity across public updates
-requires the Developer ID/notarization work in roadmap item 23.
+The install path and bundle identifier are stable, but a local ad-hoc signature
+is still content-dependent. Use the production workflow below for public
+artifacts; TCC continuity still needs verification with the provisioned
+Developer ID certificate on the exact release bundle.
+
+### Production Signing And Notarization
+
+The release path is separate from the convenient local installer. First store
+notary credentials in Keychain, then inspect the side-effect-free plan:
+
+```bash
+xcrun notarytool store-credentials auto-reverse-notary
+scripts/release-app-bundle.sh \
+  --sign-identity "Developer ID Application: Name (TEAMID)" \
+  --keychain-profile auto-reverse-notary \
+  --plan
+```
+
+Remove `--plan` to build, Developer-ID sign, timestamp, upload, require an
+`Accepted` response, download the audit log, staple and validate the ticket,
+run Gatekeeper assessment, and create
+`target/dist/Auto-Reverse-<version>-macOS.zip` plus its SHA-256. The script
+rejects ad-hoc and Apple Development signatures and does not replace a previous
+good ZIP if a new submission fails. It accepts only a Keychain profile, never a
+password.
+
+The complete prerequisites, trust boundary, output contract, and manual
+release checklist live in `RELEASE.md`. This machine currently has only an
+Apple Development certificate, so the orchestration and strict gates are
+verified but a real Apple notarization submission remains external release QA.
 
 Use that `.app` in macOS:
 
@@ -403,7 +439,7 @@ items visible from the README without making the first read impossible.
 | 26 | Done | `doctor`, README и UI честно показывают отдельную Magic Mouse policy и heuristic caveat. |
 | 27 | Done | Non-continuous scroll считается mouse. |
 | 28 | Done | `DeviceIdentity` использует serial, затем port/location fallback. |
-| 29 | Done | `DeviceIdentity` и `DeviceInfo` проведены через HID, UI, tray и policy. |
+| 29 | Done | `DeviceIdentity` и `DeviceInfo` проведены через HID, policy, CLI, UI и tray. |
 | 30 | Problem | Нет device registry. |
 | 31 | Improve | Хранить known devices и last_seen metadata. |
 | 32 | Problem | Unknown device config есть, но discovery отсутствует. |
@@ -452,7 +488,7 @@ items visible from the README without making the first read impossible.
 | 75 | Problem | Нет hot reload config. |
 | 76 | Improve | Добавить command `reload` или runtime channel. |
 | 77 | Problem | Нет pause без изменения config. |
-| 78 | Done | Persistent enabled отделен от process-local temporary pause. |
+| 78 | Done | Persistent `enabled` отделен от process-local temporary pause. |
 | 79 | Done | CLI `enable`, `disable`, `toggle` меняют config. |
 | 80 | Done | CLI commands теперь проходят через отдельный parser в `src/cli.rs`. |
 | 81 | Improve | Для большего CLI все еще можно добавить `clap`, но текущий parser мал и покрыт тестами. |
@@ -466,7 +502,7 @@ items visible from the README without making the first read impossible.
 | 89 | Problem | `AppError::InvalidConfig` хранит plain string. |
 | 90 | Improve | Сделать structured validation errors. |
 | 91 | Problem | `AppError::Platform` слишком общий. |
-| 92 | Done | Tap lifecycle типизирован через runtime state и TapRunOutcome. |
+| 92 | Done | Tap lifecycle типизирован через `ui::runtime::State` и `TapRunOutcome`. |
 | 93 | Done | Accessibility check реализован. |
 | 94 | Done | Input Monitoring preflight реализован. |
 | 95 | Problem | `request_input_monitoring_access` не используется в CLI flow. |
@@ -532,7 +568,7 @@ items visible from the README without making the first read impossible.
 | 155 | Problem | Edition 2024 требует свежий toolchain. |
 | 156 | Improve | README должен назвать required Rust version. |
 | 157 | Done | Есть macOS GitHub Actions CI. |
-| 158 | Done | CI запускает полный quality gate и bundle smoke. |
+| 158 | Done | CI запускает полный local quality gate и bundle smoke. |
 | 159 | Problem | Нет `cargo audit`. |
 | 160 | Improve | Добавить audit в release checklist. |
 | 161 | Problem | Нет license. |
@@ -549,8 +585,8 @@ items visible from the README without making the first read impossible.
 | 172 | Done | macOS status item стал primary always-on UI для Open Settings/Quit. |
 | 173 | Done | CLI больше не единственный способ менять настройки. |
 | 174 | Done | Preferences/settings window добавлен через egui. |
-| 175 | Done | Missing permissions дают compact permission-first state. |
-| 176 | Done | Первый запуск выбирает Permissions и targeted recovery actions. |
+| 175 | Done | Missing permissions дают compact permission-first state без marketing welcome. |
+| 176 | Done | Первый запуск выбирает Permissions и показывает targeted recovery actions. |
 | 177 | Done | Visible active/paused/permission state есть в header окна и status-dot трея. |
 | 178 | Done | Status icon отражает active, paused и permission-blocked через отдельную status-dot. |
 | 179 | Done | Есть temporary pause на 15 минут. |
@@ -596,11 +632,11 @@ items visible from the README without making the first read impossible.
 | 219 | Problem | Нет state `Degraded`. |
 | 220 | Improve | Runtime state: Active, Paused, NeedsPermission, Degraded, Error. |
 | 221 | Done | Есть lightweight tap lifecycle runtime. |
-| 222 | Done | `ui/runtime.rs` использует channel events и typed state. |
+| 222 | Done | `ui/runtime.rs` использует explicit channel events и typed state. |
 | 223 | Problem | UI может напрямую дергать config store. |
 | 224 | Improve | UI должен отправлять `AppCommand`. |
 | 225 | Done | Design tokens вынесены из app coordinator. |
-| 226 | Done | `ui/theme.rs` хранит handoff colors, spacing, radii и controls. |
+| 226 | Done | `ui/theme.rs` содержит handoff colors, spacing, radii и custom controls. |
 | 227 | Problem | Product может стать слишком декоративным. |
 | 228 | Improve | Использовать native compact utility layout. |
 | 229 | Problem | Cards могут захламить настройки. |
@@ -715,12 +751,12 @@ items visible from the README without making the first read impossible.
 | 338 | Improve | Label it "Ignore injected/remote scroll events". |
 | 339 | Problem | Нет support for restoring menu icon after hidden config mistake. |
 | 340 | Improve | Document `show_menu_bar_icon = true` recovery. |
-| 341 | Partial | Local release install/update/uninstall готов; production signing/notarization остается. |
+| 341 | Implemented | Local install/update/uninstall и production release pipeline готовы; реальный Developer ID/notary QA остаётся. |
 | 342 | Done | Local app bundle structure выбран: `target/<profile>/Auto Reverse.app`. |
-| 343 | Problem | Нет code signing. |
-| 344 | Improve | Plan Developer ID signing before public release. |
-| 345 | Problem | Нет notarization. |
-| 346 | Improve | Add notarization checklist. |
+| 343 | Implemented | Developer ID signing path и strict authority gate готовы; сертификат является external prerequisite. |
+| 344 | Done | Developer ID plan и release contract документированы. |
+| 345 | Implemented | `notarytool`/stapler/Gatekeeper pipeline готов; реальная submission ждёт credentials. |
+| 346 | Done | `RELEASE.md` содержит canonical notarization checklist. |
 | 347 | Done | Есть atomic installer/updater и identity-checked uninstaller. |
 | 348 | Done | Packaging включает debug/release bundle, stable install path, rollback и isolated workflow smoke. |
 | 349 | Done | LaunchAgent implementation добавлен в `platform/macos/startup.rs`. |
@@ -796,9 +832,9 @@ items visible from the README without making the first read impossible.
 | 419 | Done | Есть security policy. |
 | 420 | Done | Добавлен `SECURITY.md` с FFI/release boundaries. |
 | 421 | Done | Есть contribution guide. |
-| 422 | Done | `CONTRIBUTING.md` фиксирует full gate и layering. |
-| 423 | Done | Есть privacy-aware bug issue template. |
-| 424 | Done | Bug template собирает macOS/device/diagnostics fields. |
+| 422 | Done | Добавлен `CONTRIBUTING.md` с full gate и layering rules. |
+| 423 | Done | Есть issue template. |
+| 424 | Done | Bug template собирает device/macOS/diagnostics без лишних personal данных. |
 | 425 | Done | Есть privacy policy. |
 | 426 | Done | `PRIVACY.md` фиксирует local-only data handling. |
 | 427 | Problem | Update checks could send network requests. |
@@ -815,12 +851,12 @@ items visible from the README without making the first read impossible.
 | 438 | Improve | Track translator credits in changelog. |
 | 439 | Problem | Нет screenshots. |
 | 440 | Improve | Add real screenshots after UI exists. |
-| 441 | Done | Есть template glyph, colored state dot и branded app icon. |
+| 441 | Done | Есть template status glyph, colored state dot и branded app icon asset. |
 | 442 | Done | Active/paused/temporary/permission icon states спроектированы. |
 | 443 | Done | App icon добавлен. |
 | 444 | Done | Bundle генерирует `.icns` до codesign. |
 | 445 | Done | Design review artifact хранится в repo. |
-| 446 | Done | Добавлен `DESIGN.md` с handoff и tokens. |
+| 446 | Done | Добавлен `DESIGN.md` с выбранным handoff и tokens. |
 | 447 | Problem | Нет final product review process. |
 | 448 | Improve | Review UX, reliability, privacy before each milestone. |
 | 449 | Problem | Нет branch strategy. |
@@ -845,14 +881,14 @@ items visible from the README without making the first read impossible.
 | 468 | Improve | Keep architecture Russian if it helps project learning. |
 | 469 | Problem | Recommendation list can become stale quickly. |
 | 470 | Improve | Refresh it after every milestone. |
-| 471 | Done | 900-item audit больше не daily task queue. |
+| 471 | Done | 900-item audit больше не используется как ежедневная task queue. |
 | 472 | Done | Есть `ROADMAP.md` с 25 P0/P1/P2 задачами. |
 | 473 | Problem | Нет issue tracker mapping. |
 | 474 | Improve | Convert top 20 recommendations to issues. |
 | 475 | Problem | Нет owner per area. |
 | 476 | Improve | Add ownership notes for config, platform, UI. |
-| 477 | Done | Roadmap и QA задают acceptance criteria. |
-| 478 | Done | Definition of Done требует tests/docs/manual check. |
+| 477 | Done | Roadmap и QA задают acceptance criteria по типу задачи. |
+| 478 | Done | Definition of Done требует tests/docs/manual check для visual changes. |
 | 479 | Done | Definition of Done зафиксирован. |
 | 480 | Done | `ROADMAP.md` определяет code/tests/docs/review/QA gate. |
 | 481 | Problem | Нет automated review checklist. |
@@ -884,5 +920,7 @@ items visible from the README without making the first read impossible.
 - `architecture.md` - current and target architecture, SOLID/DRY split, UX direction.
 - `recommendation.md` - 900 recommendations, problems and improvements (500 base items + N01-N400 follow-ups through the SOLID/DRY, pause, app-icon, CI, and documentation pass).
 - `ROADMAP.md` - the executable top 25, grouped P0/P1/P2.
-- `DESIGN.md`, `QA.md`, `PRIVACY.md`, `SECURITY.md`, `CONTRIBUTING.md` - focused product and release contracts.
+- `RELEASE.md` - canonical Developer ID, notarization, stapling, and
+  distribution checklist.
+- `DESIGN.md`, `QA.md`, `PRIVACY.md`, `SECURITY.md`, `CONTRIBUTING.md` - focused product and engineering contracts.
 - `scroll-reverser-parity.md` - Scroll Reverser feature parity checklist.
