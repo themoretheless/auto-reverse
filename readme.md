@@ -426,11 +426,31 @@ This should feel like a compact native utility:
 - system dark/light mode;
 - clear recovery actions for errors.
 
+## External Research Pass
+
+`RESEARCH.md` records a source-level review of 10 additional popular macOS
+utilities and input projects plus primary papers on scrolling accuracy,
+transfer functions, filtering, and latency. It adds `R01-R60` to the backlog.
+
+The proposed order is intentionally conservative:
+
+1. Build privacy-bounded trace/replay, transfer-function benchmarks, and tap
+   latency diagnostics without changing scrolling.
+2. Prototype an opt-in pure dynamics engine for discrete wheels only; preserve
+   signed distance, cancel stale momentum, and fail open.
+3. Add inherited per-device presets and compact UX only after the measurements
+   justify the model.
+
+Trackpad and Magic Mouse continuous events are not smoothed again. Any future
+scheduler must still write only `DeltaAxis1/2`; private touch APIs, HID seizure,
+and default telemetry remain explicitly out of scope.
+
 ## Top 500
 
-The full working backlog lives in `recommendation.md`: 500 base findings plus
-`N01-N400` follow-ups. The collapsed mirror below keeps the requested 500 base
-items visible from the README without making the first read impossible.
+The full working backlog lives in `recommendation.md`: 500 base findings,
+`N01-N400` implementation follow-ups, and `R01-R60` research-derived items.
+The collapsed mirror below keeps the requested 500 base items visible from the
+README without making the first read impossible.
 
 <details>
 <summary>Show 500 base recommendations, problems and improvements</summary>
@@ -945,7 +965,8 @@ items visible from the README without making the first read impossible.
 ## Documents
 
 - `architecture.md` - current and target architecture, SOLID/DRY split, UX direction.
-- `recommendation.md` - 900 recommendations, problems and improvements (500 base items + N01-N400 follow-ups through the SOLID/DRY, pause, app-icon, CI, and documentation pass).
+- `recommendation.md` - 960 recommendations, problems and improvements (500 base items + N01-N400 implementation follow-ups + R01-R60 research follow-ups).
+- `RESEARCH.md` - 10-repository source review, scientific/platform sources, rejected approaches, and three incremental implementation iterations.
 - `ROADMAP.md` - the executable top 25, grouped P0/P1/P2.
 - `RELEASE.md` - canonical Developer ID, notarization, stapling, and
   distribution checklist.

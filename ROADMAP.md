@@ -1,8 +1,12 @@
 # Auto Reverse Roadmap
 
-This is the executable view of the 900-item audit in `recommendation.md`.
+This is the executable view of the 960-item audit in `recommendation.md`.
 Items are intentionally small enough to understand, implement, and verify
 independently.
+
+The research-derived `R01-R60` queue is analyzed and sequenced in
+`RESEARCH.md`. It is not promoted into this executable top 25 until the
+measurement-first iteration has an implementation slot.
 
 ## P0 - Correctness and recovery
 

@@ -1,6 +1,6 @@
-# 900 рекомендаций, проблем и улучшений (500 базовых + N01-N400 follow-up)
+# 960 рекомендаций, проблем и улучшений (500 базовых + N01-N400 + R01-R60)
 
-Список обновлен 2026-07-13 после повторного SOLID/DRY split, temporary pause, typed tap lifecycle, app-icon/CI/docs, structured diagnostics, sleep/wake recovery, config consistency, focus-existing-window, isolated CLI integration, native export, stable device identity v2, public Magic Mouse/trackpad classifier, atomic install/update/uninstall, production release pipeline и permission-contract проходов. Он отражает текущий код: активный macOS scroll tap плюс отдельный listen-only gesture tap, чистую timing state machine, TOML config с cross-process transaction lock и exact-revision CAS, serial/location-qualified правила дискретных мышей, CLI parser, Accessibility-only runtime gate, stable Apple Development local signing, permission recovery, raw-input guard, step size, два start-at-login пути, GUI `.app` bundle с `.icns`, staged release installer с rollback, identity-checked uninstaller, Developer ID/hardened-runtime/notary/stapling orchestration, rich menu bar, Debug Console с NSSavePanel/Finder reveal, PID-addressed activation mailbox и открытые external-credential/manual-QA gaps до полной Scroll Reverser parity.
+Список обновлен 2026-07-14 после дополнительного анализа 10 популярных macOS utility/input repositories, научных работ по scrolling transfer functions, accuracy и latency, а также официальных Apple/libinput materials. Первые 500 пунктов остаются неизменным базовым аудитом, `N01-N400` фиксируют предыдущие implementation/review проходы, а `R01-R60` - новый research-derived backlog. Подробные источники, ограничения и три предложенные итерации находятся в `RESEARCH.md`.
 
 ## Планируемая переделка: единый процесс + menu bar + SMAppService — риски, записанные до реализации
 
@@ -1279,3 +1279,83 @@ N400. [Done] Native Save Panel, structured receipt, atomic export и Reveal in F
 498. [Done] Full gate is required immediately before the final commit.
 499. [Done] Push destination exists today.
 500. [Done] Remote configured; `master` can be pushed with docs/review commits.
+
+## Research follow-up после 10 дополнительных репозиториев и научных работ
+
+Полный разбор источников и границ находится в `RESEARCH.md`. Эти пункты не
+считаются реализованными: сначала измерение, затем opt-in experiment, затем UX.
+
+### Measurement and evidence
+
+R01. [Problem] Нет воспроизводимого scroll trace, поэтому спор о "плавности" пока опирается на субъективное ощущение.
+R02. [Improve] Добавить bounded local trace только из timestamp, axis deltas, device class и decision reason, без текста и app title.
+R03. [Improve] Добавить pure trace replay, чтобы один hardware session можно было прогнать через разные policies детерминированно.
+R04. [Research] Построить transfer-function lab с изменением magnitude, interval, direction, duration и clutch gap.
+R05. [Improve] Всегда сравнивать новый алгоритм с constant-gain baseline, а не только с предыдущей experimental curve.
+R06. [Research] Добавить ScrollTest-style harness с movement time, switchbacks и maximum overshoot.
+R07. [Research] Разделить benchmark на известную и неизвестную позицию цели: у этих задач разная стратегия пользователя.
+R08. [Research] Прогонять несколько scroll distances, viewport heights и target tolerances вместо одного demo case.
+R09. [Improve] Собирать event-rate histogram p50/p95/max по типу устройства, не делая вывод по заявленному polling rate.
+R10. [Improve] Показать interval snapshot min/average/max tap latency через public `CGGetEventTapList`.
+R11. [Improve] Зафиксировать callback/scheduler latency budget и предупреждать о long-tail stalls, а не о единичном sample.
+R12. [Improve] Расширить physical matrix: detent wheel, free-spin wheel, high-resolution wheel, Magic Mouse, built-in и external trackpad.
+
+### Discrete-wheel dynamics
+
+R13. [Problem] Термин "smooth scrolling" сейчас не имеет измеримого product contract.
+R14. [Improve] Определить presets `Off`, `Precise`, `Balanced`, `Fast`, каждый с тестируемыми параметрами и понятной целью.
+R15. [Improve] Вынести dynamics в pure `scroll_dynamics` state machine без CoreGraphics, timers и config I/O.
+R16. [Reject] Не применять новый dynamics engine к continuous Trackpad/Magic Mouse events.
+R17. [Improve] Хранить velocity, residual и momentum независимо для vertical и horizontal axes.
+R18. [Improve] Нормализовать timestamp delta и ограничивать его после sleep, debugger stall и scheduler pause.
+R19. [Improve] Оценивать input rate по bounded recent samples, не доверяя одному interval или firmware metadata.
+R20. [Improve] Проверять signed-distance conservation, чтобы smoothing не создавал и не терял scroll distance без явного gain.
+R21. [Improve] Сбрасывать rate window и старое momentum при смене направления.
+R22. [Improve] Противоположный wheel tick должен немедленно отменять остаточное momentum.
+R23. [Improve] Длинный input gap должен начинать новую session, а не продолжать старую кривую.
+R24. [Improve] Добавить stop threshold против остаточного one-pixel creep.
+R25. [Improve] Новое физическое действие и click могут завершать momentum через явно тестируемую cancellation policy.
+R26. [Improve] Помечать synthetic events и исключать self-feedback до включения любого scheduler.
+R27. [Improve] Каждый scheduled sample должен иметь session generation и TTL для отбрасывания stale output.
+R28. [Improve] Scheduler должен существовать только пока есть pending output и полностью останавливаться в idle.
+R29. [Improve] Любая ошибка dynamics/scheduler должна fail-open возвращать исходный wheel event.
+R30. [Experiment] Screen-height scaling проверять только как benchmark hypothesis; не делать его default без evidence.
+
+### Device and profile model
+
+R31. [Improve] Расширять `DeviceRule` optional `step_size` и `smooth_preset`, не дублируя отдельную profile database.
+R32. [Improve] Зафиксировать precedence: exact serial, exact location, hardware VID/PID, device kind, global default.
+R33. [Research] Проверить public device-address fallback только для устройств без нормальных VID/PID/serial identifiers.
+R34. [Improve] Исключать известные synthetic/virtual HID sources через public identity, сохраняя unknown как pass-through.
+R35. [Research] Изучить logical identity для USB/Bluetooth receivers, которые представляют несколько физических устройств одним parent.
+R36. [Research] Сопоставлять last-active IOHID movement с scroll event только с confidence/timeout, не выдавая heuristic за точный ID.
+R37. [Improve] Показывать connected, remembered и unavailable device states раздельно.
+R38. [Improve] Добавить user alias и стабильный duplicate suffix для одинаковых product names.
+R39. [Improve] Profile fields должны иметь `inherit/on/off`, чтобы override не копировал все global booleans.
+R40. [Research] Bundle-id allow/deny rules добавлять только после стабильного device profile schema и migration.
+R41. [Improve] Если появятся app rules, фиксировать target PID на одну scroll session, не менять policy посередине momentum.
+R42. [Improve] Remote, injected и virtual input должны иметь явный bypass policy и видимый decision reason.
+R43. [Improve] Diagnostics должны объяснять весь resolution chain: snapshot, classifier, matched rule, preset и final decision.
+
+### Product UX and configuration
+
+R44. [Improve] Добавить fuzzy settings search, когда Advanced перестанет помещаться без длинного скролла.
+R45. [Improve] Оставить direction/device toggles на основном экране, а curve, latency и trace controls убрать в Advanced/Diagnostics.
+R46. [Improve] Сделать versioned config export/import с schema validation и migration report.
+R47. [Improve] Перед импортом показывать dry-run diff и требовать подтверждение только изменяемых sections.
+R48. [Improve] Ограничить import size и отклонять небезопасные symlink/world-writable source cases.
+R49. [Improve] Добавить Copy diagnostics summary без raw trace и личных app/window данных.
+R50. [Improve] В Devices добавить "Test this device" с локальным recent-event indicator и active rule.
+R51. [Improve] Preset preview должен быть временным и автоматически откатываться, если пользователь не подтвердил его.
+R52. [Improve] Разделить Reset this device, Reset dynamics и Restore all defaults.
+R53. [Improve] Permission callout показывать только когда включенная функция реально заблокирована; disabled utility не должна nag.
+
+### Reliability, tests, and release
+
+R54. [Improve] Permission/device refresh должен использовать notifications плюс редкий tolerant timer только как backstop.
+R55. [Improve] Event-tap watchdog должен читать public enabled state, иметь hysteresis и bounded retries без restart loop.
+R56. [Improve] Записывать recovery reason и attempt count для wake, timeout-disable и permission loss отдельно.
+R57. [Improve] Добавить migration fixtures на каждый старый/ошибочный config key и проверять сохранение unknown fields.
+R58. [Improve] Добавить property/fuzz tests для trace parser, config migration и dynamics invariants.
+R59. [Improve] Вести regression matrix для Safari zoom, Launchpad, Catalyst/iOS apps, Universal Control, iPhone Mirroring и remote desktop.
+R60. [Improve] Experimental dynamics требует runtime kill switch, config rollback и release acceptance threshold до включения по умолчанию.
