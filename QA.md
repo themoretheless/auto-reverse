@@ -52,8 +52,16 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Benchmark Known/Unknown instructions produce separate result sessions |  |  |  |  |
 |  |  | Benchmark Compact 12-case and Full 36-case matrices render without clipping |  |  |  |  |
 |  |  | Benchmark 66 ms settle, switchbacks, overshoot, next-trial and CSV/Reveal workflow |  |  |  |  |
+|  |  | Benchmark physical class: detent wheel |  |  |  |  |
+|  |  | Benchmark physical class: free-spin wheel |  |  |  |  |
+|  |  | Benchmark physical class: high-resolution wheel |  |  |  |  |
+|  |  | Benchmark physical class: Magic Mouse |  |  |  |  |
+|  |  | Benchmark physical class: built-in trackpad |  |  |  |  |
+|  |  | Benchmark physical class: external trackpad |  |  |  |  |
+|  |  | Benchmark CSV preserves the selected `physical_device` on every row | N/A | N/A |  |  |
 |  |  | Observed event-rate p50/p95/max and five bins update per device kind |  |  |  |  |
 |  |  | Manual tap-latency sample finds the active filter and labels interval min/avg/max |  |  |  |  |
+|  |  | One latency outlier stays informational; two of five breached readings warn |  |  |  |  |
 |  |  | Finder and System Settings app icon |  |  |  |  |
 |  |  | Developer ID authority, hardened runtime, and secure timestamp | N/A | N/A |  |  |
 |  |  | Notary result is Accepted and JSON audit log is reviewed | N/A | N/A |  |  |
@@ -68,3 +76,15 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 Also verify high contrast, larger text, remote desktop with raw-input guard,
 Notification Center, shake-to-locate and other system gestures remain intact,
 and two simultaneously connected mice.
+
+## Experimental dynamics gate
+
+`scroll_dynamics` is not connected to live input yet. Before that changes, the
+following must be automated and then repeated on the six physical classes:
+
+- Off is exact same-call pass-through;
+- every active preset produces immediate same-sign output;
+- the tail completes by its preset deadline plus the 8 ms scheduler budget;
+- signed distance is conserved and idle samples do not creep;
+- continuous Trackpad and Magic Mouse events bypass dynamics entirely;
+- any invalid state or scheduler failure passes through the physical event.

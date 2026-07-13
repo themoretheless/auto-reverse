@@ -8,7 +8,7 @@ use eframe::egui::{self, Color32, RichText};
 
 use crate::platform::macos::save_panel;
 use crate::scroll_benchmark::{
-    BenchmarkCase, BenchmarkMatrix, BenchmarkTrial, TargetMode, TrialResult,
+    BenchmarkCase, BenchmarkMatrix, BenchmarkTrial, PhysicalDeviceClass, TargetMode, TrialResult,
 };
 
 use super::local_export;
@@ -43,6 +43,7 @@ enum Phase {
 }
 
 pub(super) struct State {
+    physical_device: PhysicalDeviceClass,
     target_mode: TargetMode,
     preset: MatrixPreset,
     phase: Phase,
@@ -58,6 +59,7 @@ pub(super) struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            physical_device: PhysicalDeviceClass::default(),
             target_mode: TargetMode::Known,
             preset: MatrixPreset::Compact,
             phase: Phase::Setup,
@@ -139,6 +141,17 @@ fn header(ui: &mut egui::Ui, state: &mut State) {
 
 fn setup(ui: &mut egui::Ui, state: &mut State) {
     ui.add_space(8.0);
+    ui.label(RichText::new("Input device").small().strong().weak());
+    egui::ComboBox::from_id_salt("benchmark-physical-device")
+        .selected_text(state.physical_device.label())
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            for device in PhysicalDeviceClass::ALL {
+                ui.selectable_value(&mut state.physical_device, device, device.label());
+            }
+        });
+
+    ui.add_space(8.0);
     ui.label(RichText::new("Target condition").small().strong().weak());
     segmented_two(
         ui,
@@ -196,6 +209,11 @@ fn trial_surface(ui: &mut egui::Ui, state: &mut State) {
     };
 
     ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(state.physical_device.label())
+                .small()
+                .strong(),
+        );
         ui.label(
             RichText::new(match state.target_mode {
                 TargetMode::Known => format!("Target at {} pt", case.distance_points),
@@ -260,7 +278,7 @@ fn trial_surface(ui: &mut egui::Ui, state: &mut State) {
     match state.phase {
         Phase::Ready => {
             if styled_button(ui, "Start trial", egui::vec2(14.0, 6.0)).clicked() {
-                match BenchmarkTrial::new(state.target_mode, case, now_us) {
+                match BenchmarkTrial::new(state.physical_device, state.target_mode, case, now_us) {
                     Ok(trial) => {
                         state.trial = Some(trial);
                         state.latest_result = None;
@@ -350,6 +368,11 @@ fn results(ui: &mut egui::Ui, state: &mut State) {
         .map(|result| result.maximum_overshoot_points)
         .fold(0.0_f64, f64::max);
 
+    ui.label(
+        RichText::new(format!("Input: {}", state.physical_device.label()))
+            .small()
+            .weak(),
+    );
     ui.horizontal(|ui| {
         metric(ui, "Mean time", format!("{mean_time_ms:.0} ms"));
         metric(ui, "Mean switchbacks", format!("{mean_switchbacks:.2}"));
@@ -664,12 +687,13 @@ fn export_results(
 
 fn results_csv(results: &[TrialResult]) -> String {
     let mut csv = String::from(
-        "target_mode,distance_points,viewport_height_points,tolerance_points,movement_time_ms,switchbacks,maximum_overshoot_points,event_count\n",
+        "physical_device,target_mode,distance_points,viewport_height_points,tolerance_points,movement_time_ms,switchbacks,maximum_overshoot_points,event_count\n",
     );
     for result in results {
         writeln!(
             csv,
-            "{},{},{},{},{:.3},{},{:.3},{}",
+            "{},{},{},{},{},{:.3},{},{:.3},{}",
+            result.physical_device.as_str(),
             result.target_mode.as_str(),
             result.case.distance_points,
             result.case.viewport_height_points,
@@ -712,6 +736,7 @@ mod tests {
     #[test]
     fn result_csv_keeps_condition_and_scrolltest_metrics() {
         let csv = results_csv(&[TrialResult {
+            physical_device: PhysicalDeviceClass::MagicMouse,
             target_mode: TargetMode::Unknown,
             case: BenchmarkCase {
                 distance_points: 960,
@@ -724,7 +749,7 @@ mod tests {
             event_count: 9,
         }]);
 
-        assert!(csv.starts_with("target_mode,distance_points,viewport_height_points"));
-        assert!(csv.contains("unknown,960,360,20,1250.000,2,14.500,9"));
+        assert!(csv.starts_with("physical_device,target_mode,distance_points"));
+        assert!(csv.contains("magic_mouse,unknown,960,360,20,1250.000,2,14.500,9"));
     }
 }

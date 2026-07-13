@@ -24,5 +24,7 @@ transitions, and device-rule precedence. Keep gesture event type 29 out of the
 `core-graphics` Rust enum and keep private multitouch APIs out of the project.
 Black-box CLI tests must use a unique temporary `HOME` and clear inherited
 config, LaunchAgent, and XDG path overrides before spawning the binary.
+Dynamics changes must preserve `DYNAMICS.md`, keep continuous input out of the
+experiment, and add invariant tests before any platform scheduler integration.
 Visual changes must update `DESIGN.md` when they change the selected handoff and
 must add or complete the matching manual row in `QA.md`.

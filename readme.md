@@ -48,13 +48,18 @@ Implemented:
   always-present constant-gain baseline without changing live scrolling;
 - a local ScrollTest-style benchmark opened from Debug Console: known and
   unknown target sessions, compact/full distance x viewport x tolerance
-  matrices, 66 ms settled completion, movement time, switchbacks, maximum
-  overshoot, and atomic per-trial CSV export;
+  matrices, six explicit physical input classes, 66 ms settled completion,
+  movement time, switchbacks, maximum overshoot, and atomic per-trial CSV
+  export;
 - observed event-rate p50/p95/max plus histogram bins per device class, with
   idle gesture gaps excluded and no claim that observed delivery equals
   advertised polling rate;
 - an explicit on-demand min/average/max event-tap latency interval snapshot via
   public `CGGetEventTapList`; it is never polled because reading resets min/max;
+  bounded history warns only after repeated callback-budget breaches;
+- a pure, non-live discrete-wheel dynamics model with measurable
+  Off/Precise/Balanced/Fast parameters and no CoreGraphics, timer, thread, or
+  config I/O dependency;
 - process-local 15-minute pause that leaves persisted settings untouched;
 - typed event-tap lifecycle with explicit started/already-running/stopped/failed
   events rather than timeout-inferred booleans;
@@ -77,7 +82,9 @@ Still missing:
 - a provisioned Developer ID/notary account and clean-machine release QA;
 - an update strategy;
 - physical-device/manual visual validation of the new benchmark and live tap
-  latency snapshot.
+  latency snapshot;
+- scheduler, runtime opt-in, direction/gap cancellation, and physical
+  acceptance for the experimental dynamics model.
 
 ## Commands
 
@@ -130,8 +137,10 @@ trace format and privacy boundary are documented in `TRACE.md`.
 
 Interactive measurement lives under **Debug Console -> Benchmark...** and
 **Observed input metrics**. `BENCHMARK.md` defines the target conditions,
-matrices, completion rule, CSV fields, observed-rate boundary, and the
-side-effecting interval latency sample.
+physical matrix, completion rule, CSV fields, observed-rate boundary, and the
+side-effecting interval latency sample. `DYNAMICS.md` defines the latency
+budgets, smooth-scrolling contract, preset parameters, and the boundary that
+keeps the experiment out of live input.
 
 ## App Bundle
 
@@ -470,11 +479,13 @@ transfer functions, filtering, and latency. It adds `R01-R60` to the backlog.
 The implementation order is intentionally conservative:
 
 1. Measurement is implemented without changing runtime behavior: privacy trace
-   replay, transfer lab, ScrollTest-style harness, observed event-rate
-   distributions, and manual public tap-latency snapshots. Physical matrix and
-   visual QA remain before treating the benchmark as release-validated.
-2. Prototype an opt-in pure dynamics engine for discrete wheels only; preserve
-   signed distance, cancel stale momentum, and fail open.
+   replay, transfer lab, ScrollTest-style harness, six-class physical matrix,
+   observed event-rate distributions, and repeated-budget assessment over
+   manual public tap-latency snapshots. Physical and visual QA remain before
+   treating the benchmark as release-validated.
+2. The first pure scalar-axis dynamics model and four presets are implemented
+   but intentionally not connected to live input. Next: per-axis state,
+   bounded time, conservation, cancellation, then an opt-in fail-open scheduler.
 3. Add inherited per-device presets and compact UX only after the measurements
    justify the model.
 
@@ -1005,8 +1016,10 @@ README without making the first read impossible.
 - `recommendation.md` - 960 recommendations, problems and improvements (500 base items + N01-N400 implementation follow-ups + R01-R60 research follow-ups).
 - `RESEARCH.md` - 10-repository source review, scientific/platform sources, rejected approaches, and three incremental implementation iterations.
 - `TRACE.md` - privacy trace schema, limits, replay semantics, CLI lab, and ownership boundaries.
-- `BENCHMARK.md` - target conditions, matrices, metrics, event-rate semantics,
-  tap-latency snapshots, export, and ownership boundaries.
+- `BENCHMARK.md` - target conditions, physical matrix, metrics, event-rate
+  semantics, tap-latency snapshots, export, and ownership boundaries.
+- `DYNAMICS.md` - measurable smooth-scrolling contract, latency budgets,
+  experimental presets, and the non-live pure engine boundary.
 - `ROADMAP.md` - the executable top 25, grouped P0/P1/P2.
 - `RELEASE.md` - canonical Developer ID, notarization, stapling, and
   distribution checklist.

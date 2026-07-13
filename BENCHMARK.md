@@ -9,7 +9,7 @@ policy. The design follows the metrics and known/unknown target distinction in
 
 1. Open **Debug Console** from the menu-bar item.
 2. Choose **Benchmark...**.
-3. Select a target condition and matrix.
+3. Select the physical input class, target condition, and matrix.
 4. Start the session, then start each trial with the pointer inside the test
    viewport.
 
@@ -29,6 +29,13 @@ the owner of reversal behavior.
 
 One session has one condition. Results and CSV rows always retain that condition
 instead of aggregating known and unknown strategies together.
+
+## Physical Input Matrix
+
+Each session records exactly one test stratum: detent wheel, free-spin wheel,
+high-resolution wheel, Magic Mouse, built-in trackpad, or external trackpad.
+The stable class is included in every CSV row. It is explicit test metadata,
+not a claim that macOS can identify every source from an individual event.
 
 ## Matrices
 
@@ -63,8 +70,9 @@ non-finite deltas, timestamps that move backwards, and input after completion.
 - **Event count**: effective document movements accepted by the trial.
 
 The session summary shows mean movement time, mean switchbacks, and largest
-overshoot. CSV keeps every trial, condition, case dimension, metric, and event
-count. Export uses the native Save Panel and an atomic local replacement.
+overshoot. CSV keeps every trial, physical class, condition, case dimension,
+metric, and event count. Export uses the native Save Panel and an atomic local
+replacement.
 
 ## Observed Input Metrics
 
@@ -88,6 +96,15 @@ filter. Sampling is manual because CoreGraphics resets each listed tap's min
 and max to its average after the read. The UI therefore calls it an interval
 snapshot and never polls it.
 
+Diagnostics retain five readings and assess only after three. The callback
+engineering budget is 1 ms average and 8 ms interval tail; a tail warning
+requires two breached maxima. One isolated maximum is shown but never warns.
+Apple documents the min/max interval but not the average accumulation window,
+so repeated average readings are labeled separately. The future scheduler has
+a 2 ms average / 8 ms tail budget. These are product engineering targets, not
+perception thresholds attributed to the cited papers. `DYNAMICS.md` owns the
+complete contract.
+
 ## Ownership
 
 - `src/scroll_benchmark.rs`: pure matrix validation and trial state machine.
@@ -96,6 +113,7 @@ snapshot and never polls it.
 - `src/ui/scroll_benchmark.rs`: viewport, input-unit adapter, rendering and CSV.
 - `src/ui/local_export.rs`: shared atomic local write and CSV escaping.
 - `src/platform/macos/tap_metrics.rs`: bounded CoreGraphics adapter.
+- `src/latency_budget.rs`: bounded repeated-stall assessment.
 - `src/ui/debug_console.rs`: diagnostics presentation and explicit sampling.
 
 The remaining release gate is physical/manual QA across real wheel, trackpad,

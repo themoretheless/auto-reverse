@@ -24,6 +24,8 @@ Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
   interactive egui benchmark viewport in `src/ui/scroll_benchmark.rs`;
 - on-demand public event-tap interval latency snapshots in
   `src/platform/macos/tap_metrics.rs`;
+- pure repeated-stall budgets in `src/latency_budget.rs` and a non-live
+  scalar-axis dynamics prototype in `src/scroll_dynamics.rs`;
 - split UI helpers under `src/ui/` and pure tray rules under
   `src/platform/macos/tray/`;
 - CLI LaunchAgent startup support in `src/platform/macos/startup.rs`;
@@ -53,6 +55,10 @@ framework code inside `platform/macos`.
 - `CGGetEventTapList` resets listed taps' min/max latency to their average.
   Keep latency sampling explicit and label it as an interval snapshot; never
   poll it from the UI.
+- A latency warning requires repeated readings; use interval maxima for tail
+  stalls and never turn one maximum sample into a persistent warning.
+- Experimental dynamics remains discrete-wheel-only and outside the live event
+  tap until cancellation, bounded-time, scheduler, and fail-open gates pass.
 - The GUI and CLI runtime paths share `daemon_lock`; never allow two runtime
   instances. One runtime owns the active scroll tap and optional passive
   gesture tap together.

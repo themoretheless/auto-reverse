@@ -1,8 +1,10 @@
 //! On-demand interval latency snapshots for this process's active scroll tap.
 //!
 //! `CGGetEventTapList` resets each listed tap's minimum and maximum latency to
-//! its average as a side effect. Callers must therefore request snapshots
-//! explicitly and label them as interval data; this adapter never polls.
+//! its average as a side effect. Apple defines the min/max interval but not the
+//! average accumulation window. Callers must request snapshots explicitly and
+//! avoid presenting the average as an interval average; this adapter never
+//! polls.
 
 use std::error::Error;
 use std::fmt;
@@ -101,6 +103,8 @@ fn tap_latency(tap: &CGEventTapInformation) -> Result<TapLatency, TapMetricsErro
     if values
         .iter()
         .any(|value| !value.is_finite() || *value < 0.0)
+        || tap.minUsecLatency > tap.avgUsecLatency
+        || tap.avgUsecLatency > tap.maxUsecLatency
     {
         return Err(TapMetricsError::InvalidLatency {
             event_tap_id: tap.eventTapID,
@@ -220,6 +224,14 @@ mod tests {
     fn invalid_latency_is_rejected_before_presentation() {
         let mut tap = info(42, CGEventTapOptions::Default, 1);
         tap.maxUsecLatency = f32::NAN;
+        assert!(matches!(
+            tap_latency(&tap),
+            Err(TapMetricsError::InvalidLatency { .. })
+        ));
+
+        let mut tap = info(42, CGEventTapOptions::Default, 1);
+        tap.avgUsecLatency = 10.0;
+        tap.maxUsecLatency = 9.0;
         assert!(matches!(
             tap_latency(&tap),
             Err(TapMetricsError::InvalidLatency { .. })

@@ -14,6 +14,8 @@
 //!   transfer-function measurements.
 //! - [`event_rate`] and [`scroll_benchmark`]: observed arrival-rate and
 //!   target-acquisition diagnostics, with no GUI or macOS dependencies.
+//! - [`latency_budget`] and [`scroll_dynamics`]: repeated-stall assessment
+//!   and the pure experimental discrete-wheel state machine.
 //! - [`platform`]: everything OS-specific and unsafe. `platform::macos`
 //!   holds the CGEvent field mapping, the TCC permission calls, LaunchAgent
 //!   startup, and the CGEventTap runtime.
@@ -25,10 +27,12 @@ pub mod diagnostics;
 pub mod error;
 pub mod event_rate;
 pub mod input;
+pub mod latency_budget;
 pub mod platform;
 pub mod runtime;
 pub mod scroll;
 pub mod scroll_benchmark;
+pub mod scroll_dynamics;
 pub mod scroll_lab;
 pub mod scroll_trace;
 pub mod statistics;

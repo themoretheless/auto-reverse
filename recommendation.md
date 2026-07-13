@@ -1298,14 +1298,14 @@ R07. [Implemented] Benchmark запускает отдельные Known/Unknown
 R08. [Implemented] Compact/Full matrices пересекают несколько distances, реальных viewport heights и target tolerances вместо одного demo case.
 R09. [Implemented] `event_rate` и Diagnostics показывают observed p50/p95/max и пять histogram bins по device kind, исключают idle gaps и явно не называют это polling rate; visual QA остается.
 R10. [Implemented] `tap_metrics` и ручной Sample now показывают interval min/average/max через public `CGGetEventTapList`; polling запрещен, live active-tap QA остается.
-R11. [Improve] Зафиксировать callback/scheduler latency budget и предупреждать о long-tail stalls, а не о единичном sample.
-R12. [Improve] Расширить physical matrix: detent wheel, free-spin wheel, high-resolution wheel, Magic Mouse, built-in и external trackpad.
+R11. [Implemented] `latency_budget` фиксирует отдельные callback/scheduler budgets; Debug Console хранит пять ручных readings, начинает оценку после трех и предупреждает только при двух нарушениях, различая interval maxima и average readings; live UI QA остается.
+R12. [Implemented] Benchmark предлагает detent, free-spin, high-resolution wheel, Magic Mouse, built-in и external trackpad и сохраняет stable physical class в CSV; сами шесть физических прогонов остаются manual QA.
 
 ### Discrete-wheel dynamics
 
-R13. [Problem] Термин "smooth scrolling" сейчас не имеет измеримого product contract.
-R14. [Improve] Определить presets `Off`, `Precise`, `Balanced`, `Fast`, каждый с тестируемыми параметрами и понятной целью.
-R15. [Improve] Вынести dynamics в pure `scroll_dynamics` state machine без CoreGraphics, timers и config I/O.
+R13. [Done] `DYNAMICS.md` и executable tests фиксируют pass-through, immediate response, deadline, signed-distance epsilon, idle и scheduler-latency contract.
+R14. [Done] Presets `Off`, `Precise`, `Balanced`, `Fast` имеют stable keys, цели, immediate shares 100/35/55/75% и tail deadlines 0/120/90/60 ms.
+R15. [Done] `scroll_dynamics` - pure scalar-axis state machine без CoreGraphics, timers, threads и config I/O; live event tap ее пока намеренно не вызывает.
 R16. [Reject] Не применять новый dynamics engine к continuous Trackpad/Magic Mouse events.
 R17. [Improve] Хранить velocity, residual и momentum независимо для vertical и horizontal axes.
 R18. [Improve] Нормализовать timestamp delta и ограничивать его после sleep, debugger stall и scheduler pause.

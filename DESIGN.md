@@ -43,9 +43,12 @@ Diagnostics uses two compact toolbar rows so search, filters, live status and
 commands remain readable at the minimum window width. Observed input metrics
 stay collapsed until needed. Event rates use a scan-friendly table; tap latency
 is sampled by an explicit command because reading it resets the interval.
+Budget state is green only after enough readings, amber for repeated interval
+maxima, and red for repeated average readings; one outlier stays neutral.
 
 The Scroll Benchmark is a separate native viewport rather than another main
-settings tab. Setup uses segmented controls for target condition and matrix.
+settings tab. Setup uses a compact menu for the six physical input classes and
+segmented controls for target condition and matrix.
 During a trial the viewport height is the selected logical height, the target
 band stays centered, and only task state plus current case dimensions remain on
 screen. Results use a dense table and local CSV export; no benchmark controls

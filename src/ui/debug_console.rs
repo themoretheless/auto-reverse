@@ -4,10 +4,15 @@
 //! coordinator responsible only for opening/closing the viewport. Filtering
 //! and table rendering stay here; `export` owns CSV/trace file workflows.
 
+use std::collections::BTreeMap;
+
 use eframe::egui::{self, Color32, RichText};
 
 use crate::event_rate::{
     DeviceEventRate, EventRateSample, analyze_event_rates, millihertz_to_hertz,
+};
+use crate::latency_budget::{
+    CALLBACK_BUDGET, LatencyHistory, LatencyReading, LatencyStatus, MIN_READINGS_FOR_ASSESSMENT,
 };
 use crate::platform::macos::{debug_log, tap_metrics};
 
@@ -25,6 +30,7 @@ pub(super) struct State {
     benchmark_requested: bool,
     tap_latency: Option<tap_metrics::TapLatencySnapshot>,
     tap_latency_error: Option<String>,
+    tap_latency_history: BTreeMap<u32, LatencyHistory>,
 }
 
 impl State {
@@ -204,8 +210,10 @@ fn diagnostic_metrics(ui: &mut egui::Ui, events: &[debug_log::DebugEvent], state
                 {
                     match tap_metrics::current_process_scroll_snapshot() {
                         Ok(snapshot) => {
+                            state.tap_latency_error =
+                                record_latency_readings(&mut state.tap_latency_history, &snapshot)
+                                    .err();
                             state.tap_latency = Some(snapshot);
-                            state.tap_latency_error = None;
                         }
                         Err(error) => state.tap_latency_error = Some(error.to_string()),
                     }
@@ -226,6 +234,18 @@ fn diagnostic_metrics(ui: &mut egui::Ui, events: &[debug_log::DebugEvent], state
                             .weak(),
                     );
                 } else {
+                    ui.label(
+                        RichText::new(format!(
+                            "callback target: avg <= {:.1} ms; tail <= {:.1} ms",
+                            CALLBACK_BUDGET.average_us / 1_000.0,
+                            CALLBACK_BUDGET.tail_us / 1_000.0,
+                        ))
+                        .small()
+                        .weak(),
+                    )
+                    .on_hover_text(
+                        "Tail warning requires two breached interval maxima among the latest five readings; one outlier does not warn",
+                    );
                     for tap in &snapshot.active_scroll_taps {
                         ui.label(
                             RichText::new(format!(
@@ -239,6 +259,11 @@ fn diagnostic_metrics(ui: &mut egui::Ui, events: &[debug_log::DebugEvent], state
                             .small()
                             .monospace(),
                         );
+                        if let Some(history) = state.tap_latency_history.get(&tap.event_tap_id) {
+                            let assessment = history.assessment();
+                            let (label, color) = latency_assessment_label(assessment);
+                            ui.label(RichText::new(label).small().color(color));
+                        }
                     }
                     if snapshot.possibly_truncated {
                         ui.label(
@@ -250,6 +275,83 @@ fn diagnostic_metrics(ui: &mut egui::Ui, events: &[debug_log::DebugEvent], state
                 }
             }
         });
+}
+
+fn record_latency_readings(
+    histories: &mut BTreeMap<u32, LatencyHistory>,
+    snapshot: &tap_metrics::TapLatencySnapshot,
+) -> Result<(), String> {
+    let samples = snapshot
+        .active_scroll_taps
+        .iter()
+        .filter(|tap| tap.enabled)
+        .map(|tap| {
+            LatencyReading::new(f64::from(tap.average_us), f64::from(tap.maximum_us))
+                .map(|sample| (tap.event_tap_id, sample))
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    histories.retain(|event_tap_id, _| {
+        snapshot
+            .active_scroll_taps
+            .iter()
+            .any(|tap| tap.event_tap_id == *event_tap_id)
+    });
+    for (event_tap_id, sample) in samples {
+        histories
+            .entry(event_tap_id)
+            .or_insert_with(|| {
+                LatencyHistory::new(CALLBACK_BUDGET)
+                    .expect("the built-in callback latency budget is valid")
+            })
+            .push(sample);
+    }
+    Ok(())
+}
+
+fn latency_assessment_label(
+    assessment: crate::latency_budget::LatencyAssessment,
+) -> (String, Color32) {
+    match assessment.status {
+        LatencyStatus::Collecting => (
+            format!(
+                "collecting readings: {}/{}",
+                assessment.reading_count, MIN_READINGS_FOR_ASSESSMENT
+            ),
+            Color32::from_rgb(0x8E, 0x8E, 0x93),
+        ),
+        LatencyStatus::WithinBudget => {
+            let suffix = if assessment.tail_breaches == 1 {
+                " - one isolated tail outlier"
+            } else {
+                ""
+            };
+            (
+                format!(
+                    "within budget across {} readings{}",
+                    assessment.reading_count, suffix
+                ),
+                Color32::from_rgb(0x34, 0xA8, 0x53),
+            )
+        }
+        LatencyStatus::RepeatedTailStalls => (
+            format!(
+                "repeated tail stalls: {}/{} interval maxima, worst {:.1} ms",
+                assessment.tail_breaches,
+                assessment.reading_count,
+                assessment.worst_maximum_us / 1_000.0,
+            ),
+            Color32::from_rgb(0xE5, 0x9E, 0x2F),
+        ),
+        LatencyStatus::SustainedLatency => (
+            format!(
+                "sustained callback latency: {}/{} average readings over budget",
+                assessment.average_breaches, assessment.reading_count,
+            ),
+            Color32::from_rgb(0xC0, 0x39, 0x2B),
+        ),
+    }
 }
 
 fn rate_header(ui: &mut egui::Ui) {

@@ -8,6 +8,56 @@ pub const MAX_BENCHMARK_CASES: usize = 128;
 pub const MAX_DISTANCE_POINTS: u32 = 100_000;
 pub const MAX_VIEWPORT_HEIGHT_POINTS: u32 = 1_200;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PhysicalDeviceClass {
+    #[default]
+    DetentWheel,
+    FreeSpinWheel,
+    HighResolutionWheel,
+    MagicMouse,
+    BuiltInTrackpad,
+    ExternalTrackpad,
+}
+
+impl PhysicalDeviceClass {
+    pub const ALL: [Self; 6] = [
+        Self::DetentWheel,
+        Self::FreeSpinWheel,
+        Self::HighResolutionWheel,
+        Self::MagicMouse,
+        Self::BuiltInTrackpad,
+        Self::ExternalTrackpad,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DetentWheel => "detent_wheel",
+            Self::FreeSpinWheel => "free_spin_wheel",
+            Self::HighResolutionWheel => "high_resolution_wheel",
+            Self::MagicMouse => "magic_mouse",
+            Self::BuiltInTrackpad => "built_in_trackpad",
+            Self::ExternalTrackpad => "external_trackpad",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::DetentWheel => "Detent wheel",
+            Self::FreeSpinWheel => "Free-spin wheel",
+            Self::HighResolutionWheel => "High-resolution wheel",
+            Self::MagicMouse => "Magic Mouse",
+            Self::BuiltInTrackpad => "Built-in trackpad",
+            Self::ExternalTrackpad => "External trackpad",
+        }
+    }
+}
+
+impl fmt::Display for PhysicalDeviceClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetMode {
     Known,
@@ -126,6 +176,7 @@ impl BenchmarkMatrix {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrialResult {
+    pub physical_device: PhysicalDeviceClass,
     pub target_mode: TargetMode,
     pub case: BenchmarkCase,
     pub movement_time_us: u64,
@@ -136,6 +187,7 @@ pub struct TrialResult {
 
 #[derive(Debug, Clone)]
 pub struct BenchmarkTrial {
+    physical_device: PhysicalDeviceClass,
     target_mode: TargetMode,
     case: BenchmarkCase,
     started_us: u64,
@@ -152,11 +204,13 @@ pub struct BenchmarkTrial {
 
 impl BenchmarkTrial {
     pub fn new(
+        physical_device: PhysicalDeviceClass,
         target_mode: TargetMode,
         case: BenchmarkCase,
         started_us: u64,
     ) -> Result<Self, BenchmarkError> {
         Ok(Self {
+            physical_device,
             target_mode,
             case: case.validate()?,
             started_us,
@@ -233,6 +287,7 @@ impl BenchmarkTrial {
         }
 
         let result = TrialResult {
+            physical_device: self.physical_device,
             target_mode: self.target_mode,
             case: self.case,
             movement_time_us: timestamp_us.saturating_sub(self.started_us),
@@ -246,6 +301,10 @@ impl BenchmarkTrial {
 
     pub fn case(&self) -> BenchmarkCase {
         self.case
+    }
+
+    pub fn physical_device(&self) -> PhysicalDeviceClass {
+        self.physical_device
     }
 
     pub fn target_mode(&self) -> TargetMode {
@@ -369,11 +428,18 @@ mod tests {
 
     #[test]
     fn target_must_settle_for_sixty_six_milliseconds() {
-        let mut trial = BenchmarkTrial::new(TargetMode::Known, case(), 1_000).unwrap();
+        let mut trial = BenchmarkTrial::new(
+            PhysicalDeviceClass::DetentWheel,
+            TargetMode::Known,
+            case(),
+            1_000,
+        )
+        .unwrap();
         trial.apply_delta(10_000, 100.0).unwrap();
 
         assert_eq!(trial.finish_if_settled(75_999).unwrap(), None);
         let result = trial.finish_if_settled(76_000).unwrap().unwrap();
+        assert_eq!(result.physical_device, PhysicalDeviceClass::DetentWheel);
         assert_eq!(result.movement_time_us, 75_000);
         assert_eq!(result.switchback_count, 0);
         assert_eq!(result.maximum_overshoot_points, 0.0);
@@ -381,7 +447,13 @@ mod tests {
 
     #[test]
     fn switchbacks_only_start_after_overshooting_target_frame() {
-        let mut trial = BenchmarkTrial::new(TargetMode::Unknown, case(), 0).unwrap();
+        let mut trial = BenchmarkTrial::new(
+            PhysicalDeviceClass::FreeSpinWheel,
+            TargetMode::Unknown,
+            case(),
+            0,
+        )
+        .unwrap();
         trial.apply_delta(1, 40.0).unwrap();
         trial.apply_delta(2, -10.0).unwrap();
         assert_eq!(trial.switchback_count(), 0);
@@ -396,7 +468,13 @@ mod tests {
 
     #[test]
     fn origin_clamping_does_not_create_phantom_events() {
-        let mut trial = BenchmarkTrial::new(TargetMode::Known, case(), 0).unwrap();
+        let mut trial = BenchmarkTrial::new(
+            PhysicalDeviceClass::HighResolutionWheel,
+            TargetMode::Known,
+            case(),
+            0,
+        )
+        .unwrap();
         trial.apply_delta(1, -50.0).unwrap();
         assert_eq!(trial.position_points(), 0.0);
         assert_eq!(trial.finish_if_settled(SETTLE_TIME_US + 1).unwrap(), None);
@@ -417,10 +495,27 @@ mod tests {
             Err(BenchmarkError::InvalidTolerance { .. })
         ));
 
-        let mut trial = BenchmarkTrial::new(TargetMode::Known, case(), 10).unwrap();
+        let mut trial = BenchmarkTrial::new(
+            PhysicalDeviceClass::BuiltInTrackpad,
+            TargetMode::Known,
+            case(),
+            10,
+        )
+        .unwrap();
         assert!(matches!(
             trial.apply_delta(9, 1.0),
             Err(BenchmarkError::TimestampOutOfOrder { .. })
         ));
+    }
+
+    #[test]
+    fn physical_matrix_has_all_six_stable_device_classes() {
+        assert_eq!(PhysicalDeviceClass::ALL.len(), 6);
+        assert_eq!(PhysicalDeviceClass::ALL[0].as_str(), "detent_wheel");
+        assert_eq!(PhysicalDeviceClass::ALL[5].as_str(), "external_trackpad");
+        for device in PhysicalDeviceClass::ALL {
+            assert!(!device.label().is_empty());
+            assert!(!device.as_str().contains(' '));
+        }
     }
 }
