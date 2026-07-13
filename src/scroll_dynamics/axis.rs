@@ -219,6 +219,14 @@ impl ScrollDynamics {
                 .transpose()?
         };
 
+        let next_session_generation = boundary
+            .map(|_| {
+                self.session_generation
+                    .checked_add(1)
+                    .ok_or(DynamicsError::SessionGenerationOverflow)
+            })
+            .transpose()?;
+
         if let Some(boundary) = boundary {
             match boundary {
                 SessionBoundary::InitialInput => {}
@@ -229,7 +237,10 @@ impl ScrollDynamics {
                     self.cancel_pending(timestamp_us, CancellationReason::LongGap);
                 }
             }
-            self.begin_session(boundary);
+            self.begin_session(
+                boundary,
+                next_session_generation.expect("a session boundary has a checked generation"),
+            );
         }
 
         let due_tail = self.advance_tail(timestamp_us);
@@ -318,9 +329,9 @@ impl ScrollDynamics {
         }
     }
 
-    fn begin_session(&mut self, boundary: SessionBoundary) {
+    fn begin_session(&mut self, boundary: SessionBoundary, generation: u64) {
         self.reset_input_tracking();
-        self.session_generation = self.session_generation.saturating_add(1);
+        self.session_generation = generation;
         self.last_session_boundary = Some(boundary);
     }
 
@@ -621,5 +632,18 @@ mod tests {
         ));
         assert_eq!(dynamics.phase(), DynamicsPhase::Idle);
         assert!(dynamics.handle_input(0, 10.0).is_ok());
+    }
+
+    #[test]
+    fn overflowing_session_generation_is_rejected_without_mutation() {
+        let mut dynamics = ScrollDynamics::new(SmoothPreset::Balanced);
+        dynamics.session_generation = u64::MAX;
+        let before = dynamics.state();
+
+        assert_eq!(
+            dynamics.handle_input(0, 10.0),
+            Err(DynamicsError::SessionGenerationOverflow)
+        );
+        assert_eq!(dynamics.state(), before);
     }
 }

@@ -7,6 +7,7 @@ pub const SETTLE_TIME_US: u64 = 66_000;
 pub const MAX_BENCHMARK_CASES: usize = 128;
 pub const MAX_DISTANCE_POINTS: u32 = 100_000;
 pub const MAX_VIEWPORT_HEIGHT_POINTS: u32 = 1_200;
+pub const SCREEN_HEIGHT_REFERENCE_POINTS: u32 = 360;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PhysicalDeviceClass {
@@ -76,6 +77,46 @@ impl TargetMode {
 impl fmt::Display for TargetMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BenchmarkTransfer {
+    #[default]
+    Baseline,
+    ScreenHeightHypothesis,
+}
+
+impl BenchmarkTransfer {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Baseline => "baseline",
+            Self::ScreenHeightHypothesis => "screen_height_hypothesis",
+        }
+    }
+
+    /// Applies the experimental transfer used only by benchmark trials.
+    /// Runtime dynamics and configuration deliberately have no dependency on
+    /// this type.
+    pub fn transform_delta(
+        self,
+        case: BenchmarkCase,
+        delta_points: f64,
+    ) -> Result<f64, BenchmarkError> {
+        if !delta_points.is_finite() {
+            return Err(BenchmarkError::NonFiniteDelta);
+        }
+        let transformed = match self {
+            Self::Baseline => delta_points,
+            Self::ScreenHeightHypothesis => {
+                delta_points * f64::from(case.viewport_height_points)
+                    / f64::from(SCREEN_HEIGHT_REFERENCE_POINTS)
+            }
+        };
+        if !transformed.is_finite() {
+            return Err(BenchmarkError::NonFiniteDelta);
+        }
+        Ok(transformed)
     }
 }
 
@@ -178,6 +219,7 @@ impl BenchmarkMatrix {
 pub struct TrialResult {
     pub physical_device: PhysicalDeviceClass,
     pub target_mode: TargetMode,
+    pub transfer: BenchmarkTransfer,
     pub case: BenchmarkCase,
     pub movement_time_us: u64,
     pub switchback_count: usize,
@@ -189,6 +231,7 @@ pub struct TrialResult {
 pub struct BenchmarkTrial {
     physical_device: PhysicalDeviceClass,
     target_mode: TargetMode,
+    transfer: BenchmarkTransfer,
     case: BenchmarkCase,
     started_us: u64,
     last_timestamp_us: u64,
@@ -209,9 +252,26 @@ impl BenchmarkTrial {
         case: BenchmarkCase,
         started_us: u64,
     ) -> Result<Self, BenchmarkError> {
+        Self::with_transfer(
+            physical_device,
+            target_mode,
+            BenchmarkTransfer::Baseline,
+            case,
+            started_us,
+        )
+    }
+
+    pub fn with_transfer(
+        physical_device: PhysicalDeviceClass,
+        target_mode: TargetMode,
+        transfer: BenchmarkTransfer,
+        case: BenchmarkCase,
+        started_us: u64,
+    ) -> Result<Self, BenchmarkError> {
         Ok(Self {
             physical_device,
             target_mode,
+            transfer,
             case: case.validate()?,
             started_us,
             last_timestamp_us: started_us,
@@ -237,9 +297,9 @@ impl BenchmarkTrial {
         if self.result.is_some() {
             return Err(BenchmarkError::TrialFinished);
         }
-        if !document_delta_points.is_finite() {
-            return Err(BenchmarkError::NonFiniteDelta);
-        }
+        let document_delta_points = self
+            .transfer
+            .transform_delta(self.case, document_delta_points)?;
         if document_delta_points.abs() <= f64::EPSILON {
             return Ok(());
         }
@@ -289,6 +349,7 @@ impl BenchmarkTrial {
         let result = TrialResult {
             physical_device: self.physical_device,
             target_mode: self.target_mode,
+            transfer: self.transfer,
             case: self.case,
             movement_time_us: timestamp_us.saturating_sub(self.started_us),
             switchback_count: self.switchback_count,
@@ -309,6 +370,10 @@ impl BenchmarkTrial {
 
     pub fn target_mode(&self) -> TargetMode {
         self.target_mode
+    }
+
+    pub fn transfer(&self) -> BenchmarkTransfer {
+        self.transfer
     }
 
     pub fn position_points(&self) -> f64 {
@@ -517,5 +582,67 @@ mod tests {
             assert!(!device.label().is_empty());
             assert!(!device.as_str().contains(' '));
         }
+    }
+
+    #[test]
+    fn screen_height_scaling_is_benchmark_only_and_baseline_is_default() {
+        let benchmark_case = case();
+        assert_eq!(BenchmarkTransfer::default(), BenchmarkTransfer::Baseline);
+        assert_eq!(
+            BenchmarkTransfer::Baseline
+                .transform_delta(benchmark_case, 12.5)
+                .unwrap(),
+            12.5
+        );
+
+        let short_viewport = BenchmarkCase {
+            viewport_height_points: 240,
+            ..benchmark_case
+        };
+        let tall_viewport = BenchmarkCase {
+            viewport_height_points: 480,
+            ..benchmark_case
+        };
+        assert_eq!(
+            BenchmarkTransfer::ScreenHeightHypothesis
+                .transform_delta(short_viewport, 9.0)
+                .unwrap(),
+            6.0
+        );
+        assert_eq!(
+            BenchmarkTransfer::ScreenHeightHypothesis
+                .transform_delta(tall_viewport, 9.0)
+                .unwrap(),
+            12.0
+        );
+
+        let trial = BenchmarkTrial::new(
+            PhysicalDeviceClass::DetentWheel,
+            TargetMode::Known,
+            benchmark_case,
+            0,
+        )
+        .unwrap();
+        assert_eq!(trial.transfer(), BenchmarkTransfer::Baseline);
+    }
+
+    #[test]
+    fn benchmark_result_records_the_experimental_transfer() {
+        let mut trial = BenchmarkTrial::with_transfer(
+            PhysicalDeviceClass::HighResolutionWheel,
+            TargetMode::Unknown,
+            BenchmarkTransfer::ScreenHeightHypothesis,
+            case(),
+            0,
+        )
+        .unwrap();
+        trial.apply_delta(1, 150.0).unwrap();
+        assert_eq!(trial.position_points(), 100.0);
+
+        let result = trial
+            .finish_if_settled(SETTLE_TIME_US + 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.transfer, BenchmarkTransfer::ScreenHeightHypothesis);
     }
 }

@@ -65,6 +65,13 @@ framework code inside `platform/macos`.
 - Direction/gap/external cancellation must record signed canceled distance;
   never hide it as conservation error. Sub-threshold momentum is flushed, not
   dropped.
+- Every experimental tail sample carries the two-axis session generation,
+  wake id, due-anchored 8 ms TTL, and synthetic provenance. A late wake or
+  dynamics/scheduler fault must clear the active wake and latch exact fail-open
+  until explicit reset.
+- Events posted by a future scheduler must set the `AUTORVRS` marker in public
+  `kCGEventSourceUserData`; normalized marked events are synthetic and cannot
+  re-enter reversal or dynamics policy.
 - The GUI and CLI runtime paths share `daemon_lock`; never allow two runtime
   instances. One runtime owns the active scroll tap and optional passive
   gesture tap together.

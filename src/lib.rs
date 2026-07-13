@@ -16,6 +16,8 @@
 //!   target-acquisition diagnostics, with no GUI or macOS dependencies.
 //! - [`latency_budget`] and [`scroll_dynamics`]: repeated-stall assessment
 //!   and the pure experimental transactional two-axis wheel model.
+//! - [`scroll_scheduler`]: pure generation/TTL wake leases and fail-open
+//!   orchestration for that model; it owns no timer or platform object.
 //! - [`platform`]: everything OS-specific and unsafe. `platform::macos`
 //!   holds the CGEvent field mapping, the TCC permission calls, LaunchAgent
 //!   startup, and the CGEventTap runtime.
@@ -34,6 +36,7 @@ pub mod scroll;
 pub mod scroll_benchmark;
 pub mod scroll_dynamics;
 pub mod scroll_lab;
+pub mod scroll_scheduler;
 pub mod scroll_trace;
 pub mod statistics;
 #[cfg(all(feature = "gui", target_os = "macos"))]

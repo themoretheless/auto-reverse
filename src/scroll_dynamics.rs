@@ -246,6 +246,7 @@ pub enum DynamicsError {
         timestamp_us: u64,
         duration_us: u64,
     },
+    SessionGenerationOverflow,
 }
 
 impl fmt::Display for DynamicsError {
@@ -274,6 +275,9 @@ impl fmt::Display for DynamicsError {
                 f,
                 "scroll dynamics deadline overflows: timestamp={timestamp_us}, duration={duration_us}"
             ),
+            Self::SessionGenerationOverflow => {
+                f.write_str("scroll dynamics session generation overflowed")
+            }
         }
     }
 }

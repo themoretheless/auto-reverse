@@ -16,8 +16,8 @@ below in fixed batches of five.
 | 3 | R11-R15 | Implemented; six-device physical and live latency UI QA remain |
 | 4 | R16-R20 | Implemented in pure model; live runtime remains unchanged |
 | 5 | R21-R25 | Implemented in pure model; platform triggers remain non-live |
-| 6 | R26-R30 | Next |
-| 7 | R31-R35 | Pending |
+| 6 | R26-R30 | Implemented as pure safety contract; platform timer remains non-live |
+| 7 | R31-R35 | Next |
 | 8 | R36-R40 | Pending |
 | 9 | R41-R45 | Pending |
 | 10 | R46-R50 | Pending |

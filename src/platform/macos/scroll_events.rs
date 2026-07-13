@@ -12,6 +12,10 @@ use crate::device::{DeviceIdentity, DeviceKind};
 use crate::input::ScrollEvent;
 use crate::scroll::{self, TransformDecision};
 
+/// Eight-byte ASCII marker (`AUTORVRS`) stored in the public 64-bit
+/// `kCGEventSourceUserData` field on events posted by Auto Reverse.
+pub const AUTO_REVERSE_SYNTHETIC_MARKER: i64 = 0x4155_544f_5256_5253;
+
 /// True for a discrete-notch wheel (a physical mouse). False for continuous
 /// scrolling, which covers trackpads and, indistinguishably, Apple's Magic
 /// Mouse - see the limitations note in recommendation.md.
@@ -26,6 +30,18 @@ pub fn event_source_pid(event: &CGEvent) -> i64 {
     event.get_integer_value_field(EventField::EVENT_SOURCE_UNIX_PROCESS_ID)
 }
 
+pub fn mark_auto_reverse_synthetic(event: &CGEvent) {
+    event.set_integer_value_field(
+        EventField::EVENT_SOURCE_USER_DATA,
+        AUTO_REVERSE_SYNTHETIC_MARKER,
+    );
+}
+
+pub fn is_auto_reverse_synthetic(event: &CGEvent) -> bool {
+    event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA)
+        == AUTO_REVERSE_SYNTHETIC_MARKER
+}
+
 pub fn event_from_cg_event(
     event: &CGEvent,
     device_kind: DeviceKind,
@@ -37,7 +53,7 @@ pub fn event_from_cg_event(
         delta_horizontal: event
             .get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2),
         continuous: !is_physical_mouse_wheel(event),
-        synthetic: false,
+        synthetic: is_auto_reverse_synthetic(event),
         source_pid: event.get_integer_value_field(EventField::EVENT_SOURCE_UNIX_PROCESS_ID),
         identity,
     }
@@ -169,6 +185,40 @@ mod tests {
 
         event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS, 0);
         assert!(is_physical_mouse_wheel(&event));
+    }
+
+    #[test]
+    fn synthetic_marker_round_trips_into_the_normalized_event() {
+        let event = new_test_event();
+        assert!(!is_auto_reverse_synthetic(&event));
+        assert!(!event_from_cg_event(&event, DeviceKind::Mouse, None).synthetic);
+
+        mark_auto_reverse_synthetic(&event);
+
+        assert!(is_auto_reverse_synthetic(&event));
+        assert_eq!(
+            event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA),
+            AUTO_REVERSE_SYNTHETIC_MARKER
+        );
+        assert!(event_from_cg_event(&event, DeviceKind::Mouse, None).synthetic);
+    }
+
+    #[test]
+    fn marked_synthetic_event_cannot_reenter_reversal_policy() {
+        let event = new_test_event();
+        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1, 3);
+        mark_auto_reverse_synthetic(&event);
+        let original = event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
+
+        let decision =
+            apply_config_in_place(&event, &AppConfig::default(), DeviceKind::Mouse, None);
+
+        assert!(decision.original.synthetic);
+        assert!(!decision.changed());
+        assert_eq!(
+            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1),
+            original
+        );
     }
 
     #[test]

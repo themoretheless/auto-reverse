@@ -95,10 +95,21 @@ pure suite now proves:
 - remaining momentum at or below 0.25 pt flushes immediately, then idle samples
   do not creep;
 - click and new-physical-action triggers obey independent policy flags;
-- continuous input bypasses dynamics without mutating discrete state.
+- continuous input bypasses dynamics without mutating discrete state;
+- self-synthetic input is exact bypass and cannot mutate scheduler state;
+- every tail sample carries generation, wake id, due-anchored 8 ms TTL, and
+  synthetic tag; a 5 ms-late callback retains only 3 ms of posting lifetime;
+- stale wake/sample races are discarded, scheduler is absent in idle, and
+  dynamics/scheduler faults latch exact fail-open until explicit reset;
+- fault reset preserves wake-id monotonicity, while a reset request in healthy
+  state leaves the active wake untouched;
+- screen-height scaling exists only as a recorded benchmark variant, with
+  baseline remaining the default.
 
 Still required before live integration and then on all six physical classes:
 
 - the tail completes by its preset deadline plus the 8 ms scheduler budget;
 - platform click/action hooks produce the expected pure cancellation trigger;
-- any invalid state or scheduler failure passes through the physical event.
+- the future platform timer/poster honors wake/sample validation and only
+  writes marked `DeltaAxis1/2` events;
+- physical fail-open and TTL behavior pass under induced stalls.

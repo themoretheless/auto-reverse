@@ -2,8 +2,8 @@
 
 This document makes "smooth scrolling" measurable before Auto Reverse changes
 live input. The current implementation is a pure experimental model only:
-`CGEventTap` does not call it, no scheduler exists, and all installed scrolling
-behavior remains the existing raw/reverse policy.
+`CGEventTap` does not call it, the scheduler contract owns no platform timer,
+and all installed scrolling behavior remains the existing raw/reverse policy.
 
 ## Scope
 
@@ -36,13 +36,13 @@ For input samples on either axis:
 5. **No idle creep:** after completion, later samples emit zero.
 6. **Continuous bypass:** continuous input is returned exactly and leaves both
    discrete states byte-for-byte equivalent at the public snapshot boundary.
-7. **Adapter budget:** a future scheduler may wake late by at most its 8 ms tail
-   budget; it may not silently extend the preset curve.
+7. **Adapter budget:** a future platform timer may wake late by at most the
+   sample's 8 ms TTL; it may not silently extend the preset curve.
 
 Direction resets, opposite-input cancellation, long-gap sessions, stop
 threshold, and physical-action cancellation are implemented in the pure model.
-Scheduler tagging, idle lifecycle, fail-open behavior, and physical acceptance
-remain in R26-R30. The model is not release-enabled until those gates pass.
+Pure scheduler tagging, idle lifecycle, and fail-open behavior are implemented.
+Runtime opt-in and physical acceptance remain required before release enablement.
 
 ## Axis State
 
@@ -89,6 +89,35 @@ the engine, never firmware metadata or one isolated interval. Raw and clamped
 - External cancellation affects both axes transactionally and returns the
   signed canceled distance for diagnostics.
 
+## Scheduler Safety Contract
+
+- `ScrollScheduler` is a pure caller-driven facade. It owns no clock, timer,
+  thread, CoreGraphics event, or config flag.
+- A wake exists only while either axis has pending distance. Completing the
+  last tail removes the wake; polling an idle scheduler cannot emit output.
+- Every wake has a unique wake id and the current vertical/horizontal session
+  generations. A replaced callback is discarded even if direction did not
+  change; a generation mismatch cannot cross into a new session.
+- Every produced `ScheduledSample` repeats that generation and wake id, expires
+  8 ms after the planned wake (not 8 ms after a late callback), and requires
+  `AutoReverseSynthetic` provenance. Samples are validated again immediately
+  before a future platform post.
+- macOS synthetic events use the public 64-bit `kCGEventSourceUserData` field
+  with the `AUTORVRS` marker. Normalization maps the marker to
+  `ScrollEvent.synthetic`, which the existing pure reversal policy ignores.
+- Any dynamics or scheduler error clears pending state and the active wake,
+  returns the current physical delta exactly, and latches fail-open until an
+  explicit reset. Fault recovery cannot happen silently inside a callback.
+- A callback arriving after its due-anchored TTL is a scheduler fault: stale
+  momentum is not sampled or posted, and later physical input remains exact
+  fail-open until reset.
+- Session and wake counters use checked arithmetic; overflow is an error, not
+  a token reuse. Disarm/fault reset preserves the wake-id counter, and
+  `reset_after_fault` is a no-op while healthy so it cannot cancel a live tail.
+
+The platform posting adapter and timer remain deliberately absent. Therefore
+this contract changes no live scrolling behavior.
+
 ## Presets
 
 | Preset | Immediate share | Tail deadline | Product goal |
@@ -100,6 +129,18 @@ the engine, never firmware metadata or one isolated interval. Raw and clamped
 
 These are versioned experimental parameters, not claims copied from the cited
 papers or competitor defaults. Changes require benchmark evidence and tests.
+
+## Benchmark-Only Height Hypothesis
+
+`BenchmarkTransfer::Baseline` is the default and leaves movement unchanged.
+An explicitly constructed benchmark trial may instead select
+`ScreenHeightHypothesis`, which multiplies input by
+`case.viewport_height_points / 360`. The controlled test viewport is a proxy
+for comparing heights, not a claim about the user's physical display.
+
+The selected transfer is stored in `TrialResult` and CSV. No runtime config,
+settings control, event-tap path, or dynamics preset imports this hypothesis.
+Promoting it beyond the benchmark requires comparative physical evidence.
 
 ## Latency Budget
 
@@ -134,8 +175,8 @@ Every benchmark session records one explicit physical class:
 
 This is test metadata, not a promise that macOS exposes those identities on
 every event. CSV stores a stable `physical_device` value alongside target mode,
-distance, viewport, tolerance, movement time, switchbacks, overshoot, and event
-count.
+transfer hypothesis, distance, viewport, tolerance, movement time, switchbacks,
+overshoot, and event count.
 
 ## Ownership
 
@@ -145,9 +186,12 @@ count.
   signed-distance ledger.
 - `src/scroll_dynamics/rate.rs`: bounded `dt` and fixed recent-rate window.
 - `src/scroll_dynamics/preset.rs`: stable preset vocabulary and parameters.
+- `src/scroll_scheduler.rs`: fail-open orchestration and caller-driven polling.
+- `src/scroll_scheduler/schedule.rs`: wake ids, generation pairs, sample TTL,
+  synthetic provenance, and stale-sample disposition.
 - `src/scroll_benchmark.rs`: physical class vocabulary and trial results.
 - `src/ui/debug_console.rs`: manual callback samples and status presentation.
 - `src/ui/scroll_benchmark.rs`: physical-class picker and CSV export.
 
-The future `platform/macos/scroll_scheduler.rs` may consume pure emissions but
-must not own the curve, preset resolution, or product policy.
+The future `platform/macos/scroll_scheduler.rs` may consume pure wake tokens and
+samples but must not own the curve, preset resolution, or product policy.

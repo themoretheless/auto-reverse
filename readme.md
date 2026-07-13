@@ -64,6 +64,10 @@ Implemented:
   and explicit click/action cancellation are tested, while canceled distance
   remains visible in the ledger; the model has no CoreGraphics, timer, thread,
   or config I/O dependency;
+- a non-live pure scheduler safety contract with unique wake ids, two-axis
+  session generations, due-anchored 8 ms sample TTL, mandatory synthetic
+  provenance, idle teardown, and latched fail-open; macOS normalization
+  recognizes the public `kCGEventSourceUserData` self marker before policy;
 - process-local 15-minute pause that leaves persisted settings untouched;
 - typed event-tap lifecycle with explicit started/already-running/stopped/failed
   events rather than timeout-inferred booleans;
@@ -87,8 +91,8 @@ Still missing:
 - an update strategy;
 - physical-device/manual visual validation of the new benchmark and live tap
   latency snapshot;
-- scheduler, runtime opt-in, platform cancellation hooks, and physical
-  acceptance for the experimental dynamics model.
+- platform timer/posting adapter, runtime opt-in, cancellation hooks, and
+  physical acceptance for the experimental dynamics model.
 
 ## Commands
 
@@ -490,10 +494,11 @@ The implementation order is intentionally conservative:
 2. The pure two-axis model now has continuous bypass, independent axis state,
    bounded time/rate estimation, signed-distance/cancellation accounting,
    direction/gap sessions, stop threshold, and explicit click/action policy,
-   but remains intentionally disconnected from live input. Next: tagged
-   opt-in fail-open scheduler and compatibility experiments.
-3. Add inherited per-device presets and compact UX only after the measurements
-   justify the model.
+   but remains intentionally disconnected from live input. Its pure scheduler
+   contract now adds tagged generation/TTL samples, idle teardown, and latched
+   fail-open without creating a timer.
+3. Add inherited per-device presets and source compatibility rules next; expose
+   live dynamics only after measurements and the physical matrix justify it.
 
 Trackpad and Magic Mouse continuous events are not smoothed again. Any future
 scheduler must still write only `DeltaAxis1/2`; private touch APIs, HID seizure,

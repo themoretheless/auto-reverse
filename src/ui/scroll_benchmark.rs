@@ -687,14 +687,15 @@ fn export_results(
 
 fn results_csv(results: &[TrialResult]) -> String {
     let mut csv = String::from(
-        "physical_device,target_mode,distance_points,viewport_height_points,tolerance_points,movement_time_ms,switchbacks,maximum_overshoot_points,event_count\n",
+        "physical_device,target_mode,transfer,distance_points,viewport_height_points,tolerance_points,movement_time_ms,switchbacks,maximum_overshoot_points,event_count\n",
     );
     for result in results {
         writeln!(
             csv,
-            "{},{},{},{},{},{:.3},{},{:.3},{}",
+            "{},{},{},{},{},{},{:.3},{},{:.3},{}",
             result.physical_device.as_str(),
             result.target_mode.as_str(),
+            result.transfer.as_str(),
             result.case.distance_points,
             result.case.viewport_height_points,
             result.case.tolerance_points,
@@ -711,6 +712,7 @@ fn results_csv(results: &[TrialResult]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scroll_benchmark::BenchmarkTransfer;
 
     #[test]
     fn setup_value_lists_are_sorted_and_deduplicated() {
@@ -738,6 +740,7 @@ mod tests {
         let csv = results_csv(&[TrialResult {
             physical_device: PhysicalDeviceClass::MagicMouse,
             target_mode: TargetMode::Unknown,
+            transfer: BenchmarkTransfer::Baseline,
             case: BenchmarkCase {
                 distance_points: 960,
                 viewport_height_points: 360,
@@ -749,7 +752,7 @@ mod tests {
             event_count: 9,
         }]);
 
-        assert!(csv.starts_with("physical_device,target_mode,distance_points"));
-        assert!(csv.contains("magic_mouse,unknown,960,360,20,1250.000,2,14.500,9"));
+        assert!(csv.starts_with("physical_device,target_mode,transfer,distance_points"));
+        assert!(csv.contains("magic_mouse,unknown,baseline,960,360,20,1250.000,2,14.500,9"));
     }
 }
