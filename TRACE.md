@@ -28,6 +28,8 @@ a config otherwise. It reports:
 
 - input magnitude min/p50/p95/max;
 - event interval min/p50/p95/max;
+- observed event-rate p50/p95/max and histogram bins by device class, excluding
+  intervals beyond the configured clutch gap;
 - duration and clutch-session count;
 - direction changes;
 - observed-versus-replayed matches;
@@ -107,7 +109,9 @@ requiring omitted context instead of pretending the replay is exact.
 - `src/diagnostics.rs`: stable axis/reason vocabulary.
 - `src/scroll_trace.rs`: schema, bounds, TOML and deterministic replay.
 - `src/scroll_lab.rs`: distributions, sessions, direction changes and baseline.
-- `src/ui/debug_console/export.rs`: Debug Console projection and atomic export.
+- `src/event_rate.rs`: observed delivery-rate distributions.
+- `src/ui/debug_console/export.rs`: Debug Console projection and export workflow.
+- `src/ui/local_export.rs`: shared atomic local replacement.
 - `src/main.rs`: bounded file loading and text report orchestration.
 
 Changing fields requires a schema-version decision, fixtures for the previous

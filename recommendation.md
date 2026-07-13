@@ -1282,8 +1282,9 @@ N400. [Done] Native Save Panel, structured receipt, atomic export и Reveal in F
 
 ## Research follow-up после 10 дополнительных репозиториев и научных работ
 
-Полный разбор источников и границ находится в `RESEARCH.md`. Эти пункты не
-считаются реализованными: сначала измерение, затем opt-in experiment, затем UX.
+Полный разбор источников и границ находится в `RESEARCH.md`. Статус каждого
+пункта ниже является фактическим: measurement внедряется пакетами до opt-in
+dynamics experiment, а product UX строится только поверх проверенных метрик.
 
 ### Measurement and evidence
 
@@ -1292,11 +1293,11 @@ R02. [Done] Schema v1 хранит relative monotonic timestamp, axis input/outp
 R03. [Done] `scroll_trace` детерминированно прогоняет один trace через pure policy и маркирует решения, требующие намеренно удаленного context.
 R04. [Done] `scroll_lab` и CLI `trace-lab` измеряют magnitude, interval, direction changes, duration, clutch sessions и per-axis distances.
 R05. [Done] Каждый lab report всегда содержит configurable constant-gain baseline рядом с replayed и observed output.
-R06. [Research] Добавить ScrollTest-style harness с movement time, switchbacks и maximum overshoot.
-R07. [Research] Разделить benchmark на известную и неизвестную позицию цели: у этих задач разная стратегия пользователя.
-R08. [Research] Прогонять несколько scroll distances, viewport heights и target tolerances вместо одного demo case.
-R09. [Improve] Собирать event-rate histogram p50/p95/max по типу устройства, не делая вывод по заявленному polling rate.
-R10. [Improve] Показать interval snapshot min/average/max tap latency через public `CGGetEventTapList`.
+R06. [Implemented] Debug Console открывает ScrollTest-style harness с movement time, switchbacks, maximum overshoot, 66 ms settle и per-trial CSV; physical manual QA остается.
+R07. [Implemented] Benchmark запускает отдельные Known/Unknown sessions и сохраняет condition в каждом результате; ручная проверка стратегии пользователя остается.
+R08. [Implemented] Compact/Full matrices пересекают несколько distances, реальных viewport heights и target tolerances вместо одного demo case.
+R09. [Implemented] `event_rate` и Diagnostics показывают observed p50/p95/max и пять histogram bins по device kind, исключают idle gaps и явно не называют это polling rate; visual QA остается.
+R10. [Implemented] `tap_metrics` и ручной Sample now показывают interval min/average/max через public `CGGetEventTapList`; polling запрещен, live active-tap QA остается.
 R11. [Improve] Зафиксировать callback/scheduler latency budget и предупреждать о long-tail stalls, а не о единичном sample.
 R12. [Improve] Расширить physical matrix: detent wheel, free-spin wheel, high-resolution wheel, Magic Mouse, built-in и external trackpad.
 

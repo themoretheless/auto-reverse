@@ -12,6 +12,8 @@
 //!   out. No OS types anywhere.
 //! - [`scroll_trace`] and [`scroll_lab`]: bounded replay data and pure
 //!   transfer-function measurements.
+//! - [`event_rate`] and [`scroll_benchmark`]: observed arrival-rate and
+//!   target-acquisition diagnostics, with no GUI or macOS dependencies.
 //! - [`platform`]: everything OS-specific and unsafe. `platform::macos`
 //!   holds the CGEvent field mapping, the TCC permission calls, LaunchAgent
 //!   startup, and the CGEventTap runtime.
@@ -21,11 +23,14 @@ pub mod device;
 pub mod device_classifier;
 pub mod diagnostics;
 pub mod error;
+pub mod event_rate;
 pub mod input;
 pub mod platform;
 pub mod runtime;
 pub mod scroll;
+pub mod scroll_benchmark;
 pub mod scroll_lab;
 pub mod scroll_trace;
+pub mod statistics;
 #[cfg(all(feature = "gui", target_os = "macos"))]
 pub mod ui;

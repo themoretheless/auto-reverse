@@ -18,6 +18,12 @@ Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
 - an egui settings window in `src/ui.rs`;
 - a native AppKit menu-bar item in `src/platform/macos/tray.rs`;
 - a process-local temporary pause in `src/runtime.rs`;
+- privacy-bounded trace/replay and observed-rate diagnostics in
+  `src/scroll_trace.rs`, `src/scroll_lab.rs`, and `src/event_rate.rs`;
+- a pure ScrollTest-style state machine in `src/scroll_benchmark.rs` plus an
+  interactive egui benchmark viewport in `src/ui/scroll_benchmark.rs`;
+- on-demand public event-tap interval latency snapshots in
+  `src/platform/macos/tap_metrics.rs`;
 - split UI helpers under `src/ui/` and pure tray rules under
   `src/platform/macos/tray/`;
 - CLI LaunchAgent startup support in `src/platform/macos/startup.rs`;
@@ -44,6 +50,9 @@ framework code inside `platform/macos`.
 - Missing two-finger observations do not prove a Magic Mouse. An exclusive
   public IOHID product inventory wins; unknown inventory falls back to
   Trackpad, and gesture timing is used only when both sources are connected.
+- `CGGetEventTapList` resets listed taps' min/max latency to their average.
+  Keep latency sampling explicit and label it as an interval snapshot; never
+  poll it from the UI.
 - The GUI and CLI runtime paths share `daemon_lock`; never allow two runtime
   instances. One runtime owns the active scroll tap and optional passive
   gesture tap together.
@@ -64,6 +73,7 @@ framework code inside `platform/macos`.
 - Install release app: `scripts/install-app-bundle.sh`
 - Uninstall app: `scripts/uninstall-app-bundle.sh`
 - Run GUI: `cargo run -- ui`
+- Run benchmark: `cargo run -- benchmark`
 - Run headless tap: `cargo run -- run`
 - Diagnostics: `cargo run -- doctor --no-create`
 - Devices: `cargo run -- devices`

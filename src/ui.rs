@@ -65,7 +65,9 @@ use crate::platform::macos::{
 use crate::runtime::{DEFAULT_PAUSE_DURATION, RuntimeControl};
 
 mod debug_console;
+mod local_export;
 mod runtime;
+mod scroll_benchmark;
 mod theme;
 
 use theme::{
@@ -90,6 +92,16 @@ const WINDOW_HEIGHT: f32 = 640.0;
 /// user which one is authoritative. If this lock is already held, this
 /// process leaves an activation request for the owner and exits cleanly.
 pub fn run_settings_window() -> Result<(), String> {
+    run_window(false)
+}
+
+/// Opens the same single-instance settings/runtime process with the advanced
+/// Scroll Benchmark viewport visible on its first frame.
+pub fn run_benchmark_window() -> Result<(), String> {
+    run_window(true)
+}
+
+fn run_window(open_benchmark: bool) -> Result<(), String> {
     let ui_lock_path = daemon_lock::default_path().with_file_name("ui.lock");
     let Some(ui_instance_guard) =
         activation::acquire_or_activate(&ui_lock_path).map_err(|error| error.to_string())?
@@ -119,7 +131,10 @@ pub fn run_settings_window() -> Result<(), String> {
         options,
         Box::new(move |cc| {
             install_system_fonts(&cc.egui_ctx);
-            Ok(Box::new(SettingsApp::load(activation_inbox)))
+            Ok(Box::new(SettingsApp::load(
+                activation_inbox,
+                open_benchmark,
+            )))
         }),
     )
     .map_err(|error| format!("could not open the settings window: {error}"))?;
@@ -256,6 +271,8 @@ struct SettingsApp {
     /// from the settings-window fields above since it is only ever touched
     /// while `show_debug_console` is true.
     debug_console: debug_console::State,
+    show_scroll_benchmark: bool,
+    scroll_benchmark: scroll_benchmark::State,
 }
 
 /// The three tabs of the settings window (handoff "1b" - segmented tabs).
@@ -270,7 +287,7 @@ enum SettingsTab {
 }
 
 impl SettingsApp {
-    fn load(activation_inbox: activation::ActivationInbox) -> Self {
+    fn load(activation_inbox: activation::ActivationInbox, show_scroll_benchmark: bool) -> Self {
         // One-shot, mirrors the old run_event_tap(): the request_* calls are
         // what actually register this binary with TCC (and pop the native
         // consent dialogs) - the has_* checks the permissions panel uses
@@ -318,6 +335,8 @@ impl SettingsApp {
             confirm_restore_defaults: false,
             show_debug_console: false,
             debug_console: debug_console::State::default(),
+            show_scroll_benchmark,
+            scroll_benchmark: scroll_benchmark::State::default(),
         };
         // Opening the app is now also how scroll reversal starts, not just
         // where you look at settings. If permissions are missing, leave the
@@ -691,7 +710,14 @@ impl eframe::App for SettingsApp {
         if self.show_debug_console && debug_console::show_viewport(ctx, &mut self.debug_console) {
             self.show_debug_console = false;
         }
-
+        if self.debug_console.take_benchmark_request() {
+            self.show_scroll_benchmark = true;
+        }
+        if self.show_scroll_benchmark
+            && scroll_benchmark::show_viewport(ctx, &mut self.scroll_benchmark)
+        {
+            self.show_scroll_benchmark = false;
+        }
         // The tray menu can ask for attention (Open Settings while hidden,
         // or Quit) outside of any window input event, so keep ticking
         // instead of only-on-input - this is what keeps `logic` running at

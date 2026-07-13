@@ -21,6 +21,7 @@ use std::sync::{Arc, RwLock};
 use auto_reverse::config::{AppConfig, ConfigStore};
 use auto_reverse::device_classifier;
 use auto_reverse::error::{AppError, AppResult};
+use auto_reverse::event_rate::{DeviceEventRate, millihertz_to_hertz};
 use auto_reverse::input::ScrollEvent;
 use auto_reverse::platform::macos::{event_tap, hid, permissions, startup};
 #[cfg(feature = "gui")]
@@ -65,6 +66,7 @@ fn run() -> AppResult<()> {
         Command::Simulate(options) => simulate(options),
         Command::TraceLab(options) => trace_lab(options),
         Command::Devices => list_devices(),
+        Command::Benchmark => launch_benchmark(),
         Command::Ui => launch_ui(),
         Command::Help => {
             print_help();
@@ -560,10 +562,23 @@ fn launch_ui() -> AppResult<()> {
     auto_reverse::ui::run_settings_window().map_err(AppError::Platform)
 }
 
+#[cfg(feature = "gui")]
+fn launch_benchmark() -> AppResult<()> {
+    auto_reverse::ui::run_benchmark_window().map_err(AppError::Platform)
+}
+
 #[cfg(not(feature = "gui"))]
 fn launch_ui() -> AppResult<()> {
     Err(AppError::Usage(
         "this build has no GUI; rebuild without --no-default-features to enable `ui`".to_string(),
+    ))
+}
+
+#[cfg(not(feature = "gui"))]
+fn launch_benchmark() -> AppResult<()> {
+    Err(AppError::Usage(
+        "this build has no GUI; rebuild without --no-default-features to enable `benchmark`"
+            .to_string(),
     ))
 }
 
@@ -635,6 +650,14 @@ fn trace_lab(options: TraceLabOptions) -> AppResult<()> {
     println!("direction changes: {}", report.direction_change_count);
     print_distribution("input magnitude", Some(report.magnitude));
     print_distribution("event interval", report.intervals);
+    if report.event_rates.is_empty() {
+        println!("observed event rates: unavailable (fewer than two timestamps per device type)");
+    } else {
+        println!("observed event rates (not advertised polling rates):");
+        for rate in &report.event_rates {
+            print_event_rate(rate);
+        }
+    }
     println!(
         "replay matches observed: {}/{} ({:.1}%)",
         report.replay_match_count,
@@ -701,6 +724,22 @@ fn print_axis_metrics(label: &str, metrics: &AxisMetrics) {
     );
 }
 
+fn print_event_rate(rate: &DeviceEventRate) {
+    println!(
+        "  {}: timestamps={} p50={:.1}Hz p95={:.1}Hz max={:.1}Hz bins[<30={},30-60={},60-120={},120-240={},240+={}]",
+        rate.device_kind,
+        rate.timestamp_count,
+        millihertz_to_hertz(rate.rates_millihz.p50),
+        millihertz_to_hertz(rate.rates_millihz.p95),
+        millihertz_to_hertz(rate.rates_millihz.max),
+        rate.histogram.below_30_hz,
+        rate.histogram.from_30_to_60_hz,
+        rate.histogram.from_60_to_120_hz,
+        rate.histogram.from_120_to_240_hz,
+        rate.histogram.at_least_240_hz,
+    );
+}
+
 fn config_summary(config: &AppConfig) -> String {
     // Field labels intentionally match AppConfig's real field names exactly
     // (not shortened) so this line can be grepped/cross-referenced against
@@ -747,6 +786,7 @@ fn print_help() {
          Advanced commands:\n\
            prepare-uninstall           Remove startup registrations before app deletion\n\
            devices                     List connected pointing devices and per-device rules\n\
+           benchmark                   Open the interactive scroll benchmark\n\
            init                        Create the default config if it does not exist\n\
            config-path                 Print the config file path\n\
            show-config                 Print the current config as TOML\n\

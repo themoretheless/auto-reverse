@@ -39,6 +39,18 @@ the filename truncates before the stable `Reveal in Finder` action, while the
 full path remains available on hover. Export and Reveal errors are distinct and
 stay inline with that action area.
 
+Diagnostics uses two compact toolbar rows so search, filters, live status and
+commands remain readable at the minimum window width. Observed input metrics
+stay collapsed until needed. Event rates use a scan-friendly table; tap latency
+is sampled by an explicit command because reading it resets the interval.
+
+The Scroll Benchmark is a separate native viewport rather than another main
+settings tab. Setup uses segmented controls for target condition and matrix.
+During a trial the viewport height is the selected logical height, the target
+band stays centered, and only task state plus current case dimensions remain on
+screen. Results use a dense table and local CSV export; no benchmark controls
+compete with everyday direction toggles.
+
 ## Device rows
 
 The Devices tab keeps the product name primary and a compact monospaced identity

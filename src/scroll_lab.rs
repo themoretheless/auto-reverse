@@ -5,8 +5,11 @@ use std::fmt;
 
 use crate::config::AppConfig;
 use crate::diagnostics::Axis;
+use crate::event_rate::{DeviceEventRate, EventRateSample, analyze_event_rates_with_gap};
 use crate::scroll;
 use crate::scroll_trace::{ReplayedSample, ScrollTrace, TraceSample};
+pub use crate::statistics::Distribution;
+use crate::statistics::distribution;
 
 pub const DEFAULT_BASELINE_GAIN: u32 = 1;
 pub const MAX_BASELINE_GAIN: u32 = 100;
@@ -38,14 +41,6 @@ impl LabOptions {
         }
         Ok(self)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Distribution {
-    pub min: u64,
-    pub p50: u64,
-    pub p95: u64,
-    pub max: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -86,6 +81,7 @@ pub struct LabReport {
     pub omitted_context_count: usize,
     pub magnitude: Distribution,
     pub intervals: Option<Distribution>,
+    pub event_rates: Vec<DeviceEventRate>,
     pub baseline_gain: u32,
     pub clutch_gap_us: u64,
     pub vertical: AxisMetrics,
@@ -182,6 +178,17 @@ pub fn analyze(
             .count(),
         magnitude: distribution(magnitudes).expect("a validated trace is non-empty"),
         intervals: distribution(intervals),
+        event_rates: analyze_event_rates_with_gap(
+            &trace
+                .samples()
+                .iter()
+                .map(|sample| EventRateSample {
+                    timestamp_us: sample.timestamp_us,
+                    device_kind: sample.device_kind,
+                })
+                .collect::<Vec<_>>(),
+            options.clutch_gap_us,
+        ),
         baseline_gain: options.baseline_gain,
         clutch_gap_us: options.clutch_gap_us,
         vertical,
@@ -250,24 +257,6 @@ fn update_axis_metrics(
 fn add_distance(signed: &mut i128, absolute: &mut u128, value: i64) {
     *signed += i128::from(value);
     *absolute += u128::from(value.unsigned_abs());
-}
-
-fn distribution(mut values: Vec<u64>) -> Option<Distribution> {
-    if values.is_empty() {
-        return None;
-    }
-    values.sort_unstable();
-    Some(Distribution {
-        min: values[0],
-        p50: percentile(&values, 50),
-        p95: percentile(&values, 95),
-        max: values[values.len() - 1],
-    })
-}
-
-fn percentile(values: &[u64], percent: usize) -> u64 {
-    let rank = (values.len() * percent).div_ceil(100).max(1);
-    values[rank - 1]
 }
 
 fn direction_changes(samples: &[TraceSample], clutch_gap_us: u64) -> usize {

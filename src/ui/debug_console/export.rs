@@ -6,12 +6,12 @@
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::process;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::config::ConfigStore;
 use crate::platform::macos::{debug_log, save_panel};
 use crate::scroll_trace::{ScrollTrace, TraceSample};
+
+use super::super::local_export;
 
 #[derive(Clone)]
 pub(super) struct Receipt {
@@ -62,7 +62,7 @@ pub(super) fn run_csv(
         return Ok(None);
     };
     let csv = events_to_csv(events);
-    write_export(&file_path, &csv)?;
+    local_export::write_atomically(&file_path, &csv)?;
 
     Ok(Some(Receipt {
         path: file_path,
@@ -85,7 +85,7 @@ pub(super) fn run_trace(
     else {
         return Ok(None);
     };
-    write_export(&file_path, &toml)?;
+    local_export::write_atomically(&file_path, &toml)?;
 
     Ok(Some(Receipt {
         path: file_path,
@@ -114,25 +114,6 @@ fn export_directory(previous: Option<&Receipt>) -> Option<PathBuf> {
     })
 }
 
-fn write_export(path: &Path, contents: &str) -> Result<(), String> {
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| "the selected export path has no file name".to_string())?;
-    let request_id = NEXT_EXPORT_ID.fetch_add(1, Ordering::Relaxed);
-    let mut temp_name = file_name.to_os_string();
-    temp_name.push(format!(".{}.{}.tmp", process::id(), request_id));
-    let temp_path = path.with_file_name(temp_name);
-
-    std::fs::write(&temp_path, contents).map_err(|error| {
-        let _ = std::fs::remove_file(&temp_path);
-        format!("could not write `{}`: {error}", temp_path.display())
-    })?;
-    std::fs::rename(&temp_path, path).map_err(|error| {
-        let _ = std::fs::remove_file(&temp_path);
-        format!("could not replace `{}`: {error}", path.display())
-    })
-}
-
 fn events_to_csv(events: &[debug_log::DebugEvent]) -> String {
     let mut csv = String::from(
         "timestamp_ms,device,device_kind,device_name,vendor_id,product_id,source_pid,synthetic,axis,raw_delta,output_delta,category,reason_code,decision\n",
@@ -156,9 +137,9 @@ fn events_to_csv(events: &[debug_log::DebugEvent]) -> String {
             csv,
             "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             event.timestamp_ms,
-            csv_escape(&device_description),
+            local_export::csv_escape(&device_description),
             event.device_kind.as_str(),
-            csv_escape(device_name),
+            local_export::csv_escape(device_name),
             vendor_id,
             product_id,
             event.source_pid,
@@ -168,7 +149,7 @@ fn events_to_csv(events: &[debug_log::DebugEvent]) -> String {
             event.output_delta,
             event.category().code(),
             event.reason.code(),
-            csv_escape(&decision_text),
+            local_export::csv_escape(&decision_text),
         )
         .expect("writing to a String cannot fail");
     }
@@ -196,34 +177,13 @@ fn events_to_trace(events: &[debug_log::DebugEvent]) -> Result<ScrollTrace, Stri
     ScrollTrace::new(samples).map_err(|error| error.to_string())
 }
 
-fn csv_escape(value: &str) -> String {
-    if value.contains(',') || value.contains('"') || value.contains(['\n', '\r']) {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value.to_string()
-    }
-}
-
-static NEXT_EXPORT_ID: AtomicU64 = AtomicU64::new(0);
-
 #[cfg(test)]
 mod tests {
-    use std::fs;
     use std::sync::Arc;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::device::{DeviceKind, HardwareId};
 
     use super::*;
-
-    #[test]
-    fn csv_escape_quotes_commas_quotes_and_newlines() {
-        assert_eq!(csv_escape("plain"), "plain");
-        assert_eq!(csv_escape("a,b"), "\"a,b\"");
-        assert_eq!(csv_escape("a\"b"), "\"a\"\"b\"");
-        assert_eq!(csv_escape("a\nb"), "\"a\nb\"");
-        assert_eq!(csv_escape("a\rb"), "\"a\rb\"");
-    }
 
     #[test]
     fn csv_export_contains_raw_structured_source_and_reason_fields() {
@@ -346,23 +306,5 @@ mod tests {
 
         assert_eq!(receipt.summary(), "Exported 3 events to debug events.csv");
         assert_eq!(receipt.path(), Path::new("/tmp/debug\nevents.csv"));
-    }
-
-    #[test]
-    fn write_export_atomically_replaces_the_selected_file() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "auto-reverse-debug-export-{}-{nanos}.csv",
-            process::id()
-        ));
-        fs::write(&path, "old").unwrap();
-
-        write_export(&path, "new").unwrap();
-
-        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
-        let _ = fs::remove_file(path);
     }
 }

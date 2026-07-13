@@ -12,8 +12,8 @@ below in fixed batches of five.
 | Batch | Items | Status |
 | --- | --- | --- |
 | 1 | R01-R05 | Implemented; native privacy-trace Save Panel QA remains |
-| 2 | R06-R10 | Next |
-| 3 | R11-R15 | Pending |
+| 2 | R06-R10 | Implemented; physical benchmark and live latency UI QA remain |
+| 3 | R11-R15 | Next |
 | 4 | R16-R20 | Pending |
 | 5 | R21-R25 | Pending |
 | 6 | R26-R30 | Pending |

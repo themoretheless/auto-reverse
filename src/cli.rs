@@ -32,6 +32,7 @@ pub enum Command {
     Simulate(SimulateOptions),
     TraceLab(TraceLabOptions),
     Devices,
+    Benchmark,
     Ui,
     Help,
 }
@@ -113,6 +114,7 @@ pub fn parse_args(args: &[String]) -> AppResult<Command> {
         Some("simulate") => parse_simulate(&args[1..]).map(Command::Simulate),
         Some("trace-lab") => parse_trace_lab(&args[1..]),
         Some("devices") => Ok(Command::Devices),
+        Some("benchmark") => Ok(Command::Benchmark),
         Some("ui") => Ok(Command::Ui),
         Some("help" | "--help" | "-h") => Ok(Command::Help),
         Some(command) => Err(AppError::Usage(format!(
@@ -548,12 +550,16 @@ mod tests {
     }
 
     #[test]
-    fn devices_and_ui_parse() {
+    fn devices_ui_and_benchmark_parse() {
         assert_eq!(
             parse_args(&strings(&["devices"])).unwrap(),
             Command::Devices
         );
         assert_eq!(parse_args(&strings(&["ui"])).unwrap(), Command::Ui);
+        assert_eq!(
+            parse_args(&strings(&["benchmark"])).unwrap(),
+            Command::Benchmark
+        );
     }
 
     #[test]

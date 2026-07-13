@@ -23,6 +23,8 @@
 //! - `power_events` (gui only): `NSWorkspace` sleep/wake notifications used
 //!   to re-arm or restart the in-process event tap after wake.
 //! - `save_panel` (gui only): native CSV destination picker and Finder reveal.
+//! - `tap_metrics`: on-demand public `CGGetEventTapList` interval snapshots;
+//!   never polled because each read resets the tap's min/max interval.
 //! - `tray` (gui only): native AppKit menu-bar item for the merged
 //!   settings-window + event-tap process.
 //! - `quit_handler` (gui only): overrides the `kAEQuitApplication` Apple
@@ -48,5 +50,6 @@ pub mod quit_handler;
 pub mod save_panel;
 pub mod scroll_events;
 pub mod startup;
+pub mod tap_metrics;
 #[cfg(feature = "gui")]
 pub mod tray;

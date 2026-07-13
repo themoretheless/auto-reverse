@@ -49,6 +49,11 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Debug Export menu: privacy trace and detailed CSV remain distinct |  |  |  |  |
 |  |  | Privacy trace contains no wall time, PID, HID identity, app or window data | N/A | N/A |  |  |
 |  |  | `trace-lab` replay, constant baseline and clutch threshold on exported trace | N/A | N/A |  |  |
+|  |  | Benchmark Known/Unknown instructions produce separate result sessions |  |  |  |  |
+|  |  | Benchmark Compact 12-case and Full 36-case matrices render without clipping |  |  |  |  |
+|  |  | Benchmark 66 ms settle, switchbacks, overshoot, next-trial and CSV/Reveal workflow |  |  |  |  |
+|  |  | Observed event-rate p50/p95/max and five bins update per device kind |  |  |  |  |
+|  |  | Manual tap-latency sample finds the active filter and labels interval min/avg/max |  |  |  |  |
 |  |  | Finder and System Settings app icon |  |  |  |  |
 |  |  | Developer ID authority, hardened runtime, and secure timestamp | N/A | N/A |  |  |
 |  |  | Notary result is Accepted and JSON audit log is reviewed | N/A | N/A |  |  |

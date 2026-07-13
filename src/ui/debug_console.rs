@@ -6,7 +6,10 @@
 
 use eframe::egui::{self, Color32, RichText};
 
-use crate::platform::macos::debug_log;
+use crate::event_rate::{
+    DeviceEventRate, EventRateSample, analyze_event_rates, millihertz_to_hertz,
+};
+use crate::platform::macos::{debug_log, tap_metrics};
 
 use super::theme::{status_dot, styled_button};
 
@@ -19,6 +22,15 @@ pub(super) struct State {
     export_error: Option<String>,
     reveal_error: Option<String>,
     last_export: Option<export::Receipt>,
+    benchmark_requested: bool,
+    tap_latency: Option<tap_metrics::TapLatencySnapshot>,
+    tap_latency_error: Option<String>,
+}
+
+impl State {
+    pub(super) fn take_benchmark_request(&mut self) -> bool {
+        std::mem::take(&mut self.benchmark_requested)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -58,24 +70,30 @@ fn contents(ui: &mut egui::Ui, state: &mut State) {
         ui.add(
             egui::TextEdit::singleline(&mut state.search)
                 .hint_text("Filter events…")
-                .desired_width(150.0),
+                .desired_width(120.0),
         );
 
         ui.add_space(8.0);
         filter_strip(ui, &mut state.filter);
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if styled_button(ui, "Clear", egui::vec2(10.0, 5.0)).clicked() {
-                debug_log::clear();
-            }
-            export_menu(ui, &filtered_events(&all_events, state), state);
-            ui.add_space(6.0);
             status_dot(ui, Color32::from_rgb(0x34, 0xA8, 0x53), 3.0, 8.0);
             ui.label(
                 RichText::new("Live")
                     .color(Color32::from_rgb(0x34, 0xA8, 0x53))
                     .strong(),
             );
+        });
+    });
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if styled_button(ui, "Clear", egui::vec2(10.0, 5.0)).clicked() {
+                debug_log::clear();
+            }
+            export_menu(ui, &filtered_events(&all_events, state), state);
+            if styled_button(ui, "Benchmark...", egui::vec2(10.0, 5.0)).clicked() {
+                state.benchmark_requested = true;
+            }
         });
     });
 
@@ -109,6 +127,8 @@ fn contents(ui: &mut egui::Ui, state: &mut State) {
             }
         });
     }
+
+    diagnostic_metrics(ui, &all_events, state);
 
     ui.separator();
 
@@ -148,6 +168,138 @@ fn contents(ui: &mut egui::Ui, state: &mut State) {
         .small()
         .weak(),
     );
+}
+
+fn diagnostic_metrics(ui: &mut egui::Ui, events: &[debug_log::DebugEvent], state: &mut State) {
+    egui::CollapsingHeader::new("Observed input metrics")
+        .default_open(false)
+        .show(ui, |ui| {
+            let rate_samples = events
+                .iter()
+                .map(|event| EventRateSample {
+                    timestamp_us: event.monotonic_us,
+                    device_kind: event.device_kind,
+                })
+                .collect::<Vec<_>>();
+            let rates = analyze_event_rates(&rate_samples);
+            if rates.is_empty() {
+                ui.label(
+                    RichText::new("Event rate needs at least two timestamps per device type")
+                        .small()
+                        .weak(),
+                );
+            } else {
+                rate_header(ui);
+                for rate in &rates {
+                    rate_row(ui, rate);
+                }
+            }
+
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Event tap interval latency").small().strong());
+                if styled_button(ui, "Sample now", egui::vec2(8.0, 3.0))
+                    .on_hover_text("Reading resets CoreGraphics min/max for the next interval")
+                    .clicked()
+                {
+                    match tap_metrics::current_process_scroll_snapshot() {
+                        Ok(snapshot) => {
+                            state.tap_latency = Some(snapshot);
+                            state.tap_latency_error = None;
+                        }
+                        Err(error) => state.tap_latency_error = Some(error.to_string()),
+                    }
+                }
+            });
+
+            if let Some(error) = &state.tap_latency_error {
+                ui.label(
+                    RichText::new(error)
+                        .small()
+                        .color(Color32::from_rgb(0xC0, 0x39, 0x2B)),
+                );
+            } else if let Some(snapshot) = &state.tap_latency {
+                if snapshot.active_scroll_taps.is_empty() {
+                    ui.label(
+                        RichText::new("No active scroll filter in this process")
+                            .small()
+                            .weak(),
+                    );
+                } else {
+                    for tap in &snapshot.active_scroll_taps {
+                        ui.label(
+                            RichText::new(format!(
+                                "tap {}: min {:.1} us  avg {:.1} us  max {:.1} us  {}",
+                                tap.event_tap_id,
+                                tap.minimum_us,
+                                tap.average_us,
+                                tap.maximum_us,
+                                if tap.enabled { "enabled" } else { "disabled" }
+                            ))
+                            .small()
+                            .monospace(),
+                        );
+                    }
+                    if snapshot.possibly_truncated {
+                        ui.label(
+                            RichText::new("The system tap list may have changed during sampling")
+                                .small()
+                                .color(Color32::from_rgb(0xE5, 0x9E, 0x2F)),
+                        );
+                    }
+                }
+            }
+        });
+}
+
+fn rate_header(ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        cell(ui, 88.0, RichText::new("Device").small().strong().weak());
+        cell(ui, 62.0, RichText::new("p50 Hz").small().strong().weak());
+        cell(ui, 62.0, RichText::new("p95 Hz").small().strong().weak());
+        cell(ui, 62.0, RichText::new("max Hz").small().strong().weak());
+        cell(
+            ui,
+            ui.available_width(),
+            RichText::new("bins <30 | 30-60 | 60-120 | 120-240 | 240+")
+                .small()
+                .strong()
+                .weak(),
+        );
+    });
+}
+
+fn rate_row(ui: &mut egui::Ui, rate: &DeviceEventRate) {
+    ui.horizontal(|ui| {
+        cell(ui, 88.0, rate.device_kind.to_string());
+        cell(
+            ui,
+            62.0,
+            format!("{:.1}", millihertz_to_hertz(rate.rates_millihz.p50)),
+        );
+        cell(
+            ui,
+            62.0,
+            format!("{:.1}", millihertz_to_hertz(rate.rates_millihz.p95)),
+        );
+        cell(
+            ui,
+            62.0,
+            format!("{:.1}", millihertz_to_hertz(rate.rates_millihz.max)),
+        );
+        cell(
+            ui,
+            ui.available_width(),
+            format!(
+                "{} | {} | {} | {} | {}",
+                rate.histogram.below_30_hz,
+                rate.histogram.from_30_to_60_hz,
+                rate.histogram.from_60_to_120_hz,
+                rate.histogram.from_120_to_240_hz,
+                rate.histogram.at_least_240_hz,
+            ),
+        );
+    });
 }
 
 fn export_menu(ui: &mut egui::Ui, events: &[debug_log::DebugEvent], state: &mut State) {
