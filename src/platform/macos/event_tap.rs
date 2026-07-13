@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use crate::config::AppConfig;
 use crate::device_classifier::ContinuousSourceHint;
+use crate::device_source::HidSourceClass;
 use crate::error::{AppError, AppResult};
 use crate::runtime::RuntimeControl;
 use crate::scroll::TransformDecision;
@@ -19,7 +20,7 @@ use super::{daemon_lock, gesture, hid, scroll_events};
 #[cfg(feature = "gui")]
 use super::debug_log;
 #[cfg(feature = "gui")]
-use crate::device::{DeviceIdentity, DeviceKind};
+use crate::device::DeviceKind;
 
 /// How recently a HID wheel tick must have arrived for a discrete CGEvent
 /// to be attributed to that device. Both callbacks share one run loop
@@ -294,7 +295,13 @@ fn handle_event(
             };
             let identity = wheel_snapshot
                 .as_ref()
-                .map(|snapshot| Arc::clone(&snapshot.identity));
+                .and_then(|snapshot| snapshot.identity.clone());
+            let hid_source = wheel_snapshot
+                .as_ref()
+                .map(|snapshot| {
+                    HidSourceClass::from_observed_transport(snapshot.transport.as_deref())
+                })
+                .unwrap_or(HidSourceClass::NotObserved);
 
             // Hot path: hold the read lock only long enough to clone the
             // config, then drop it before touching the CGEvent fields. A
@@ -318,9 +325,16 @@ fn handle_event(
                     event,
                     device_kind,
                     identity,
+                    hid_source,
                 ))
             } else {
-                scroll_events::apply_config_in_place(event, &config, device_kind, identity)
+                scroll_events::apply_config_in_place(
+                    event,
+                    &config,
+                    device_kind,
+                    identity,
+                    hid_source,
+                )
             };
 
             #[cfg(feature = "gui")]
@@ -387,10 +401,7 @@ fn record_debug_event(
 
         let reason = decision_reason(
             config,
-            device_kind,
-            identity,
-            decision.original.synthetic,
-            decision.original.source_pid,
+            &decision.original,
             temporarily_paused,
             axis_reversed,
         );
@@ -419,23 +430,27 @@ fn record_debug_event(
 #[cfg(feature = "gui")]
 fn decision_reason(
     config: &AppConfig,
-    device_kind: DeviceKind,
-    identity: Option<&DeviceIdentity>,
-    synthetic: bool,
-    source_pid: i64,
+    event: &crate::input::ScrollEvent,
     temporarily_paused: bool,
     axis_reversed: bool,
 ) -> debug_log::DecisionReason {
+    let device_kind = event.device_kind;
+    let identity = event.identity.as_deref();
     if !config.enabled {
         return debug_log::DecisionReason::ScrollReversalOff;
     }
     if temporarily_paused {
         return debug_log::DecisionReason::TemporarilyPaused;
     }
-    if synthetic {
+    if event.synthetic {
         return debug_log::DecisionReason::SyntheticEvent;
     }
-    if config.reverse_only_raw_input && source_pid != 0 {
+    match event.hid_source {
+        HidSourceClass::Virtual => return debug_log::DecisionReason::VirtualHidSource,
+        HidSourceClass::Unknown => return debug_log::DecisionReason::UnknownHidSource,
+        HidSourceClass::NotObserved | HidSourceClass::Physical => {}
+    }
+    if config.reverse_only_raw_input && event.source_pid != 0 {
         return debug_log::DecisionReason::RawInputGuard;
     }
     if axis_reversed {
@@ -488,6 +503,7 @@ fn decision_reason(
 #[cfg(all(test, feature = "gui"))]
 mod debug_log_decision_tests {
     use super::*;
+    use crate::device::DeviceIdentity;
 
     fn config_with(mutate: impl FnOnce(&mut AppConfig)) -> AppConfig {
         let mut config = AppConfig {
@@ -496,6 +512,10 @@ mod debug_log_decision_tests {
         };
         mutate(&mut config);
         config
+    }
+
+    fn event(device_kind: DeviceKind) -> crate::input::ScrollEvent {
+        crate::input::ScrollEvent::new(device_kind, 1, 0, false)
     }
 
     #[test]
@@ -514,7 +534,7 @@ mod debug_log_decision_tests {
         });
         assert!(config.should_reverse(DeviceKind::Trackpad, None));
 
-        let reason = decision_reason(&config, DeviceKind::Trackpad, None, false, 0, false, false);
+        let reason = decision_reason(&config, &event(DeviceKind::Trackpad), false, false);
 
         assert_eq!(reason, debug_log::DecisionReason::AxisDisabled);
     }
@@ -524,7 +544,7 @@ mod debug_log_decision_tests {
         let config = config_with(|c| c.reverse_trackpad = false);
         assert!(!config.should_reverse(DeviceKind::Trackpad, None));
 
-        let reason = decision_reason(&config, DeviceKind::Trackpad, None, false, 0, false, false);
+        let reason = decision_reason(&config, &event(DeviceKind::Trackpad), false, false);
 
         assert_eq!(reason, debug_log::DecisionReason::TrackpadNatural);
     }
@@ -544,15 +564,11 @@ mod debug_log_decision_tests {
                 .push(DeviceRule::for_hardware(identity.hardware, None, false));
         });
 
-        let reason = decision_reason(
-            &config,
-            DeviceKind::Mouse,
-            Some(&identity),
-            false,
-            0,
-            false,
-            false,
-        );
+        let event = crate::input::ScrollEvent {
+            identity: Some(Arc::new(identity)),
+            ..event(DeviceKind::Mouse)
+        };
+        let reason = decision_reason(&config, &event, false, false);
 
         assert_eq!(reason, debug_log::DecisionReason::DeviceRuleDisabled);
     }
@@ -572,15 +588,11 @@ mod debug_log_decision_tests {
                 .push(DeviceRule::for_hardware(identity.hardware, None, true));
         });
 
-        let reason = decision_reason(
-            &config,
-            DeviceKind::Mouse,
-            Some(&identity),
-            false,
-            0,
-            false,
-            true,
-        );
+        let event = crate::input::ScrollEvent {
+            identity: Some(Arc::new(identity)),
+            ..event(DeviceKind::Mouse)
+        };
+        let reason = decision_reason(&config, &event, false, true);
 
         assert_eq!(reason, debug_log::DecisionReason::DeviceRuleReversed);
     }
@@ -588,35 +600,75 @@ mod debug_log_decision_tests {
     #[test]
     fn unknown_device_kind_names_itself() {
         let config = config_with(|_| {});
-        let reason = decision_reason(&config, DeviceKind::Unknown, None, false, 0, false, false);
+        let reason = decision_reason(&config, &event(DeviceKind::Unknown), false, false);
         assert_eq!(reason, debug_log::DecisionReason::UnknownDeviceNotReversed);
     }
 
     #[test]
     fn mouse_reversal_off_names_the_device_kind() {
         let config = config_with(|c| c.reverse_mouse = false);
-        let reason = decision_reason(&config, DeviceKind::Mouse, None, false, 0, false, false);
+        let reason = decision_reason(&config, &event(DeviceKind::Mouse), false, false);
         assert_eq!(reason, debug_log::DecisionReason::DeviceReversalOff);
     }
 
     #[test]
     fn axis_reversed_wins_over_every_other_check() {
         let config = config_with(|_| {});
-        let reason = decision_reason(&config, DeviceKind::Mouse, None, false, 0, false, true);
+        let reason = decision_reason(&config, &event(DeviceKind::Mouse), false, true);
         assert_eq!(reason, debug_log::DecisionReason::Reversed);
     }
 
     #[test]
     fn disabled_config_is_ignored_before_anything_else() {
         let config = config_with(|c| c.enabled = false);
-        let reason = decision_reason(&config, DeviceKind::Mouse, None, false, 0, false, true);
+        let reason = decision_reason(&config, &event(DeviceKind::Mouse), false, true);
         assert_eq!(reason, debug_log::DecisionReason::ScrollReversalOff);
     }
 
     #[test]
     fn synthetic_event_is_ignored_even_when_axis_reversed_would_otherwise_apply() {
         let config = config_with(|_| {});
-        let reason = decision_reason(&config, DeviceKind::Mouse, None, true, 0, false, true);
+        let event = crate::input::ScrollEvent {
+            synthetic: true,
+            ..event(DeviceKind::Mouse)
+        };
+        let reason = decision_reason(&config, &event, false, true);
+        assert_eq!(reason, debug_log::DecisionReason::SyntheticEvent);
+    }
+
+    #[test]
+    fn virtual_and_unknown_hid_sources_have_explicit_fail_open_reasons() {
+        let config = config_with(|_| {});
+
+        for (source, expected) in [
+            (
+                HidSourceClass::Virtual,
+                debug_log::DecisionReason::VirtualHidSource,
+            ),
+            (
+                HidSourceClass::Unknown,
+                debug_log::DecisionReason::UnknownHidSource,
+            ),
+        ] {
+            let event = crate::input::ScrollEvent {
+                hid_source: source,
+                ..event(DeviceKind::Mouse)
+            };
+            let reason = decision_reason(&config, &event, false, true);
+            assert_eq!(reason, expected);
+        }
+    }
+
+    #[test]
+    fn synthetic_reason_precedes_hid_source_reason() {
+        let config = config_with(|_| {});
+        let event = crate::input::ScrollEvent {
+            synthetic: true,
+            hid_source: HidSourceClass::Virtual,
+            ..event(DeviceKind::Mouse)
+        };
+        let reason = decision_reason(&config, &event, false, true);
+
         assert_eq!(reason, debug_log::DecisionReason::SyntheticEvent);
     }
 
@@ -624,22 +676,18 @@ mod debug_log_decision_tests {
     fn raw_input_guard_is_ignored_even_when_axis_reversed_would_otherwise_apply() {
         let config = config_with(|c| c.reverse_only_raw_input = true);
         let non_zero_source_pid = 4242;
-        let reason = decision_reason(
-            &config,
-            DeviceKind::Mouse,
-            None,
-            false,
-            non_zero_source_pid,
-            false,
-            true,
-        );
+        let event = crate::input::ScrollEvent {
+            source_pid: non_zero_source_pid,
+            ..event(DeviceKind::Mouse)
+        };
+        let reason = decision_reason(&config, &event, false, true);
         assert_eq!(reason, debug_log::DecisionReason::RawInputGuard);
     }
 
     #[test]
     fn temporary_pause_has_an_explicit_debug_reason() {
         let config = config_with(|_| {});
-        let reason = decision_reason(&config, DeviceKind::Mouse, None, false, 0, true, false);
+        let reason = decision_reason(&config, &event(DeviceKind::Mouse), true, false);
 
         assert_eq!(reason, debug_log::DecisionReason::TemporarilyPaused);
     }

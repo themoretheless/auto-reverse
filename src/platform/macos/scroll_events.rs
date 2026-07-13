@@ -9,6 +9,7 @@ use core_graphics::event::{CGEvent, CGEventField, EventField};
 
 use crate::config::AppConfig;
 use crate::device::{DeviceIdentity, DeviceKind};
+use crate::device_source::HidSourceClass;
 use crate::input::ScrollEvent;
 use crate::scroll::{self, TransformDecision};
 
@@ -46,6 +47,7 @@ pub fn event_from_cg_event(
     event: &CGEvent,
     device_kind: DeviceKind,
     identity: Option<Arc<DeviceIdentity>>,
+    hid_source: HidSourceClass,
 ) -> ScrollEvent {
     ScrollEvent {
         device_kind,
@@ -54,6 +56,7 @@ pub fn event_from_cg_event(
             .get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2),
         continuous: !is_physical_mouse_wheel(event),
         synthetic: is_auto_reverse_synthetic(event),
+        hid_source,
         source_pid: event.get_integer_value_field(EventField::EVENT_SOURCE_UNIX_PROCESS_ID),
         identity,
     }
@@ -97,8 +100,9 @@ pub fn apply_config_in_place(
     config: &AppConfig,
     device_kind: DeviceKind,
     identity: Option<Arc<DeviceIdentity>>,
+    hid_source: HidSourceClass,
 ) -> TransformDecision {
-    let normalized = event_from_cg_event(event, device_kind, identity);
+    let normalized = event_from_cg_event(event, device_kind, identity, hid_source);
     let continuous = normalized.continuous;
     let decision = scroll::transform_event(config, normalized);
 
@@ -191,7 +195,10 @@ mod tests {
     fn synthetic_marker_round_trips_into_the_normalized_event() {
         let event = new_test_event();
         assert!(!is_auto_reverse_synthetic(&event));
-        assert!(!event_from_cg_event(&event, DeviceKind::Mouse, None).synthetic);
+        assert!(
+            !event_from_cg_event(&event, DeviceKind::Mouse, None, HidSourceClass::NotObserved,)
+                .synthetic
+        );
 
         mark_auto_reverse_synthetic(&event);
 
@@ -200,7 +207,10 @@ mod tests {
             event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA),
             AUTO_REVERSE_SYNTHETIC_MARKER
         );
-        assert!(event_from_cg_event(&event, DeviceKind::Mouse, None).synthetic);
+        assert!(
+            event_from_cg_event(&event, DeviceKind::Mouse, None, HidSourceClass::NotObserved,)
+                .synthetic
+        );
     }
 
     #[test]
@@ -210,8 +220,13 @@ mod tests {
         mark_auto_reverse_synthetic(&event);
         let original = event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
 
-        let decision =
-            apply_config_in_place(&event, &AppConfig::default(), DeviceKind::Mouse, None);
+        let decision = apply_config_in_place(
+            &event,
+            &AppConfig::default(),
+            DeviceKind::Mouse,
+            None,
+            HidSourceClass::NotObserved,
+        );
 
         assert!(decision.original.synthetic);
         assert!(!decision.changed());
@@ -219,6 +234,31 @@ mod tests {
             event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1),
             original
         );
+    }
+
+    #[test]
+    fn virtual_and_unknown_hid_sources_never_write_cg_event_deltas() {
+        for hid_source in [HidSourceClass::Virtual, HidSourceClass::Unknown] {
+            let event = new_test_event();
+            event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1, 3);
+            let original =
+                event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
+
+            let decision = apply_config_in_place(
+                &event,
+                &AppConfig::default(),
+                DeviceKind::Mouse,
+                None,
+                hid_source,
+            );
+
+            assert_eq!(decision.original.hid_source, hid_source);
+            assert!(!decision.changed());
+            assert_eq!(
+                event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1),
+                original
+            );
+        }
     }
 
     #[test]
@@ -260,7 +300,13 @@ mod tests {
             reverse_horizontal: true,
             ..AppConfig::default()
         };
-        let decision = apply_config_in_place(&event, &config, DeviceKind::Mouse, None);
+        let decision = apply_config_in_place(
+            &event,
+            &config,
+            DeviceKind::Mouse,
+            None,
+            HidSourceClass::NotObserved,
+        );
 
         assert!(decision.changed());
         assert_eq!(
@@ -316,7 +362,13 @@ mod tests {
             reverse_trackpad: true,
             ..AppConfig::default()
         };
-        let decision = apply_config_in_place(&event, &config, DeviceKind::Trackpad, None);
+        let decision = apply_config_in_place(
+            &event,
+            &config,
+            DeviceKind::Trackpad,
+            None,
+            HidSourceClass::NotObserved,
+        );
 
         assert!(decision.reversed);
         assert_eq!(
@@ -357,7 +409,13 @@ mod tests {
             reverse_trackpad: true,
             ..AppConfig::default()
         };
-        let decision = apply_config_in_place(&event, &config, DeviceKind::Trackpad, None);
+        let decision = apply_config_in_place(
+            &event,
+            &config,
+            DeviceKind::Trackpad,
+            None,
+            HidSourceClass::NotObserved,
+        );
 
         assert!(
             decision.vertical_reversed,

@@ -12,6 +12,8 @@ Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
 - pure scroll policy in `src/scroll.rs`;
 - pure Magic Mouse/trackpad inventory and timing policy in
   `src/device_classifier.rs`;
+- field-by-field device profile resolution in `src/config/profiles.rs` and
+  pure public HID source policy in `src/device_source.rs`;
 - macOS-specific FFI under `src/platform/macos/`;
 - a public listen-only AppKit gesture monitor in
   `src/platform/macos/gesture.rs`;
@@ -53,6 +55,17 @@ framework code inside `platform/macos`.
 - Missing two-finger observations do not prove a Magic Mouse. An exclusive
   public IOHID product inventory wins; unknown inventory falls back to
   Trackpad, and gesture timing is used only when both sources are connected.
+- Profile fields resolve independently by serial, location, VID/PID, device
+  kind, then global default. Keep them in the existing `device_rules`; do not
+  add a second profile database.
+- An attributed wheel with exact public transport `Virtual`, or with an
+  unknown/missing observed transport, must pass through. No wheel snapshot is
+  `NotObserved` and preserves the existing fallback. Transport alone does not
+  prove physical provenance because CoreHID virtual devices may declare any
+  transport.
+- Do not persist the undocumented IORegistry literal `DeviceAddress`. Do not
+  merge receiver children solely by parent, `PhysicalDeviceUniqueID`, location,
+  or `HIDRMHash`.
 - `CGGetEventTapList` resets listed taps' min/max latency to their average.
   Keep latency sampling explicit and label it as an interval snapshot; never
   poll it from the UI.

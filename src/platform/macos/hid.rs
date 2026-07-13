@@ -112,15 +112,16 @@ unsafe extern "C" {
 }
 
 /// The most recent wheel tick seen from any matched device, plus its cached
-/// identity and shared `Product` name (read from the same `IOHIDDeviceRef` the
-/// callback already has in hand). Written by
+/// identity, shared `Product` name, and public `Transport` value (read from
+/// the same `IOHIDDeviceRef` the callback already has in hand). Written by
 /// the HID callback, read by the event tap callback; both run on the main
 /// run loop thread, so the Mutex is uncontended - it exists to satisfy
 /// `static` soundness, not for real cross-thread traffic.
 struct RecentWheel {
     device_token: usize,
-    identity: Arc<DeviceIdentity>,
+    identity: Option<Arc<DeviceIdentity>>,
     name: Option<Arc<str>>,
+    transport: Option<Arc<str>>,
     at: Instant,
 }
 
@@ -133,12 +134,14 @@ static LIVE_CONTINUOUS_HINT: AtomicU8 = AtomicU8::new(0);
 static LIVE_CONTINUOUS_HINT_READY: AtomicBool = AtomicBool::new(false);
 
 /// One consistent view of the last attributed wheel tick. Returning the
-/// identity and display name together avoids taking `LAST_WHEEL` twice
-/// for one CGEvent and guarantees both fields came from the same HID tick.
+/// identity, display name, and transport together avoids taking `LAST_WHEEL`
+/// more than once for one CGEvent and guarantees every field came from the
+/// same HID tick.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WheelSnapshot {
-    pub identity: Arc<DeviceIdentity>,
+    pub identity: Option<Arc<DeviceIdentity>>,
     pub name: Option<Arc<str>>,
+    pub transport: Option<Arc<str>>,
 }
 
 /// Starts a mouse-matching HID monitor on the CURRENT thread's run loop.
@@ -195,14 +198,15 @@ pub fn start_wheel_monitor() -> AppResult<()> {
 }
 
 /// The device that produced a wheel tick within `max_age`, if any. The
-/// product name is captured by the same callback as the identity.
+/// Product name and transport are captured by the same callback as identity.
 pub fn recent_wheel_snapshot(max_age: Duration) -> Option<WheelSnapshot> {
     let last = LAST_WHEEL.lock().ok()?;
     last.as_ref()
         .filter(|recent| recent.at.elapsed() <= max_age)
         .map(|recent| WheelSnapshot {
-            identity: Arc::clone(&recent.identity),
+            identity: recent.identity.clone(),
             name: recent.name.clone(),
+            transport: recent.transport.clone(),
         })
 }
 
@@ -287,22 +291,27 @@ extern "C" fn wheel_value_callback(
                     previous.device_token == device_token
                         && previous.at.elapsed() <= IDENTITY_CACHE_MAX_IDLE
                 })
-                .map(|previous| (Arc::clone(&previous.identity), previous.name.clone()));
-            let (identity, name) = if let Some(cached) = cached {
+                .map(|previous| {
+                    (
+                        previous.identity.clone(),
+                        previous.name.clone(),
+                        previous.transport.clone(),
+                    )
+                });
+            let (identity, name, transport) = if let Some(cached) = cached {
                 cached
             } else {
-                let Some(identity) = device_identity_of(device) else {
-                    return;
-                };
                 (
-                    Arc::new(identity),
+                    device_identity_of(device).map(Arc::new),
                     string_property(device, KEY_PRODUCT).map(Arc::<str>::from),
+                    string_property(device, KEY_TRANSPORT).map(Arc::<str>::from),
                 )
             };
             *last = Some(RecentWheel {
                 device_token,
                 identity,
                 name,
+                transport,
                 at: Instant::now(),
             });
         }

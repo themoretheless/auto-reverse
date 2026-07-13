@@ -25,8 +25,14 @@ Implemented:
   checksummed final ZIP;
 - LaunchAgent start at login via `enable-startup`/`disable-startup`;
 - per-device rules: `[[device_rules]]` pins one physical wheel mouse on or off
-  using vendor/product plus a serial number when available, otherwise its IOKit
+  and may override wheel step size or select a future smooth preset, using
+  vendor/product plus a serial number when available, otherwise its IOKit
   connection location; old vendor/product-only rules remain model-wide;
+- field-by-field profile resolution is fixed as exact serial, exact location,
+  VID/PID hardware, device kind, then global default; no separate profile
+  database is maintained;
+- observed public HID transport `Virtual` and unknown/missing transport fail
+  open without changing the event, with explicit Debug Console/trace reasons;
 - egui settings window (`ui`, default `gui` feature); opening it starts the
   scroll event tap in the same process when enabled and permissions are ready,
   deduped against any other already-running tap via `daemon_lock`;
@@ -311,6 +317,7 @@ reverse_trackpad = false
 reverse_magic_mouse = true
 reverse_unknown = false
 discrete_scroll_step_size = 3
+smooth_preset = "off" # schema only; live dynamics remains disabled
 reverse_only_raw_input = false
 
 # Optional: pin one physical device regardless of the per-kind flags above.
@@ -323,6 +330,8 @@ product_id = 0x5678      # from `auto-reverse devices`
 serial_number = "ABC123" # preferred when the device exposes one
 name = "My mouse"        # optional, display only
 reverse = false
+step_size = 5            # optional; inherits global step when omitted
+smooth_preset = "precise" # optional; non-live until dynamics gates pass
 ```
 
 Use `location_id = 0x12345678` instead of `serial_number` when `devices`
@@ -334,6 +343,19 @@ a bounded serial suffix, keeps inherited model-wide rules explicit, and never
 removes a sibling device's shared fallback when one exact rule is edited.
 Some low-cost firmware reports the same placeholder serial for every unit; use
 the printed `location_id` manually in that case.
+
+Each profile field resolves independently. A serial rule can provide only a
+step size while inheriting a smooth preset from its location or hardware rule.
+Reversal is still an explicit boolean in the current schema; the tri-state
+`inherit/on/off` migration is tracked as R39. `smooth_preset` is deliberately
+stored but not connected to the event tap yet.
+
+For attributed discrete wheels, Auto Reverse reads the public IOHID
+`Transport` from the same snapshot as identity. Exact `Virtual`, an unknown
+value, or a missing value passes through untouched. No snapshot is a distinct
+`NotObserved` state and preserves the existing kind policy. Apple permits a
+virtual device to advertise a non-virtual transport, so this is a conservative
+compatibility guard, not proof of physical provenance.
 
 `reverse_magic_mouse` is live and independent from `reverse_trackpad`. Public
 IOHID product inventory now wins when only a trackpad or only a Magic Mouse is
@@ -376,6 +398,7 @@ src/lib.rs                           library facade documenting the layering
 src/error.rs                         shared AppError / AppResult
 src/device.rs                        DeviceKind + HardwareId/DeviceIdentity vocabulary
 src/device_classifier.rs             pure inventory/gesture/timing policy + fallback
+src/device_source.rs                 pure public HID transport/fail-open policy
 src/diagnostics.rs                   pure axis and stable decision-reason vocabulary
 src/input.rs                         normalized ScrollEvent with optional shared identity
 src/runtime.rs                       lock-free process-local pause control
@@ -388,6 +411,7 @@ src/scroll_benchmark.rs              pure target-acquisition matrix/state machin
 src/config/mod.rs                    facade re-exporting AppConfig/ConfigStore
 src/config/schema.rs                 fields, defaults and validation
 src/config/device_rules.rs           pure selector priority, matching and mutation
+src/config/profiles.rs               field inheritance and fixed selector precedence
 src/config/store.rs                  paths, TOML I/O, atomic save, lock, snapshots/CAS
 src/platform/mod.rs                  cfg-gated platform adapters
 src/platform/macos/mod.rs            macOS integration overview
@@ -497,8 +521,10 @@ The implementation order is intentionally conservative:
    but remains intentionally disconnected from live input. Its pure scheduler
    contract now adds tagged generation/TTL samples, idle teardown, and latched
    fail-open without creating a timer.
-3. Add inherited per-device presets and source compatibility rules next; expose
-   live dynamics only after measurements and the physical matrix justify it.
+3. Per-device step/preset inheritance and public HID source compatibility are
+   implemented. Next come confidence-scored attribution, visible device states,
+   aliases, tri-state fields, and app-rule research; live dynamics still waits
+   for measurements and the physical matrix.
 
 Trackpad and Magic Mouse continuous events are not smoothed again. Any future
 scheduler must still write only `DeltaAxis1/2`; private touch APIs, HID seizure,

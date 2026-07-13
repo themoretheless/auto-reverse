@@ -2,9 +2,12 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use super::DynamicsError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SmoothPreset {
     #[default]
     Off,

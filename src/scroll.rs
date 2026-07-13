@@ -50,7 +50,11 @@ impl TransformDecision {
 pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecision {
     let skip_as_injected = config.reverse_only_raw_input && event.source_pid != 0;
 
-    if !config.enabled || event.synthetic || skip_as_injected {
+    if !config.enabled
+        || event.synthetic
+        || event.hid_source.requires_passthrough()
+        || skip_as_injected
+    {
         return TransformDecision::passthrough(event);
     }
 
@@ -59,7 +63,8 @@ pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecis
     let mut vertical_reversed = false;
     let mut horizontal_reversed = false;
     let mut step_size_applied = false;
-    let should_reverse = config.should_reverse(event.device_kind, event.identity.as_deref());
+    let profile = config.resolve_device_profile(event.device_kind, event.identity.as_deref());
+    let should_reverse = profile.reverse.value;
 
     // Gated on should_reverse too: step size is an accompaniment to
     // reversal for this device, not an independent global multiplier - a
@@ -67,17 +72,17 @@ pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecis
     // not just left un-reversed but still amplified. saturating_mul instead
     // of `*=` as defense in depth, even though the unsigned_abs() == 1
     // guard means overflow can't actually happen today.
-    if should_reverse && !event.continuous && config.discrete_scroll_step_size > 0 {
+    if should_reverse && !event.continuous && profile.step_size.value > 0 {
         if event.delta_vertical.unsigned_abs() == 1 {
             transformed.delta_vertical = transformed
                 .delta_vertical
-                .saturating_mul(config.discrete_scroll_step_size);
+                .saturating_mul(profile.step_size.value);
             step_size_applied = true;
         }
         if event.delta_horizontal.unsigned_abs() == 1 {
             transformed.delta_horizontal = transformed
                 .delta_horizontal
-                .saturating_mul(config.discrete_scroll_step_size);
+                .saturating_mul(profile.step_size.value);
             step_size_applied = true;
         }
     }
@@ -107,6 +112,7 @@ pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecis
 #[cfg(test)]
 mod tests {
     use crate::device::DeviceKind;
+    use crate::device_source::HidSourceClass;
 
     use super::*;
 
@@ -246,6 +252,34 @@ mod tests {
     }
 
     #[test]
+    fn observed_virtual_and_unknown_hid_sources_fail_open() {
+        for hid_source in [HidSourceClass::Virtual, HidSourceClass::Unknown] {
+            let event = ScrollEvent {
+                hid_source,
+                ..ScrollEvent::new(DeviceKind::Mouse, 1, 0, false)
+            };
+
+            let decision = transform_event(&AppConfig::default(), event.clone());
+
+            assert_eq!(decision.transformed, event);
+            assert!(!decision.changed());
+        }
+    }
+
+    #[test]
+    fn observed_physical_hid_source_still_uses_normal_policy() {
+        let event = ScrollEvent {
+            hid_source: HidSourceClass::Physical,
+            ..ScrollEvent::new(DeviceKind::Mouse, 1, 0, false)
+        };
+
+        let decision = transform_event(&AppConfig::default(), event);
+
+        assert_eq!(decision.transformed.delta_vertical, -3);
+        assert!(decision.reversed);
+    }
+
+    #[test]
     fn device_rule_pins_a_specific_mouse_off_while_other_mice_still_reverse() {
         use crate::config::DeviceRule;
         use std::sync::Arc;
@@ -253,14 +287,14 @@ mod tests {
         use crate::device::{DeviceIdentity, HardwareId};
 
         let config = AppConfig {
-            device_rules: vec![DeviceRule {
-                vendor_id: 0x046d,
-                product_id: 0xc52b,
-                serial_number: None,
-                location_id: None,
-                name: None,
-                reverse: false,
-            }],
+            device_rules: vec![DeviceRule::for_hardware(
+                HardwareId {
+                    vendor_id: 0x046d,
+                    product_id: 0xc52b,
+                },
+                None,
+                false,
+            )],
             ..AppConfig::default()
         };
         let ruled_mouse = ScrollEvent {
@@ -283,6 +317,36 @@ mod tests {
 
         assert!(!ruled.changed());
         assert!(other.reversed);
+    }
+
+    #[test]
+    fn device_rule_step_size_overrides_global_wheel_step() {
+        use std::sync::Arc;
+
+        use crate::config::DeviceRule;
+        use crate::device::{DeviceIdentity, HardwareId};
+
+        let hardware = HardwareId {
+            vendor_id: 0x046d,
+            product_id: 0xc52b,
+        };
+        let config = AppConfig {
+            discrete_scroll_step_size: 3,
+            device_rules: vec![DeviceRule {
+                step_size: Some(7),
+                ..DeviceRule::for_hardware(hardware, None, true)
+            }],
+            ..AppConfig::default()
+        };
+        let event = ScrollEvent {
+            identity: Some(Arc::new(DeviceIdentity::hardware_only(hardware))),
+            ..ScrollEvent::new(DeviceKind::Mouse, 1, 0, false)
+        };
+
+        let decision = transform_event(&config, event);
+
+        assert_eq!(decision.transformed.delta_vertical, -7);
+        assert!(decision.step_size_applied);
     }
 
     #[test]

@@ -37,6 +37,11 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Serial-less mouse: same-port reconnect keeps location rule |  |  |  |  |
 |  |  | Serial-less mouse: moving ports shows a new identity without changing its sibling |  |  |  |  |
 |  |  | Legacy vendor/product rule is shown as inherited and remains shared |  |  |  |  |
+|  |  | Serial > location > VID/PID precedence is stable regardless of TOML rule order | N/A | N/A |  |  |
+|  |  | Per-device wheel step overrides global step; omitted value inherits it |  |  |  |  |
+|  |  | Virtual HID with public `Transport = Virtual` passes through and logs `virtual_hid_source` | N/A | N/A |  |  |
+|  |  | Attributed wheel with missing/unknown transport passes through; no HID snapshot keeps kind policy | N/A | N/A |  |  |
+|  |  | Multi-device USB/Bluetooth receiver keeps child devices separate |  |  |  |  |
 |  |  | Pause 15 minutes / Resume now |  |  |  |  |
 |  |  | Missing then granted permissions |  |  |  |  |
 |  |  | Start at Login after reboot |  |  |  |  |

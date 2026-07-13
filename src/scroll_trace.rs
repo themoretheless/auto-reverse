@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::AppConfig;
 use crate::device::DeviceKind;
+use crate::device_source::HidSourceClass;
 use crate::diagnostics::{Axis, DecisionReason};
 use crate::input::ScrollEvent;
 use crate::scroll;
@@ -48,6 +49,11 @@ impl TraceSample {
             // These two privacy-sensitive contexts are reproducible from the
             // stable reason without storing a real PID or injected-event tag.
             synthetic: self.decision_reason == DecisionReason::SyntheticEvent,
+            hid_source: match self.decision_reason {
+                DecisionReason::VirtualHidSource => HidSourceClass::Virtual,
+                DecisionReason::UnknownHidSource => HidSourceClass::Unknown,
+                _ => HidSourceClass::NotObserved,
+            },
             source_pid: i64::from(self.decision_reason == DecisionReason::RawInputGuard),
             identity: None,
         }
@@ -411,6 +417,26 @@ mod tests {
         };
 
         let replay = trace.replay(&config);
+
+        assert!(
+            replay
+                .samples()
+                .iter()
+                .all(ReplayedSample::matches_observed)
+        );
+    }
+
+    #[test]
+    fn virtual_source_reasons_replay_as_exact_fail_open_events() {
+        let mut virtual_source = sample(0, 1);
+        virtual_source.observed_output_delta = 1;
+        virtual_source.decision_reason = DecisionReason::VirtualHidSource;
+        let mut unknown_source = sample(1, -1);
+        unknown_source.observed_output_delta = -1;
+        unknown_source.decision_reason = DecisionReason::UnknownHidSource;
+        let trace = ScrollTrace::new(vec![virtual_source, unknown_source]).unwrap();
+
+        let replay = trace.replay(&AppConfig::default());
 
         assert!(
             replay

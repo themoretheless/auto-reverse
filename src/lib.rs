@@ -6,6 +6,7 @@
 //! - [`error`], [`device`], [`input`]: shared vocabulary types.
 //! - [`diagnostics`]: pure axis and decision-reason vocabulary.
 //! - [`device_classifier`]: pure device-source classification state.
+//! - [`device_source`]: pure public-HID transport trust classification.
 //! - [`config`]: schema, pure physical-device rule resolution, and storage.
 //! - [`runtime`]: process-local controls such as temporary pause.
 //! - [`scroll`]: the pure reversal policy - config + event in, decision
@@ -25,6 +26,7 @@
 pub mod config;
 pub mod device;
 pub mod device_classifier;
+pub mod device_source;
 pub mod diagnostics;
 pub mod error;
 pub mod event_rate;

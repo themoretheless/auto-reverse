@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
+use crate::scroll_dynamics::SmoothPreset;
 
 pub const CONFIG_VERSION: u32 = 1;
 
@@ -16,6 +17,8 @@ pub const CONFIG_VERSION: u32 = 1;
 /// serial_number = "ABC123"       # preferred when available
 /// name = "Logitech MX Master"  # optional, display only
 /// reverse = true
+/// step_size = 5                  # optional; otherwise inherit
+/// smooth_preset = "balanced"    # optional; otherwise inherit
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceRule {
@@ -28,6 +31,10 @@ pub struct DeviceRule {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub reverse: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_size: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smooth_preset: Option<SmoothPreset>,
 }
 
 // deny_unknown_fields is deliberately NOT used here: it would make
@@ -47,6 +54,7 @@ pub struct AppConfig {
     pub reverse_magic_mouse: bool,
     pub reverse_unknown: bool,
     pub discrete_scroll_step_size: i64,
+    pub smooth_preset: SmoothPreset,
     pub show_discrete_scroll_options: bool,
     pub start_at_login: bool,
     pub show_menu_bar_icon: bool,
@@ -68,6 +76,7 @@ impl Default for AppConfig {
             reverse_magic_mouse: true,
             reverse_unknown: false,
             discrete_scroll_step_size: 3,
+            smooth_preset: SmoothPreset::Off,
             show_discrete_scroll_options: false,
             start_at_login: false,
             show_menu_bar_icon: true,
@@ -115,6 +124,14 @@ impl AppConfig {
             if rule.location_id == Some(0) {
                 return Err(AppError::InvalidConfig(format!(
                     "device_rules[{index}].location_id must be non-zero"
+                )));
+            }
+            if rule
+                .step_size
+                .is_some_and(|value| !(0..=20).contains(&value))
+            {
+                return Err(AppError::InvalidConfig(format!(
+                    "device_rules[{index}].step_size must be between 0 and 20"
                 )));
             }
 
@@ -207,6 +224,7 @@ mod tests {
         assert!(config.reverse_mouse);
         assert!(!config.reverse_trackpad);
         assert_eq!(config.discrete_scroll_step_size, 3);
+        assert_eq!(config.smooth_preset, SmoothPreset::Off);
     }
 
     #[test]
@@ -348,7 +366,9 @@ mod tests {
              product_id = 0xc52b\n\
              serial_number = \"ABC123\"\n\
              name = \"Logitech MX Master\"\n\
-             reverse = true\n",
+             reverse = true\n\
+             step_size = 7\n\
+             smooth_preset = \"balanced\"\n",
         )
         .unwrap();
 
@@ -359,6 +379,11 @@ mod tests {
             Some("ABC123")
         );
         assert!(config.device_rules[0].reverse);
+        assert_eq!(config.device_rules[0].step_size, Some(7));
+        assert_eq!(
+            config.device_rules[0].smooth_preset,
+            Some(SmoothPreset::Balanced)
+        );
 
         let serialized = toml::to_string_pretty(&config).unwrap();
         let reparsed: AppConfig = toml::from_str(&serialized).unwrap();
@@ -380,6 +405,29 @@ mod tests {
         assert!(config.device_rules[0].is_hardware_wide());
         assert_eq!(config.device_rules[0].serial_number, None);
         assert_eq!(config.device_rules[0].location_id, None);
+        assert_eq!(config.device_rules[0].step_size, None);
+        assert_eq!(config.device_rules[0].smooth_preset, None);
+        assert_eq!(config.smooth_preset, SmoothPreset::Off);
+    }
+
+    #[test]
+    fn invalid_per_device_step_size_is_rejected() {
+        let config = AppConfig {
+            device_rules: vec![DeviceRule {
+                step_size: Some(21),
+                ..DeviceRule::for_hardware(
+                    HardwareId {
+                        vendor_id: 1,
+                        product_id: 2,
+                    },
+                    None,
+                    true,
+                )
+            }],
+            ..AppConfig::default()
+        };
+
+        assert!(config.validate().is_err());
     }
 
     #[test]

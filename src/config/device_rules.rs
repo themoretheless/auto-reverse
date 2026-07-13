@@ -13,6 +13,8 @@ impl DeviceRule {
             location_id: None,
             name,
             reverse,
+            step_size: None,
+            smooth_preset: None,
         }
     }
 
@@ -32,6 +34,8 @@ impl DeviceRule {
             location_id,
             name,
             reverse,
+            step_size: None,
+            smooth_preset: None,
         }
     }
 
@@ -93,7 +97,7 @@ impl DeviceRule {
         )
     }
 
-    fn specificity(&self) -> u8 {
+    pub(crate) fn specificity(&self) -> u8 {
         if self.serial_number.is_some() {
             2
         } else if self.location_id.is_some() {
@@ -123,10 +127,9 @@ impl AppConfig {
         device_kind: DeviceKind,
         identity: Option<&DeviceIdentity>,
     ) -> bool {
-        if let Some(rule) = identity.and_then(|value| self.matching_device_rule(value)) {
-            return rule.reverse;
-        }
-        self.should_reverse_device(device_kind)
+        self.resolve_device_profile(device_kind, identity)
+            .reverse
+            .value
     }
 
     pub fn should_reverse_device(&self, device_kind: DeviceKind) -> bool {
@@ -170,6 +173,10 @@ pub fn with_device_rule_selection(
     name: Option<&str>,
     selection: Option<bool>,
 ) -> Vec<DeviceRule> {
+    let preferred = current_rules
+        .iter()
+        .find(|rule| rule.is_preferred_for(identity))
+        .cloned();
     let mut updated: Vec<DeviceRule> = current_rules
         .iter()
         .filter(|rule| !rule.is_preferred_for(identity))
@@ -177,11 +184,14 @@ pub fn with_device_rule_selection(
         .collect();
 
     if let Some(reverse) = selection {
-        updated.push(DeviceRule::for_identity(
-            identity,
-            name.map(str::to_owned),
-            reverse,
-        ));
+        let mut rule = preferred.unwrap_or_else(|| {
+            DeviceRule::for_identity(identity, name.map(str::to_owned), reverse)
+        });
+        rule.reverse = reverse;
+        if let Some(name) = name {
+            rule.name = Some(name.to_owned());
+        }
+        updated.push(rule);
     }
     updated
 }
@@ -284,5 +294,25 @@ mod tests {
             ..AppConfig::default()
         };
         assert!(config.should_reverse(DeviceKind::Mouse, Some(&target)));
+    }
+
+    #[test]
+    fn changing_reverse_selection_preserves_other_profile_fields() {
+        use crate::scroll_dynamics::SmoothPreset;
+
+        let target = identity(Some("mouse-a"), Some(10));
+        let rule = DeviceRule {
+            step_size: Some(8),
+            smooth_preset: Some(SmoothPreset::Precise),
+            ..DeviceRule::for_identity(&target, Some("Old name".to_string()), true)
+        };
+
+        let updated = with_device_rule_selection(&[rule], &target, Some("New name"), Some(false));
+        let changed = preferred_device_rule(&updated, &target).unwrap();
+
+        assert!(!changed.reverse);
+        assert_eq!(changed.name.as_deref(), Some("New name"));
+        assert_eq!(changed.step_size, Some(8));
+        assert_eq!(changed.smooth_preset, Some(SmoothPreset::Precise));
     }
 }

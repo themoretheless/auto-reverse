@@ -2,6 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::device::{DeviceIdentity, DeviceKind};
+use crate::device_source::HidSourceClass;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScrollEvent {
@@ -10,6 +11,7 @@ pub struct ScrollEvent {
     pub delta_horizontal: i64,
     pub continuous: bool,
     pub synthetic: bool,
+    pub hid_source: HidSourceClass,
     /// The owning process id CGEvent reported for this event
     /// (`kCGEventSourceUnixProcessID`). A genuine hardware scroll observed
     /// through the event tap reports 0; a nonzero value means some other
@@ -37,6 +39,7 @@ impl ScrollEvent {
             delta_horizontal,
             continuous,
             synthetic: false,
+            hid_source: HidSourceClass::NotObserved,
             source_pid: 0,
             identity: None,
         }
@@ -55,6 +58,11 @@ impl fmt::Display for ScrollEvent {
         )?;
         if let Some(identity) = &self.identity {
             write!(f, " [{identity}]")?;
+        }
+        match self.hid_source {
+            HidSourceClass::Virtual => f.write_str(" [virtual HID]")?,
+            HidSourceClass::Unknown => f.write_str(" [unknown HID transport]")?,
+            HidSourceClass::NotObserved | HidSourceClass::Physical => {}
         }
         Ok(())
     }

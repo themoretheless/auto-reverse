@@ -343,6 +343,16 @@ mod tests {
                 DecisionCategory::Ignored,
             ),
             (
+                DecisionReason::VirtualHidSource,
+                "virtual_hid_source",
+                DecisionCategory::Ignored,
+            ),
+            (
+                DecisionReason::UnknownHidSource,
+                "unknown_hid_source",
+                DecisionCategory::Ignored,
+            ),
+            (
                 DecisionReason::RawInputGuard,
                 "raw_input_guard",
                 DecisionCategory::Ignored,

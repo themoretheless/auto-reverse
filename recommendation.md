@@ -1324,11 +1324,11 @@ R30. [Done] `BenchmarkTransfer::ScreenHeightHypothesis` масштабирует
 
 ### Device and profile model
 
-R31. [Improve] Расширять `DeviceRule` optional `step_size` и `smooth_preset`, не дублируя отдельную profile database.
-R32. [Improve] Зафиксировать precedence: exact serial, exact location, hardware VID/PID, device kind, global default.
-R33. [Research] Проверить public device-address fallback только для устройств без нормальных VID/PID/serial identifiers.
-R34. [Improve] Исключать известные synthetic/virtual HID sources через public identity, сохраняя unknown как pass-through.
-R35. [Research] Изучить logical identity для USB/Bluetooth receivers, которые представляют несколько физических устройств одним parent.
+R31. [Done] `DeviceRule` хранит optional `step_size` и `smooth_preset`; field-by-field resolver работает над существующим `device_rules`, без второй profile database. Per-device step уже live; smooth preset остается non-live.
+R32. [Done] `config::profiles` фиксирует и тестирует независимое для каждого поля precedence: exact serial, exact location, hardware VID/PID, device kind, global default; порядок TOML rules не влияет.
+R33. [Researched] Literal `DeviceAddress`, используемый Karabiner через parent IORegistry walk, не является публичным SDK key, поэтому не добавлен в persisted schema. Public `PhysicalDeviceUniqueID` остается diagnostic candidate только когда нет обычных identifiers и source не virtual.
+R34. [Done] `HidSourceClass` и public `Transport` в едином wheel snapshot дают exact pass-through для `Virtual` и observed unknown/missing transport; отсутствие HID observation не ломает прежний fallback. Debug/trace имеют stable reasons `virtual_hid_source` и `unknown_hid_source`.
+R35. [Researched] Shared receiver parent, location, `PhysicalDeviceUniqueID` и `HIDRMHash` не объединяются в policy identity: один parent может представлять несколько физических devices. Parent grouping допустим только для display; selector требует child-level wheel evidence и стабильный public key.
 R36. [Research] Сопоставлять last-active IOHID movement с scroll event только с confidence/timeout, не выдавая heuristic за точный ID.
 R37. [Improve] Показывать connected, remembered и unavailable device states раздельно.
 R38. [Improve] Добавить user alias и стабильный duplicate suffix для одинаковых product names.

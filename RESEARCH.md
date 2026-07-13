@@ -289,7 +289,9 @@ Height hypothesis использует controlled viewport как proxy с basel
 
 ### Итерация C: profiles and product UX
 
-1. Расширить `DeviceRule` optional полями step/preset через migration.
+1. [Done R31-R32] `DeviceRule` расширен optional step/preset, а
+   field resolver наследует serial, location, hardware, kind и global без
+   отдельной profile database. Legacy TOML получает `None`/`Off` defaults.
 2. Добавить inherit/on/off resolution и объяснение active rule.
 3. Добавить device test row, settings search и versioned import dry-run.
 4. Прогнать compatibility matrix и оставить kill switch для dynamics.
@@ -311,6 +313,36 @@ Height hypothesis использует controlled viewport как proxy с basel
 - telemetry/network upload traces по умолчанию;
 - использование stars как доказательства корректности.
 
+## Device identity findings R33-R35
+
+Apple документирует
+[`IOHIDDeviceGetProperty`](https://developer.apple.com/documentation/iokit/1588648-iohiddevicegetproperty)
+и public keys `VendorID`, `ProductID`, `SerialNumber`, `LocationID`, `Transport`
+и `PhysicalDeviceUniqueID`. CoreHID отдельно предупреждает, что
+[`uniqueID` software-based](https://developer.apple.com/documentation/corehid/hiddeviceclient/uniqueid)
+и обычно служит driver/client matching, а не доказательством физической
+идентичности.
+
+Karabiner читает literal
+[`"DeviceAddress"` из IORegistry parent](https://github.com/pqrs-org/cpp-osx-iokit_hid_device/blob/199697ac581ab97cd9601be92491b1b83146a4e9/include/pqrs/osx/iokit_hid_device.hpp#L118-L120),
+но этого key нет в public Apple HID headers. Auto Reverse не пишет его в
+config. `PhysicalDeviceUniqueID` может быть только будущим diagnostic fallback,
+если нет VID/PID/serial/location и source не virtual. `HIDRMHash` также
+не selector: SDK описывает его как approval hash всех devices с shared parent.
+
+Для receivers введен жесткий boundary: не объединять child devices по
+parent, location, `PhysicalDeviceUniqueID` или `HIDRMHash`. Shared parent может
+быть только display group; policy identity должен иметь child-level wheel
+observation и стабильный public qualifier.
+
+R34 использует exact public `Transport`: `Virtual`, неизвестное значение
+и отсутствующее значение на наблюдаемом wheel source дают fail-open
+pass-through. Отсутствие wheel snapshot означает `NotObserved` и не отключает
+старую kind policy. Apple пишет, что
+[`HIDVirtualDevice` обычно имеет `virtual`, но может заявить любой transport](https://developer.apple.com/documentation/corehid/hidvirtualdevice/properties/transport),
+поэтому эта защита не заявлена как необходимая и достаточная проверка
+физического provenance.
+
 ## Приоритет
 
 Пакеты 1-6 (`R01-R30`) реализованы без изменения live scroll policy:
@@ -318,4 +350,7 @@ trace/replay/lab, ScrollTest-style benchmark, observed rates, repeated latency
 assessment, physical test strata, measurable dynamics contract и pure
 two-axis dynamics model с continuous bypass, bounded time/rate и conservation
 ledger, session reset, cancellation/stop policy и pure scheduler safety contract.
-Следующий пакет - `R31-R35`: profile fields, precedence и source identity.
+Пакет `R31-R35` завершен: profile fields/precedence реализованы,
+device-address/receiver boundaries исследованы, virtual/unknown transport
+fail-open встроен в live discrete path. Следующий пакет - `R36-R40`:
+confidence attribution, device states/aliases, tri-state fields и app-rule research.

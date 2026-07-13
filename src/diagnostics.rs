@@ -55,6 +55,8 @@ pub enum DecisionReason {
     ScrollReversalOff,
     TemporarilyPaused,
     SyntheticEvent,
+    VirtualHidSource,
+    UnknownHidSource,
     RawInputGuard,
     Reversed,
     DeviceRuleReversed,
@@ -71,6 +73,8 @@ impl DecisionReason {
             Self::ScrollReversalOff => "scroll_reversal_off",
             Self::TemporarilyPaused => "temporarily_paused",
             Self::SyntheticEvent => "synthetic_event",
+            Self::VirtualHidSource => "virtual_hid_source",
+            Self::UnknownHidSource => "unknown_hid_source",
             Self::RawInputGuard => "raw_input_guard",
             Self::Reversed => "reversed",
             Self::DeviceRuleReversed => "device_rule_reversed",
@@ -89,6 +93,8 @@ impl DecisionReason {
             Self::ScrollReversalOff
             | Self::TemporarilyPaused
             | Self::SyntheticEvent
+            | Self::VirtualHidSource
+            | Self::UnknownHidSource
             | Self::RawInputGuard
             | Self::UnknownDeviceNotReversed
             | Self::DeviceRuleDisabled
@@ -101,6 +107,8 @@ impl DecisionReason {
             Self::ScrollReversalOff => Cow::Borrowed("Ignored – scroll reversal is off"),
             Self::TemporarilyPaused => Cow::Borrowed("Ignored - temporarily paused"),
             Self::SyntheticEvent => Cow::Borrowed("Ignored – synthetic event"),
+            Self::VirtualHidSource => Cow::Borrowed("Ignored - virtual HID source"),
+            Self::UnknownHidSource => Cow::Borrowed("Ignored - unknown HID transport"),
             Self::RawInputGuard => Cow::Borrowed("Ignored – raw input guard (remote desktop)"),
             Self::Reversed => Cow::Borrowed("Reversed"),
             Self::DeviceRuleReversed => Cow::Borrowed("Reversed – device rule"),
@@ -144,6 +152,8 @@ mod tests {
             DecisionReason::ScrollReversalOff,
             DecisionReason::TemporarilyPaused,
             DecisionReason::SyntheticEvent,
+            DecisionReason::VirtualHidSource,
+            DecisionReason::UnknownHidSource,
             DecisionReason::RawInputGuard,
             DecisionReason::Reversed,
             DecisionReason::DeviceRuleReversed,
