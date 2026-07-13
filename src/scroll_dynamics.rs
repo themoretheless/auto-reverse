@@ -12,8 +12,9 @@ mod preset;
 mod rate;
 
 pub use axis::{
-    AxisStateSnapshot, DISTANCE_EPSILON_POINTS, DynamicsEmission, DynamicsPhase,
-    MAX_ABS_INPUT_POINTS, ScrollDynamics,
+    AxisStateSnapshot, CancellationReason, CancellationRecord, DISTANCE_EPSILON_POINTS,
+    DynamicsEmission, DynamicsPhase, MAX_ABS_INPUT_POINTS, SESSION_GAP_US, STOP_THRESHOLD_POINTS,
+    ScrollDynamics, SessionBoundary,
 };
 pub use preset::{PresetParameters, SmoothPreset};
 pub use rate::{
@@ -40,6 +41,49 @@ pub enum DynamicsRoute {
     ContinuousBypass,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancellationTrigger {
+    NewPhysicalAction,
+    PointerClick,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CancellationPolicy {
+    pub cancel_on_new_physical_action: bool,
+    pub cancel_on_pointer_click: bool,
+}
+
+impl CancellationPolicy {
+    pub const NONE: Self = Self {
+        cancel_on_new_physical_action: false,
+        cancel_on_pointer_click: false,
+    };
+
+    pub const fn allows(self, trigger: CancellationTrigger) -> bool {
+        match trigger {
+            CancellationTrigger::NewPhysicalAction => self.cancel_on_new_physical_action,
+            CancellationTrigger::PointerClick => self.cancel_on_pointer_click,
+        }
+    }
+}
+
+impl Default for CancellationPolicy {
+    fn default() -> Self {
+        Self {
+            cancel_on_new_physical_action: true,
+            cancel_on_pointer_click: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CancellationEmission {
+    pub applied: bool,
+    pub canceled_distance: ScrollVector,
+    pub vertical_state: AxisStateSnapshot,
+    pub horizontal_state: AxisStateSnapshot,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TwoAxisEmission {
     pub delta: ScrollVector,
@@ -52,13 +96,22 @@ pub struct TwoAxisEmission {
 pub struct ScrollDynamics2D {
     vertical: ScrollDynamics,
     horizontal: ScrollDynamics,
+    cancellation_policy: CancellationPolicy,
 }
 
 impl ScrollDynamics2D {
     pub fn new(preset: SmoothPreset) -> Self {
+        Self::with_cancellation_policy(preset, CancellationPolicy::default())
+    }
+
+    pub fn with_cancellation_policy(
+        preset: SmoothPreset,
+        cancellation_policy: CancellationPolicy,
+    ) -> Self {
         Self {
             vertical: ScrollDynamics::new(preset),
             horizontal: ScrollDynamics::new(preset),
+            cancellation_policy,
         }
     }
 
@@ -118,6 +171,45 @@ impl ScrollDynamics2D {
                 horizontal_points: horizontal_output.delta_points,
             },
             route: DynamicsRoute::DiscreteDynamics,
+            vertical_state: self.vertical.state(),
+            horizontal_state: self.horizontal.state(),
+        })
+    }
+
+    /// Ends pending momentum for an external physical action when enabled by
+    /// the explicit policy. Platform adapters decide which events map to the
+    /// two public triggers.
+    pub fn cancel(
+        &mut self,
+        timestamp_us: u64,
+        trigger: CancellationTrigger,
+    ) -> Result<CancellationEmission, DynamicsError> {
+        if !self.cancellation_policy.allows(trigger) {
+            return Ok(CancellationEmission {
+                applied: false,
+                canceled_distance: ScrollVector::ZERO,
+                vertical_state: self.vertical.state(),
+                horizontal_state: self.horizontal.state(),
+            });
+        }
+
+        let reason = match trigger {
+            CancellationTrigger::NewPhysicalAction => CancellationReason::NewPhysicalAction,
+            CancellationTrigger::PointerClick => CancellationReason::PointerClick,
+        };
+        let mut vertical = self.vertical.clone();
+        let mut horizontal = self.horizontal.clone();
+        let vertical_canceled = vertical.cancel_external(timestamp_us, reason)?;
+        let horizontal_canceled = horizontal.cancel_external(timestamp_us, reason)?;
+        self.vertical = vertical;
+        self.horizontal = horizontal;
+
+        Ok(CancellationEmission {
+            applied: true,
+            canceled_distance: ScrollVector {
+                vertical_points: vertical_canceled,
+                horizontal_points: horizontal_canceled,
+            },
             vertical_state: self.vertical.state(),
             horizontal_state: self.horizontal.state(),
         })
@@ -199,7 +291,7 @@ mod tests {
     #[test]
     fn continuous_input_is_exact_bypass_and_does_not_mutate_discrete_state() {
         let mut dynamics = ScrollDynamics2D::new(SmoothPreset::Balanced);
-        dynamics
+        let first = dynamics
             .handle_event(
                 0,
                 ScrollVector {
@@ -209,6 +301,8 @@ mod tests {
                 false,
             )
             .unwrap();
+        assert_near(first.delta.vertical_points, 55.0);
+        assert_eq!(first.delta.horizontal_points, 0.0);
         let vertical_before = dynamics.vertical_state();
         let horizontal_before = dynamics.horizontal_state();
 
@@ -305,8 +399,8 @@ mod tests {
         let mut dynamics = ScrollDynamics2D::new(SmoothPreset::Precise);
         let inputs = [
             (0, 12.5, -3.0),
-            (7_000, 4.25, 1.5),
-            (19_000, -2.0, 8.75),
+            (7_000, 4.25, -1.5),
+            (19_000, 2.0, -8.75),
             (44_000, 0.125, -0.375),
         ];
         let mut input_total = ScrollVector::ZERO;
@@ -338,5 +432,90 @@ mod tests {
         );
         assert_eq!(dynamics.vertical_state().phase, DynamicsPhase::Idle);
         assert_eq!(dynamics.horizontal_state().phase, DynamicsPhase::Idle);
+    }
+
+    #[test]
+    fn click_and_physical_action_cancellation_follow_explicit_policy() {
+        let policy = CancellationPolicy {
+            cancel_on_new_physical_action: true,
+            cancel_on_pointer_click: false,
+        };
+        let mut dynamics =
+            ScrollDynamics2D::with_cancellation_policy(SmoothPreset::Balanced, policy);
+        let first = dynamics
+            .handle_event(
+                0,
+                ScrollVector {
+                    vertical_points: 100.0,
+                    horizontal_points: -20.0,
+                },
+                false,
+            )
+            .unwrap();
+        assert_near(first.delta.vertical_points, 55.0);
+        assert_near(first.delta.horizontal_points, -11.0);
+        let vertical_before = dynamics.vertical_state();
+        let horizontal_before = dynamics.horizontal_state();
+
+        let ignored = dynamics
+            .cancel(1_000, CancellationTrigger::PointerClick)
+            .unwrap();
+        assert!(!ignored.applied);
+        assert_eq!(dynamics.vertical_state(), vertical_before);
+        assert_eq!(dynamics.horizontal_state(), horizontal_before);
+
+        let canceled = dynamics
+            .cancel(1_000, CancellationTrigger::NewPhysicalAction)
+            .unwrap();
+        assert!(canceled.applied);
+        assert_near(canceled.canceled_distance.vertical_points, 45.0);
+        assert_near(canceled.canceled_distance.horizontal_points, -9.0);
+        assert_eq!(canceled.vertical_state.phase, DynamicsPhase::Idle);
+        assert_eq!(canceled.horizontal_state.phase, DynamicsPhase::Idle);
+        assert_eq!(
+            canceled.vertical_state.last_cancellation.unwrap().reason,
+            CancellationReason::NewPhysicalAction
+        );
+
+        let restarted = dynamics
+            .handle_event(
+                2_000,
+                ScrollVector {
+                    vertical_points: -5.0,
+                    horizontal_points: 0.0,
+                },
+                false,
+            )
+            .unwrap();
+        assert_eq!(restarted.vertical_state.session_generation, 2);
+        assert_eq!(
+            restarted.vertical_state.last_session_boundary,
+            Some(SessionBoundary::InitialInput)
+        );
+    }
+
+    #[test]
+    fn default_policy_allows_pointer_click_cancellation() {
+        let mut dynamics = ScrollDynamics2D::new(SmoothPreset::Fast);
+        dynamics
+            .handle_event(
+                0,
+                ScrollVector {
+                    vertical_points: 40.0,
+                    horizontal_points: 0.0,
+                },
+                false,
+            )
+            .unwrap();
+
+        let canceled = dynamics
+            .cancel(1, CancellationTrigger::PointerClick)
+            .unwrap();
+        assert!(canceled.applied);
+        assert_eq!(
+            canceled.vertical_state.last_cancellation.unwrap().reason,
+            CancellationReason::PointerClick
+        );
+        assert_eq!(canceled.vertical_state.phase, DynamicsPhase::Idle);
     }
 }

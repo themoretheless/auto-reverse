@@ -88,12 +88,17 @@ pure suite now proves:
   are independent;
 - duplicate/long input intervals clamp to 1-50 ms;
 - rate requires three observations and keeps only the latest eight;
-- signed distance is conserved for mixed-sign scalar/two-axis sequences and
-  idle samples do not creep;
+- signed distance is conserved in both signs and two axes; every explicit
+  cancellation is separately accounted instead of hidden as loss;
+- direction change resets rate/momentum before opposite output;
+- gaps over 150 ms create a new session without releasing stale tail;
+- remaining momentum at or below 0.25 pt flushes immediately, then idle samples
+  do not creep;
+- click and new-physical-action triggers obey independent policy flags;
 - continuous input bypasses dynamics without mutating discrete state.
 
 Still required before live integration and then on all six physical classes:
 
 - the tail completes by its preset deadline plus the 8 ms scheduler budget;
-- direction reset, opposite-input, gap, stop and click cancellation pass;
+- platform click/action hooks produce the expected pure cancellation trigger;
 - any invalid state or scheduler failure passes through the physical event.

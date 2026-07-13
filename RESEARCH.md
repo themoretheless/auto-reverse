@@ -268,9 +268,10 @@ samples от pure engine, помечает synthetic event, пишет толь�
 2. [Done R16-R20] Continuous bypass, transactional independent axis states,
    1-50 ms `dt`, median 3-of-8 recent-rate estimate и signed-distance ledger
    готовы в pure model.
-3. [Next R21-R25] Добавить direction reset, opposite-input cancellation, gap
-   split, stop threshold и physical-action cancellation tests.
-4. Добавить tagged scheduler только для discrete wheel и выключить его по
+3. [Done R21-R25] Direction reset, opposite-input cancellation, 150 ms gap
+   sessions, 0.25 pt stop threshold и explicit click/action policy готовы с
+   signed cancellation accounting.
+4. [Next R26-R30] Добавить tagged scheduler только для discrete wheel и выключить его по
    умолчанию.
 5. При любой неопределенности пропускать исходный event без smoothing.
 
@@ -303,8 +304,9 @@ samples от pure engine, помечает synthetic event, пишет толь�
 
 ## Приоритет
 
-Пакеты 1-4 (`R01-R20`) реализованы без изменения live scroll policy:
+Пакеты 1-5 (`R01-R25`) реализованы без изменения live scroll policy:
 trace/replay/lab, ScrollTest-style benchmark, observed rates, repeated latency
 assessment, physical test strata, measurable dynamics contract и pure
 two-axis dynamics model с continuous bypass, bounded time/rate и conservation
-ledger. Следующий пакет - `R21-R25`: session reset, cancellation и stop policy.
+ledger, session reset и cancellation/stop policy. Следующий пакет - `R26-R30`:
+synthetic guard, generation/TTL, idle scheduler, fail-open и scaling experiment.

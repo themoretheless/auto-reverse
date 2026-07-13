@@ -105,6 +105,10 @@ impl InputRateEstimator {
     pub fn interval_count(&self) -> usize {
         self.len
     }
+
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
 }
 
 impl Default for InputRateEstimator {

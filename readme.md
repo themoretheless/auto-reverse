@@ -60,7 +60,9 @@ Implemented:
 - a pure, non-live two-axis discrete-wheel dynamics model with exact continuous
   bypass, independent velocity/residual/momentum, 1-50 ms input-time bounds,
   a median 3-of-8 observed-rate window, signed-distance ledger, and measurable
-  Off/Precise/Balanced/Fast parameters; it has no CoreGraphics, timer, thread,
+  Off/Precise/Balanced/Fast parameters; direction/gap sessions, subpixel stop,
+  and explicit click/action cancellation are tested, while canceled distance
+  remains visible in the ledger; the model has no CoreGraphics, timer, thread,
   or config I/O dependency;
 - process-local 15-minute pause that leaves persisted settings untouched;
 - typed event-tap lifecycle with explicit started/already-running/stopped/failed
@@ -85,7 +87,7 @@ Still missing:
 - an update strategy;
 - physical-device/manual visual validation of the new benchmark and live tap
   latency snapshot;
-- scheduler, runtime opt-in, direction/gap cancellation, and physical
+- scheduler, runtime opt-in, platform cancellation hooks, and physical
   acceptance for the experimental dynamics model.
 
 ## Commands
@@ -486,9 +488,10 @@ The implementation order is intentionally conservative:
    manual public tap-latency snapshots. Physical and visual QA remain before
    treating the benchmark as release-validated.
 2. The pure two-axis model now has continuous bypass, independent axis state,
-   bounded time/rate estimation and signed-distance conservation, but remains
-   intentionally disconnected from live input. Next: session reset,
-   cancellation/stop policy, then an opt-in fail-open scheduler.
+   bounded time/rate estimation, signed-distance/cancellation accounting,
+   direction/gap sessions, stop threshold, and explicit click/action policy,
+   but remains intentionally disconnected from live input. Next: tagged
+   opt-in fail-open scheduler and compatibility experiments.
 3. Add inherited per-device presets and compact UX only after the measurements
    justify the model.
 

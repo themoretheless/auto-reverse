@@ -29,17 +29,20 @@ For input samples on either axis:
 3. **Bounded completion:** sampling at or after the preset deadline emits all
    remaining distance and returns the state to idle.
 4. **Signed-distance conservation:** immediate plus tail output equals the sum
-   of signed input within `1e-9` logical points for mixed-sign sequences.
+   of signed input within `1e-9` logical points when no explicit cancellation
+   occurs. With cancellation, the ledger keeps the explicit equation
+   `input = emitted + pending + residual + canceled` instead of silently
+   losing distance.
 5. **No idle creep:** after completion, later samples emit zero.
 6. **Continuous bypass:** continuous input is returned exactly and leaves both
    discrete states byte-for-byte equivalent at the public snapshot boundary.
 7. **Adapter budget:** a future scheduler may wake late by at most its 8 ms tail
    budget; it may not silently extend the preset curve.
 
-Direction resets, explicit opposite-input cancellation, long-gap sessions,
-stop threshold, physical-action cancellation, and scheduler failure are handled
-in R21-R30. The model is not release-enabled until those invariants and the
-physical matrix pass.
+Direction resets, opposite-input cancellation, long-gap sessions, stop
+threshold, and physical-action cancellation are implemented in the pure model.
+Scheduler tagging, idle lifecycle, fail-open behavior, and physical acceptance
+remain in R26-R30. The model is not release-enabled until those gates pass.
 
 ## Axis State
 
@@ -51,6 +54,9 @@ Each scalar engine exposes a diagnostic snapshot:
 - **residual** is the separate signed conservation correction after accepted,
   emitted, and momentum distance are reconciled;
 - **deadline** bounds the active tail.
+- **session generation** increments on initial input, direction change, and a
+  long-gap restart;
+- **last cancellation** records reason, timestamp, and signed canceled distance.
 
 The two-axis facade applies a discrete event transactionally: if either cloned
 axis rejects it, neither live axis state advances.
@@ -67,6 +73,21 @@ Rate estimation uses the median of a fixed eight-interval ring and returns no
 estimate before three observations. It uses only delivery intervals observed by
 the engine, never firmware metadata or one isolated interval. Raw and clamped
 `dt` remain visible in `AxisStateSnapshot` for diagnostics.
+
+## Session And Cancellation Policy
+
+- A direction change cancels the old signed momentum before the opposite tick
+  is processed, clears rate/velocity history, and starts a new generation.
+- A raw input gap over 150 ms starts a new session. Pending output is canceled
+  before the new event, so a stale tail cannot jump after sleep or debugging.
+- When remaining momentum reaches `0.25` logical points or less, it is flushed
+  into the current sample and the axis becomes idle. Distance is not dropped,
+  and later samples cannot produce one-pixel creep.
+- `CancellationPolicy` independently enables new-physical-action and pointer-
+  click cancellation. Both are enabled by default; `NONE` is an explicit
+  opt-out for controlled experiments.
+- External cancellation affects both axes transactionally and returns the
+  signed canceled distance for diagnostics.
 
 ## Presets
 

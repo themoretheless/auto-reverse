@@ -15,8 +15,8 @@ below in fixed batches of five.
 | 2 | R06-R10 | Implemented; physical benchmark and live latency UI QA remain |
 | 3 | R11-R15 | Implemented; six-device physical and live latency UI QA remain |
 | 4 | R16-R20 | Implemented in pure model; live runtime remains unchanged |
-| 5 | R21-R25 | Next |
-| 6 | R26-R30 | Pending |
+| 5 | R21-R25 | Implemented in pure model; platform triggers remain non-live |
+| 6 | R26-R30 | Next |
 | 7 | R31-R35 | Pending |
 | 8 | R36-R40 | Pending |
 | 9 | R41-R45 | Pending |

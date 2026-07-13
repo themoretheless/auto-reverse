@@ -62,6 +62,9 @@ framework code inside `platform/macos`.
   tap until cancellation, scheduler, and fail-open gates pass.
 - Continuous input must use exact dynamics bypass. Vertical and horizontal
   velocity, residual, momentum, rate window, and deadline remain independent.
+- Direction/gap/external cancellation must record signed canceled distance;
+  never hide it as conservation error. Sub-threshold momentum is flushed, not
+  dropped.
 - The GUI and CLI runtime paths share `daemon_lock`; never allow two runtime
   instances. One runtime owns the active scroll tap and optional passive
   gesture tap together.

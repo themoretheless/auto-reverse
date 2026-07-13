@@ -1310,12 +1310,12 @@ R16. [Done] `ScrollDynamics2D` делает exact continuous bypass для Track
 R17. [Done] Vertical/horizontal владеют отдельными scalar engines, rate windows, velocity, conservation residual, momentum и deadlines; two-axis update транзакционен.
 R18. [Done] Input `dt` нормализуется в 1-50 ms, raw/clamp остаются диагностируемыми; absolute deadline завершает bounded pending distance после stall без unbounded integration.
 R19. [Done] `InputRateEstimator` использует median фиксированного окна из восьми observed intervals и ничего не утверждает до трех samples; firmware metadata и один interval не участвуют.
-R20. [Done] Per-axis ledger и deterministic sequence tests для всех presets проверяют signed-distance conservation до `1e-9` на mixed-sign и two-axis input без неявного gain.
-R21. [Improve] Сбрасывать rate window и старое momentum при смене направления.
-R22. [Improve] Противоположный wheel tick должен немедленно отменять остаточное momentum.
-R23. [Improve] Длинный input gap должен начинать новую session, а не продолжать старую кривую.
-R24. [Improve] Добавить stop threshold против остаточного one-pixel creep.
-R25. [Improve] Новое физическое действие и click могут завершать momentum через явно тестируемую cancellation policy.
+R20. [Done] Per-axis ledger и deterministic sequence tests для всех presets проверяют conservation до `1e-9`; explicit cancellation учитывается отдельным signed `canceled_points`, а не скрытой потерей.
+R21. [Done] Direction change отменяет старый tail, очищает rate/velocity state и начинает новую session generation до обработки opposite input.
+R22. [Done] Opposite wheel tick отменяет остаточное momentum до любого retroactive tail output; cancellation record хранит reason, timestamp и signed distance.
+R23. [Done] Raw input gap больше 150 ms отменяет stale pending output, очищает estimator и начинает новую generation вместо продолжения старой curve.
+R24. [Done] Остаток `<= 0.25 pt` flush-ится в текущий sample с conservation и переводит axis в Idle, поэтому позже не возникает one-pixel creep.
+R25. [Done] Pure `CancellationPolicy` независимо управляет new-physical-action и pointer-click triggers, default включает оба, `NONE` дает explicit opt-out; live platform hooks остаются будущим scheduler integration.
 R26. [Improve] Помечать synthetic events и исключать self-feedback до включения любого scheduler.
 R27. [Improve] Каждый scheduled sample должен иметь session generation и TTL для отбрасывания stale output.
 R28. [Improve] Scheduler должен существовать только пока есть pending output и полностью останавливаться в idle.
