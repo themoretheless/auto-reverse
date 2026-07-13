@@ -1306,11 +1306,11 @@ R12. [Implemented] Benchmark предлагает detent, free-spin, high-resolu
 R13. [Done] `DYNAMICS.md` и executable tests фиксируют pass-through, immediate response, deadline, signed-distance epsilon, idle и scheduler-latency contract.
 R14. [Done] Presets `Off`, `Precise`, `Balanced`, `Fast` имеют stable keys, цели, immediate shares 100/35/55/75% и tail deadlines 0/120/90/60 ms.
 R15. [Done] `scroll_dynamics` - pure scalar-axis state machine без CoreGraphics, timers, threads и config I/O; live event tap ее пока намеренно не вызывает.
-R16. [Reject] Не применять новый dynamics engine к continuous Trackpad/Magic Mouse events.
-R17. [Improve] Хранить velocity, residual и momentum независимо для vertical и horizontal axes.
-R18. [Improve] Нормализовать timestamp delta и ограничивать его после sleep, debugger stall и scheduler pause.
-R19. [Improve] Оценивать input rate по bounded recent samples, не доверяя одному interval или firmware metadata.
-R20. [Improve] Проверять signed-distance conservation, чтобы smoothing не создавал и не терял scroll distance без явного gain.
+R16. [Done] `ScrollDynamics2D` делает exact continuous bypass для Trackpad/Magic Mouse/любого continuous source и не меняет discrete axis state.
+R17. [Done] Vertical/horizontal владеют отдельными scalar engines, rate windows, velocity, conservation residual, momentum и deadlines; two-axis update транзакционен.
+R18. [Done] Input `dt` нормализуется в 1-50 ms, raw/clamp остаются диагностируемыми; absolute deadline завершает bounded pending distance после stall без unbounded integration.
+R19. [Done] `InputRateEstimator` использует median фиксированного окна из восьми observed intervals и ничего не утверждает до трех samples; firmware metadata и один interval не участвуют.
+R20. [Done] Per-axis ledger и deterministic sequence tests для всех presets проверяют signed-distance conservation до `1e-9` на mixed-sign и two-axis input без неявного gain.
 R21. [Improve] Сбрасывать rate window и старое momentum при смене направления.
 R22. [Improve] Противоположный wheel tick должен немедленно отменять остаточное momentum.
 R23. [Improve] Длинный input gap должен начинать новую session, а не продолжать старую кривую.

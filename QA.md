@@ -80,11 +80,20 @@ and two simultaneously connected mice.
 ## Experimental dynamics gate
 
 `scroll_dynamics` is not connected to live input yet. Before that changes, the
-following must be automated and then repeated on the six physical classes:
+pure suite now proves:
 
 - Off is exact same-call pass-through;
 - every active preset produces immediate same-sign output;
+- vertical and horizontal velocity, residual, momentum, rate and deadline state
+  are independent;
+- duplicate/long input intervals clamp to 1-50 ms;
+- rate requires three observations and keeps only the latest eight;
+- signed distance is conserved for mixed-sign scalar/two-axis sequences and
+  idle samples do not creep;
+- continuous input bypasses dynamics without mutating discrete state.
+
+Still required before live integration and then on all six physical classes:
+
 - the tail completes by its preset deadline plus the 8 ms scheduler budget;
-- signed distance is conserved and idle samples do not creep;
-- continuous Trackpad and Magic Mouse events bypass dynamics entirely;
+- direction reset, opposite-input, gap, stop and click cancellation pass;
 - any invalid state or scheduler failure passes through the physical event.

@@ -265,10 +265,11 @@ samples от pure engine, помечает synthetic event, пишет толь�
 
 1. [Done R13-R15 boundary] Измеримый contract, четыре presets и pure
    scalar-axis engine готовы без live integration.
-2. [Next R16-R20] Зафиксировать continuous bypass, независимые axis states,
-   bounded `dt`, recent-rate estimate и signed-distance invariants.
-3. Проверить signed-distance conservation, direction reset, opposite-input
-   cancellation, gap split и stop threshold property tests.
+2. [Done R16-R20] Continuous bypass, transactional independent axis states,
+   1-50 ms `dt`, median 3-of-8 recent-rate estimate и signed-distance ledger
+   готовы в pure model.
+3. [Next R21-R25] Добавить direction reset, opposite-input cancellation, gap
+   split, stop threshold и physical-action cancellation tests.
 4. Добавить tagged scheduler только для discrete wheel и выключить его по
    умолчанию.
 5. При любой неопределенности пропускать исходный event без smoothing.
@@ -302,8 +303,8 @@ samples от pure engine, помечает synthetic event, пишет толь�
 
 ## Приоритет
 
-Пакеты 1-3 (`R01-R15`) реализованы без изменения live scroll policy:
+Пакеты 1-4 (`R01-R20`) реализованы без изменения live scroll policy:
 trace/replay/lab, ScrollTest-style benchmark, observed rates, repeated latency
 assessment, physical test strata, measurable dynamics contract и pure
-scalar-axis prototype. Следующий пакет - `R16-R20`: continuous bypass,
-per-axis state, bounded time, recent-rate estimate и distance invariants.
+two-axis dynamics model с continuous bypass, bounded time/rate и conservation
+ledger. Следующий пакет - `R21-R25`: session reset, cancellation и stop policy.

@@ -7,8 +7,11 @@ behavior remains the existing raw/reverse policy.
 
 ## Scope
 
-- Applies only to normalized scalar-axis samples from a discrete wheel.
-- Never applies to continuous Trackpad or Magic Mouse events.
+- Applies only to normalized discrete-wheel input.
+- `ScrollDynamics2D` routes every continuous event through exact pass-through;
+  Trackpad, Magic Mouse, and other continuous streams cannot mutate dynamics.
+- Vertical and horizontal axes own separate scalar engines, rate windows,
+  velocity, residual ledger, momentum, timestamp, and deadline.
 - Owns no CoreGraphics object, timer, thread, config file, or wall clock.
 - Receives monotonic microsecond timestamps from a caller and returns deltas
   that are due at that timestamp.
@@ -17,7 +20,7 @@ behavior remains the existing raw/reverse policy.
 
 ## Measurable Product Contract
 
-For one input sample and one axis:
+For input samples on either axis:
 
 1. **Off pass-through:** output equals input in the same call, pending distance
    is zero, and the engine remains idle.
@@ -25,16 +28,45 @@ For one input sample and one axis:
    in `handle_input`; pure-engine first-output latency is therefore zero.
 3. **Bounded completion:** sampling at or after the preset deadline emits all
    remaining distance and returns the state to idle.
-4. **Signed-distance conservation:** immediate plus tail output equals input
-   within `1e-9` logical points for the modeled impulse.
+4. **Signed-distance conservation:** immediate plus tail output equals the sum
+   of signed input within `1e-9` logical points for mixed-sign sequences.
 5. **No idle creep:** after completion, later samples emit zero.
-6. **Adapter budget:** a future scheduler may wake late by at most its 8 ms tail
+6. **Continuous bypass:** continuous input is returned exactly and leaves both
+   discrete states byte-for-byte equivalent at the public snapshot boundary.
+7. **Adapter budget:** a future scheduler may wake late by at most its 8 ms tail
    budget; it may not silently extend the preset curve.
 
-Repeated input, direction changes, long gaps, cancellation, per-axis state,
-bounded `dt`, and scheduler failure are handled explicitly in R16-R30. The
-model is not release-enabled until those invariants and the physical matrix
-pass.
+Direction resets, explicit opposite-input cancellation, long-gap sessions,
+stop threshold, physical-action cancellation, and scheduler failure are handled
+in R21-R30. The model is not release-enabled until those invariants and the
+physical matrix pass.
+
+## Axis State
+
+Each scalar engine exposes a diagnostic snapshot:
+
+- **velocity** is signed input distance multiplied by a robust recent-rate
+  estimate; it stays unavailable until enough intervals exist;
+- **momentum** is signed distance already accepted and scheduled for the tail;
+- **residual** is the separate signed conservation correction after accepted,
+  emitted, and momentum distance are reconciled;
+- **deadline** bounds the active tail.
+
+The two-axis facade applies a discrete event transactionally: if either cloned
+axis rejects it, neither live axis state advances.
+
+## Time And Input Rate
+
+Only caller-supplied monotonic timestamps are accepted. Input intervals are
+normalized to `1-50 ms`; duplicate timestamps clamp upward and sleep/debugger
+stalls clamp downward before they can affect rate or velocity. Absolute tail
+deadlines still complete pending distance instead of integrating an unbounded
+stall.
+
+Rate estimation uses the median of a fixed eight-interval ring and returns no
+estimate before three observations. It uses only delivery intervals observed by
+the engine, never firmware metadata or one isolated interval. Raw and clamped
+`dt` remain visible in `AxisStateSnapshot` for diagnostics.
 
 ## Presets
 
@@ -86,8 +118,12 @@ count.
 
 ## Ownership
 
-- `src/latency_budget.rs`: budgets, bounded interval history, warning policy.
-- `src/scroll_dynamics.rs`: presets and pure scalar-axis state machine.
+- `src/latency_budget.rs`: budgets, bounded reading history, warning policy.
+- `src/scroll_dynamics.rs`: continuous bypass and transactional two-axis facade.
+- `src/scroll_dynamics/axis.rs`: scalar state, momentum, residual, velocity and
+  signed-distance ledger.
+- `src/scroll_dynamics/rate.rs`: bounded `dt` and fixed recent-rate window.
+- `src/scroll_dynamics/preset.rs`: stable preset vocabulary and parameters.
 - `src/scroll_benchmark.rs`: physical class vocabulary and trial results.
 - `src/ui/debug_console.rs`: manual callback samples and status presentation.
 - `src/ui/scroll_benchmark.rs`: physical-class picker and CSV export.

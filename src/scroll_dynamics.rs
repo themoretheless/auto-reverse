@@ -1,288 +1,138 @@
-//! Pure, scalar-axis discrete-wheel dynamics.
+//! Pure discrete-wheel dynamics facade.
 //!
-//! The engine owns no clock, thread, scheduler, CoreGraphics object, or
-//! configuration store. Callers provide monotonic timestamps and decide when
-//! to emit returned deltas. Live runtime integration remains deliberately off.
+//! The facade owns two independent scalar-axis engines and rejects dynamics
+//! for every continuous event. It owns no clock, thread, scheduler,
+//! CoreGraphics object, or configuration store.
 
 use std::error::Error;
 use std::fmt;
 
-pub const DISTANCE_EPSILON_POINTS: f64 = 1e-9;
-pub const MAX_ABS_INPUT_POINTS: f64 = 1_000_000.0;
+mod axis;
+mod preset;
+mod rate;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SmoothPreset {
-    #[default]
-    Off,
-    Precise,
-    Balanced,
-    Fast,
+pub use axis::{
+    AxisStateSnapshot, DISTANCE_EPSILON_POINTS, DynamicsEmission, DynamicsPhase,
+    MAX_ABS_INPUT_POINTS, ScrollDynamics,
+};
+pub use preset::{PresetParameters, SmoothPreset};
+pub use rate::{
+    DeltaClamp, InputRateEstimator, MAX_INPUT_DT_US, MIN_INPUT_DT_US, MIN_RATE_INTERVALS,
+    NormalizedDelta, RATE_WINDOW_CAPACITY, RateEstimate, normalize_input_delta,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScrollVector {
+    pub vertical_points: f64,
+    pub horizontal_points: f64,
 }
 
-impl SmoothPreset {
-    pub const ALL: [Self; 4] = [Self::Off, Self::Precise, Self::Balanced, Self::Fast];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Precise => "precise",
-            Self::Balanced => "balanced",
-            Self::Fast => "fast",
-        }
-    }
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Off => "Off",
-            Self::Precise => "Precise",
-            Self::Balanced => "Balanced",
-            Self::Fast => "Fast",
-        }
-    }
-
-    pub const fn goal(self) -> &'static str {
-        match self {
-            Self::Off => "Exact immediate pass-through",
-            Self::Precise => "Longest control window for small corrections",
-            Self::Balanced => "Middle response for general wheel use",
-            Self::Fast => "Shortest response with the largest immediate share",
-        }
-    }
-
-    pub const fn parameters(self) -> PresetParameters {
-        match self {
-            Self::Off => PresetParameters {
-                immediate_per_mille: 1_000,
-                tail_duration_us: 0,
-            },
-            Self::Precise => PresetParameters {
-                immediate_per_mille: 350,
-                tail_duration_us: 120_000,
-            },
-            Self::Balanced => PresetParameters {
-                immediate_per_mille: 550,
-                tail_duration_us: 90_000,
-            },
-            Self::Fast => PresetParameters {
-                immediate_per_mille: 750,
-                tail_duration_us: 60_000,
-            },
-        }
-    }
-}
-
-impl fmt::Display for SmoothPreset {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.label())
-    }
+impl ScrollVector {
+    pub const ZERO: Self = Self {
+        vertical_points: 0.0,
+        horizontal_points: 0.0,
+    };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PresetParameters {
-    pub immediate_per_mille: u16,
-    pub tail_duration_us: u64,
-}
-
-impl PresetParameters {
-    pub fn validate(self) -> Result<Self, DynamicsError> {
-        let valid = self.immediate_per_mille <= 1_000
-            && if self.tail_duration_us == 0 {
-                self.immediate_per_mille == 1_000
-            } else {
-                self.immediate_per_mille > 0 && self.immediate_per_mille < 1_000
-            };
-        if !valid {
-            return Err(DynamicsError::InvalidParameters {
-                immediate_per_mille: self.immediate_per_mille,
-                tail_duration_us: self.tail_duration_us,
-            });
-        }
-        Ok(self)
-    }
-
-    fn immediate_ratio(self) -> f64 {
-        f64::from(self.immediate_per_mille) / 1_000.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DynamicsPhase {
-    Idle,
-    Active,
+pub enum DynamicsRoute {
+    DiscreteDynamics,
+    ContinuousBypass,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DynamicsEmission {
-    pub delta_points: f64,
-    pub pending_points: f64,
-    pub phase: DynamicsPhase,
-    pub deadline_us: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct ActiveTail {
-    pending_points: f64,
-    last_sample_us: u64,
-    deadline_us: u64,
+pub struct TwoAxisEmission {
+    pub delta: ScrollVector,
+    pub route: DynamicsRoute,
+    pub vertical_state: AxisStateSnapshot,
+    pub horizontal_state: AxisStateSnapshot,
 }
 
 #[derive(Debug, Clone)]
-pub struct ScrollDynamics {
-    preset: SmoothPreset,
-    parameters: PresetParameters,
-    last_timestamp_us: Option<u64>,
-    tail: Option<ActiveTail>,
+pub struct ScrollDynamics2D {
+    vertical: ScrollDynamics,
+    horizontal: ScrollDynamics,
 }
 
-impl ScrollDynamics {
+impl ScrollDynamics2D {
     pub fn new(preset: SmoothPreset) -> Self {
-        let parameters = preset
-            .parameters()
-            .validate()
-            .expect("built-in smooth presets must remain valid");
         Self {
-            preset,
-            parameters,
-            last_timestamp_us: None,
-            tail: None,
+            vertical: ScrollDynamics::new(preset),
+            horizontal: ScrollDynamics::new(preset),
         }
     }
 
-    pub fn preset(&self) -> SmoothPreset {
-        self.preset
-    }
-
-    pub fn phase(&self) -> DynamicsPhase {
-        if self.tail.is_some() {
-            DynamicsPhase::Active
-        } else {
-            DynamicsPhase::Idle
-        }
-    }
-
-    /// Accepts one already-normalized discrete-wheel delta for one axis.
-    /// The returned delta is due immediately at `timestamp_us`.
-    pub fn handle_input(
+    /// Routes one already-normalized scroll event. Continuous input is exact
+    /// pass-through and cannot mutate either discrete-wheel axis state.
+    pub fn handle_event(
         &mut self,
         timestamp_us: u64,
-        input_points: f64,
-    ) -> Result<DynamicsEmission, DynamicsError> {
-        self.validate_timestamp(timestamp_us)?;
-        if !input_points.is_finite() {
-            return Err(DynamicsError::NonFiniteInput);
-        }
-        if input_points.abs() > MAX_ABS_INPUT_POINTS {
-            return Err(DynamicsError::InputTooLarge(input_points));
-        }
+        input: ScrollVector,
+        continuous: bool,
+    ) -> Result<TwoAxisEmission, DynamicsError> {
+        axis::validate_input_points(input.vertical_points)?;
+        axis::validate_input_points(input.horizontal_points)?;
 
-        let new_deadline =
-            if self.preset != SmoothPreset::Off && input_points.abs() > DISTANCE_EPSILON_POINTS {
-                Some(
-                    timestamp_us
-                        .checked_add(self.parameters.tail_duration_us)
-                        .ok_or(DynamicsError::TimestampOverflow {
-                            timestamp_us,
-                            duration_us: self.parameters.tail_duration_us,
-                        })?,
-                )
-            } else {
-                None
-            };
-
-        let due_tail = self.advance_tail(timestamp_us);
-        self.last_timestamp_us = Some(timestamp_us);
-
-        if input_points.abs() <= DISTANCE_EPSILON_POINTS {
-            return Ok(self.emission(due_tail));
-        }
-        if self.preset == SmoothPreset::Off {
-            return Ok(self.emission(due_tail + input_points));
-        }
-
-        let immediate = input_points * self.parameters.immediate_ratio();
-        let tail_delta = input_points - immediate;
-        let new_deadline = new_deadline.expect("active non-zero input has a checked deadline");
-
-        match &mut self.tail {
-            Some(tail) => {
-                tail.pending_points += tail_delta;
-                tail.last_sample_us = timestamp_us;
-                tail.deadline_us = tail.deadline_us.max(new_deadline);
-                if tail.pending_points.abs() <= DISTANCE_EPSILON_POINTS {
-                    self.tail = None;
-                }
-            }
-            None => {
-                self.tail = Some(ActiveTail {
-                    pending_points: tail_delta,
-                    last_sample_us: timestamp_us,
-                    deadline_us: new_deadline,
-                });
-            }
-        }
-
-        Ok(self.emission(due_tail + immediate))
-    }
-
-    /// Advances the pure state to a caller-supplied timestamp. A future
-    /// platform scheduler may call this; the domain engine never wakes itself.
-    pub fn sample(&mut self, timestamp_us: u64) -> Result<DynamicsEmission, DynamicsError> {
-        self.validate_timestamp(timestamp_us)?;
-        let delta_points = self.advance_tail(timestamp_us);
-        self.last_timestamp_us = Some(timestamp_us);
-        Ok(self.emission(delta_points))
-    }
-
-    fn validate_timestamp(&self, timestamp_us: u64) -> Result<(), DynamicsError> {
-        if let Some(previous) = self.last_timestamp_us
-            && timestamp_us < previous
-        {
-            return Err(DynamicsError::TimestampOutOfOrder {
-                previous,
-                current: timestamp_us,
+        if continuous {
+            return Ok(TwoAxisEmission {
+                delta: input,
+                route: DynamicsRoute::ContinuousBypass,
+                vertical_state: self.vertical.state(),
+                horizontal_state: self.horizontal.state(),
             });
         }
-        Ok(())
+
+        // Keep a two-axis event transactional if a future axis-specific rule
+        // introduces an error after the other axis has advanced.
+        let mut vertical = self.vertical.clone();
+        let mut horizontal = self.horizontal.clone();
+        let vertical_output = vertical.handle_input(timestamp_us, input.vertical_points)?;
+        let horizontal_output = horizontal.handle_input(timestamp_us, input.horizontal_points)?;
+        self.vertical = vertical;
+        self.horizontal = horizontal;
+
+        Ok(TwoAxisEmission {
+            delta: ScrollVector {
+                vertical_points: vertical_output.delta_points,
+                horizontal_points: horizontal_output.delta_points,
+            },
+            route: DynamicsRoute::DiscreteDynamics,
+            vertical_state: self.vertical.state(),
+            horizontal_state: self.horizontal.state(),
+        })
     }
 
-    fn advance_tail(&mut self, timestamp_us: u64) -> f64 {
-        let Some(mut tail) = self.tail.take() else {
-            return 0.0;
-        };
-        if timestamp_us <= tail.last_sample_us {
-            self.tail = Some(tail);
-            return 0.0;
-        }
-        if timestamp_us >= tail.deadline_us {
-            return tail.pending_points;
-        }
+    /// Advances pending output at a caller-provided timestamp. A future
+    /// scheduler may call this method; the pure facade never wakes itself.
+    pub fn sample(&mut self, timestamp_us: u64) -> Result<TwoAxisEmission, DynamicsError> {
+        let mut vertical = self.vertical.clone();
+        let mut horizontal = self.horizontal.clone();
+        let vertical_output = vertical.sample(timestamp_us)?;
+        let horizontal_output = horizontal.sample(timestamp_us)?;
+        self.vertical = vertical;
+        self.horizontal = horizontal;
 
-        let elapsed_us = timestamp_us - tail.last_sample_us;
-        let remaining_us = tail.deadline_us - tail.last_sample_us;
-        let fraction = elapsed_us as f64 / remaining_us as f64;
-        let emitted = tail.pending_points * fraction;
-        tail.pending_points -= emitted;
-        tail.last_sample_us = timestamp_us;
-        if tail.pending_points.abs() > DISTANCE_EPSILON_POINTS {
-            self.tail = Some(tail);
-        }
-        emitted
+        Ok(TwoAxisEmission {
+            delta: ScrollVector {
+                vertical_points: vertical_output.delta_points,
+                horizontal_points: horizontal_output.delta_points,
+            },
+            route: DynamicsRoute::DiscreteDynamics,
+            vertical_state: self.vertical.state(),
+            horizontal_state: self.horizontal.state(),
+        })
     }
 
-    fn emission(&self, delta_points: f64) -> DynamicsEmission {
-        let (pending_points, deadline_us) = self.tail.map_or((0.0, None), |tail| {
-            (tail.pending_points, Some(tail.deadline_us))
-        });
-        DynamicsEmission {
-            delta_points,
-            pending_points,
-            phase: self.phase(),
-            deadline_us,
-        }
+    pub fn vertical_state(&self) -> AxisStateSnapshot {
+        self.vertical.state()
+    }
+
+    pub fn horizontal_state(&self) -> AxisStateSnapshot {
+        self.horizontal.state()
     }
 }
 
-impl Default for ScrollDynamics {
+impl Default for ScrollDynamics2D {
     fn default() -> Self {
         Self::new(SmoothPreset::Off)
     }
@@ -347,93 +197,146 @@ mod tests {
     }
 
     #[test]
-    fn presets_have_stable_testable_parameters_and_goals() {
-        let expected = [
-            (SmoothPreset::Off, "off", 1_000, 0),
-            (SmoothPreset::Precise, "precise", 350, 120_000),
-            (SmoothPreset::Balanced, "balanced", 550, 90_000),
-            (SmoothPreset::Fast, "fast", 750, 60_000),
-        ];
-        assert_eq!(SmoothPreset::ALL.len(), expected.len());
-        for (preset, key, immediate_per_mille, tail_duration_us) in expected {
-            let parameters = preset.parameters().validate().unwrap();
-            assert_eq!(preset.as_str(), key);
-            assert_eq!(parameters.immediate_per_mille, immediate_per_mille);
-            assert_eq!(parameters.tail_duration_us, tail_duration_us);
-            assert!(!preset.goal().is_empty());
-        }
+    fn continuous_input_is_exact_bypass_and_does_not_mutate_discrete_state() {
+        let mut dynamics = ScrollDynamics2D::new(SmoothPreset::Balanced);
+        dynamics
+            .handle_event(
+                0,
+                ScrollVector {
+                    vertical_points: 100.0,
+                    horizontal_points: 0.0,
+                },
+                false,
+            )
+            .unwrap();
+        let vertical_before = dynamics.vertical_state();
+        let horizontal_before = dynamics.horizontal_state();
+
+        let output = dynamics
+            .handle_event(
+                50_000,
+                ScrollVector {
+                    vertical_points: -3.25,
+                    horizontal_points: 4.5,
+                },
+                true,
+            )
+            .unwrap();
+
+        assert_eq!(output.route, DynamicsRoute::ContinuousBypass);
+        assert_eq!(output.delta.vertical_points, -3.25);
+        assert_eq!(output.delta.horizontal_points, 4.5);
+        assert_eq!(dynamics.vertical_state(), vertical_before);
+        assert_eq!(dynamics.horizontal_state(), horizontal_before);
     }
 
     #[test]
-    fn off_is_exact_immediate_pass_through() {
-        let mut dynamics = ScrollDynamics::new(SmoothPreset::Off);
-        let output = dynamics.handle_input(10, -42.5).unwrap();
-        assert_eq!(output.delta_points, -42.5);
-        assert_eq!(output.pending_points, 0.0);
-        assert_eq!(output.phase, DynamicsPhase::Idle);
-        assert_eq!(dynamics.sample(20).unwrap().delta_points, 0.0);
-    }
+    fn rejected_two_axis_event_leaves_both_states_unchanged() {
+        let mut dynamics = ScrollDynamics2D::new(SmoothPreset::Fast);
+        dynamics
+            .handle_event(
+                0,
+                ScrollVector {
+                    vertical_points: 12.0,
+                    horizontal_points: 3.0,
+                },
+                false,
+            )
+            .unwrap();
+        let vertical_before = dynamics.vertical_state();
+        let horizontal_before = dynamics.horizontal_state();
 
-    #[test]
-    fn every_active_preset_emits_immediately_and_finishes_by_its_deadline() {
-        for preset in [
-            SmoothPreset::Precise,
-            SmoothPreset::Balanced,
-            SmoothPreset::Fast,
-        ] {
-            let mut dynamics = ScrollDynamics::new(preset);
-            let first = dynamics.handle_input(1_000, 100.0).unwrap();
-            assert!(first.delta_points > 0.0);
-            assert!(first.delta_points < 100.0);
-            assert_eq!(first.phase, DynamicsPhase::Active);
-
-            let deadline = first.deadline_us.unwrap();
-            let final_output = dynamics.sample(deadline).unwrap();
-            assert_near(first.delta_points + final_output.delta_points, 100.0);
-            assert_eq!(final_output.phase, DynamicsPhase::Idle);
-            assert_eq!(final_output.pending_points, 0.0);
-            assert_eq!(dynamics.sample(deadline + 1).unwrap().delta_points, 0.0);
-        }
-    }
-
-    #[test]
-    fn intermediate_sampling_conserves_signed_distance() {
-        let mut dynamics = ScrollDynamics::new(SmoothPreset::Balanced);
-        let first = dynamics.handle_input(0, -80.0).unwrap();
-        let middle = dynamics.sample(45_000).unwrap();
-        let final_output = dynamics.sample(90_000).unwrap();
-
-        assert!(first.delta_points < 0.0);
-        assert!(middle.delta_points < 0.0);
-        assert!(final_output.delta_points < 0.0);
-        assert_near(
-            first.delta_points + middle.delta_points + final_output.delta_points,
-            -80.0,
-        );
-    }
-
-    #[test]
-    fn invalid_input_does_not_advance_timestamp_or_create_tail() {
-        let mut dynamics = ScrollDynamics::new(SmoothPreset::Balanced);
         assert_eq!(
-            dynamics.handle_input(20, f64::NAN),
+            dynamics.handle_event(
+                5_000,
+                ScrollVector {
+                    vertical_points: 1.0,
+                    horizontal_points: f64::NAN,
+                },
+                false,
+            ),
             Err(DynamicsError::NonFiniteInput)
         );
-        assert!(dynamics.handle_input(10, 10.0).is_ok());
-        assert!(matches!(
-            dynamics.sample(9),
-            Err(DynamicsError::TimestampOutOfOrder { .. })
-        ));
+        assert_eq!(dynamics.vertical_state(), vertical_before);
+        assert_eq!(dynamics.horizontal_state(), horizontal_before);
     }
 
     #[test]
-    fn overflowing_deadline_is_rejected_without_panicking() {
-        let mut dynamics = ScrollDynamics::new(SmoothPreset::Fast);
-        assert!(matches!(
-            dynamics.handle_input(u64::MAX, 10.0),
-            Err(DynamicsError::TimestampOverflow { .. })
-        ));
-        assert_eq!(dynamics.phase(), DynamicsPhase::Idle);
-        assert!(dynamics.handle_input(0, 10.0).is_ok());
+    fn vertical_and_horizontal_rate_velocity_residual_and_momentum_are_independent() {
+        let mut dynamics = ScrollDynamics2D::new(SmoothPreset::Balanced);
+        for timestamp_us in [0, 10_000, 20_000, 30_000] {
+            dynamics
+                .handle_event(
+                    timestamp_us,
+                    ScrollVector {
+                        vertical_points: 10.0,
+                        horizontal_points: 0.0,
+                    },
+                    false,
+                )
+                .unwrap();
+        }
+        for timestamp_us in [40_000, 60_000, 80_000, 100_000] {
+            dynamics
+                .handle_event(
+                    timestamp_us,
+                    ScrollVector {
+                        vertical_points: 0.0,
+                        horizontal_points: -2.0,
+                    },
+                    false,
+                )
+                .unwrap();
+        }
+
+        let vertical = dynamics.vertical_state();
+        let horizontal = dynamics.horizontal_state();
+        assert_eq!(vertical.observed_rate_millihz, Some(100_000));
+        assert_eq!(horizontal.observed_rate_millihz, Some(50_000));
+        assert_eq!(vertical.velocity_points_per_second, Some(1_000.0));
+        assert_eq!(horizontal.velocity_points_per_second, Some(-100.0));
+        assert_ne!(vertical.momentum_points, horizontal.momentum_points);
+        assert!(vertical.residual_points.abs() <= DISTANCE_EPSILON_POINTS);
+        assert!(horizontal.residual_points.abs() <= DISTANCE_EPSILON_POINTS);
+    }
+
+    #[test]
+    fn two_axis_distance_is_conserved_across_repeated_inputs() {
+        let mut dynamics = ScrollDynamics2D::new(SmoothPreset::Precise);
+        let inputs = [
+            (0, 12.5, -3.0),
+            (7_000, 4.25, 1.5),
+            (19_000, -2.0, 8.75),
+            (44_000, 0.125, -0.375),
+        ];
+        let mut input_total = ScrollVector::ZERO;
+        let mut output_total = ScrollVector::ZERO;
+        for (timestamp_us, vertical_points, horizontal_points) in inputs {
+            input_total.vertical_points += vertical_points;
+            input_total.horizontal_points += horizontal_points;
+            let output = dynamics
+                .handle_event(
+                    timestamp_us,
+                    ScrollVector {
+                        vertical_points,
+                        horizontal_points,
+                    },
+                    false,
+                )
+                .unwrap();
+            output_total.vertical_points += output.delta.vertical_points;
+            output_total.horizontal_points += output.delta.horizontal_points;
+        }
+        let final_output = dynamics.sample(500_000).unwrap();
+        output_total.vertical_points += final_output.delta.vertical_points;
+        output_total.horizontal_points += final_output.delta.horizontal_points;
+
+        assert_near(output_total.vertical_points, input_total.vertical_points);
+        assert_near(
+            output_total.horizontal_points,
+            input_total.horizontal_points,
+        );
+        assert_eq!(dynamics.vertical_state().phase, DynamicsPhase::Idle);
+        assert_eq!(dynamics.horizontal_state().phase, DynamicsPhase::Idle);
     }
 }

@@ -57,9 +57,11 @@ Implemented:
 - an explicit on-demand min/average/max event-tap latency interval snapshot via
   public `CGGetEventTapList`; it is never polled because reading resets min/max;
   bounded history warns only after repeated callback-budget breaches;
-- a pure, non-live discrete-wheel dynamics model with measurable
-  Off/Precise/Balanced/Fast parameters and no CoreGraphics, timer, thread, or
-  config I/O dependency;
+- a pure, non-live two-axis discrete-wheel dynamics model with exact continuous
+  bypass, independent velocity/residual/momentum, 1-50 ms input-time bounds,
+  a median 3-of-8 observed-rate window, signed-distance ledger, and measurable
+  Off/Precise/Balanced/Fast parameters; it has no CoreGraphics, timer, thread,
+  or config I/O dependency;
 - process-local 15-minute pause that leaves persisted settings untouched;
 - typed event-tap lifecycle with explicit started/already-running/stopped/failed
   events rather than timeout-inferred booleans;
@@ -483,9 +485,10 @@ The implementation order is intentionally conservative:
    observed event-rate distributions, and repeated-budget assessment over
    manual public tap-latency snapshots. Physical and visual QA remain before
    treating the benchmark as release-validated.
-2. The first pure scalar-axis dynamics model and four presets are implemented
-   but intentionally not connected to live input. Next: per-axis state,
-   bounded time, conservation, cancellation, then an opt-in fail-open scheduler.
+2. The pure two-axis model now has continuous bypass, independent axis state,
+   bounded time/rate estimation and signed-distance conservation, but remains
+   intentionally disconnected from live input. Next: session reset,
+   cancellation/stop policy, then an opt-in fail-open scheduler.
 3. Add inherited per-device presets and compact UX only after the measurements
    justify the model.
 
@@ -1019,7 +1022,8 @@ README without making the first read impossible.
 - `BENCHMARK.md` - target conditions, physical matrix, metrics, event-rate
   semantics, tap-latency snapshots, export, and ownership boundaries.
 - `DYNAMICS.md` - measurable smooth-scrolling contract, latency budgets,
-  experimental presets, and the non-live pure engine boundary.
+  experimental presets, continuous bypass, per-axis state, bounded rate/time,
+  conservation, and the non-live pure engine boundary.
 - `ROADMAP.md` - the executable top 25, grouped P0/P1/P2.
 - `RELEASE.md` - canonical Developer ID, notarization, stapling, and
   distribution checklist.
