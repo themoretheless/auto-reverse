@@ -17,6 +17,7 @@ pub const CONFIG_VERSION: u32 = 1;
 /// serial_number = "ABC123"       # preferred when available
 /// name = "Logitech MX Master"  # optional, display only
 /// reverse = true
+/// alias = "Desk mouse"          # optional user label
 /// step_size = 5                  # optional; otherwise inherit
 /// smooth_preset = "balanced"    # optional; otherwise inherit
 /// ```
@@ -30,7 +31,10 @@ pub struct DeviceRule {
     pub location_id: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    pub reverse: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverse: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step_size: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -126,6 +130,23 @@ impl AppConfig {
                     "device_rules[{index}].location_id must be non-zero"
                 )));
             }
+            if let Some(alias) = &rule.alias {
+                if alias.trim().is_empty() {
+                    return Err(AppError::InvalidConfig(format!(
+                        "device_rules[{index}].alias must not be empty"
+                    )));
+                }
+                if alias.trim() != alias {
+                    return Err(AppError::InvalidConfig(format!(
+                        "device_rules[{index}].alias must not have surrounding whitespace"
+                    )));
+                }
+                if alias.chars().count() > 64 || alias.chars().any(char::is_control) {
+                    return Err(AppError::InvalidConfig(format!(
+                        "device_rules[{index}].alias must be at most 64 visible characters"
+                    )));
+                }
+            }
             if rule
                 .step_size
                 .is_some_and(|value| !(0..=20).contains(&value))
@@ -173,7 +194,11 @@ impl AppConfig {
             // the user unchecks Mouse/Trackpad and pins one device to
             // "Reverse". Without this branch both doctor and the GUI would
             // claim nothing is reversed while the tap reverses that device.
-            let pinned_on = self.device_rules.iter().filter(|rule| rule.reverse).count();
+            let pinned_on = self
+                .device_rules
+                .iter()
+                .filter(|rule| rule.reverse == Some(true))
+                .count();
             if pinned_on > 0 {
                 let noun = if pinned_on == 1 { "rule" } else { "rules" };
                 return format!("reversing only devices enabled by {pinned_on} per-device {noun}");
@@ -378,7 +403,7 @@ mod tests {
             config.device_rules[0].serial_number.as_deref(),
             Some("ABC123")
         );
-        assert!(config.device_rules[0].reverse);
+        assert_eq!(config.device_rules[0].reverse, Some(true));
         assert_eq!(config.device_rules[0].step_size, Some(7));
         assert_eq!(
             config.device_rules[0].smooth_preset,
@@ -427,6 +452,62 @@ mod tests {
             ..AppConfig::default()
         };
 
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn direction_can_inherit_in_a_profile_with_other_overrides() {
+        let config: AppConfig = toml::from_str(
+            "config_version = 1\n\
+             [[device_rules]]\n\
+             vendor_id = 0x046d\n\
+             product_id = 0xc52b\n\
+             serial_number = \"mouse-a\"\n\
+             alias = \"Desk mouse\"\n\
+             step_size = 8\n",
+        )
+        .unwrap();
+
+        config.validate().unwrap();
+        assert_eq!(config.device_rules[0].reverse, None);
+        assert_eq!(config.device_rules[0].alias.as_deref(), Some("Desk mouse"));
+        assert_eq!(config.device_rules[0].step_size, Some(8));
+    }
+
+    #[test]
+    fn aliases_are_trimmed_bounded_and_free_of_control_characters() {
+        for alias in ["", " leading", "trailing ", "line\nbreak"] {
+            let config = AppConfig {
+                device_rules: vec![DeviceRule {
+                    alias: Some(alias.to_string()),
+                    ..DeviceRule::for_hardware(
+                        HardwareId {
+                            vendor_id: 1,
+                            product_id: 2,
+                        },
+                        None,
+                        true,
+                    )
+                }],
+                ..AppConfig::default()
+            };
+            assert!(config.validate().is_err(), "alias {alias:?}");
+        }
+
+        let config = AppConfig {
+            device_rules: vec![DeviceRule {
+                alias: Some("x".repeat(65)),
+                ..DeviceRule::for_hardware(
+                    HardwareId {
+                        vendor_id: 1,
+                        product_id: 2,
+                    },
+                    None,
+                    true,
+                )
+            }],
+            ..AppConfig::default()
+        };
         assert!(config.validate().is_err());
     }
 

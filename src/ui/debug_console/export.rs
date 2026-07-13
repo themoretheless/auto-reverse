@@ -116,7 +116,7 @@ fn export_directory(previous: Option<&Receipt>) -> Option<PathBuf> {
 
 fn events_to_csv(events: &[debug_log::DebugEvent]) -> String {
     let mut csv = String::from(
-        "timestamp_ms,device,device_kind,device_name,vendor_id,product_id,source_pid,synthetic,axis,raw_delta,output_delta,category,reason_code,decision\n",
+        "timestamp_ms,device,device_kind,device_name,vendor_id,product_id,attribution_confidence,source_pid,synthetic,axis,raw_delta,output_delta,category,reason_code,decision\n",
     );
 
     for event in events {
@@ -135,13 +135,14 @@ fn events_to_csv(events: &[debug_log::DebugEvent]) -> String {
 
         writeln!(
             csv,
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             event.timestamp_ms,
             local_export::csv_escape(&device_description),
             event.device_kind.as_str(),
             local_export::csv_escape(device_name),
             vendor_id,
             product_id,
+            event.attribution_status.code(),
             event.source_pid,
             event.synthetic,
             event.axis.code(),
@@ -196,6 +197,7 @@ mod tests {
                 vendor_id: 0x046d,
                 product_id: 0xb034,
             }),
+            attribution_status: debug_log::AttributionStatus::MediumConfidence,
             source_pid: 123,
             synthetic: true,
             continuous: false,
@@ -208,11 +210,13 @@ mod tests {
         let csv = events_to_csv(&[event]);
 
         assert!(csv.starts_with(
-            "timestamp_ms,device,device_kind,device_name,vendor_id,product_id,source_pid,synthetic,axis,raw_delta,output_delta,category,reason_code,decision\n"
+            "timestamp_ms,device,device_kind,device_name,vendor_id,product_id,attribution_confidence,source_pid,synthetic,axis,raw_delta,output_delta,category,reason_code,decision\n"
         ));
         assert!(csv.contains("Mouse wheel · MX, Master 3S"));
         assert!(csv.contains("\"MX, Master\n3S\""));
-        assert!(csv.contains("0x046d,0xb034,123,true,vertical,1,-1,ignored,synthetic_event"));
+        assert!(
+            csv.contains("0x046d,0xb034,medium,123,true,vertical,1,-1,ignored,synthetic_event")
+        );
     }
 
     #[test]
@@ -227,6 +231,7 @@ mod tests {
                     vendor_id: 0x046d,
                     product_id: 0xb034,
                 }),
+                attribution_status: debug_log::AttributionStatus::HighConfidence,
                 source_pid: 123,
                 synthetic: false,
                 continuous: false,
@@ -248,6 +253,7 @@ mod tests {
                         vendor_id: 0x046d,
                         product_id: 0xb034,
                     }),
+                    attribution_status: debug_log::AttributionStatus::HighConfidence,
                     source_pid: 123,
                     synthetic: false,
                     continuous: false,
@@ -269,6 +275,7 @@ mod tests {
             "source_pid",
             "vendor_id",
             "product_id",
+            "attribution_confidence",
             "1000000",
         ] {
             assert!(!serialized.contains(private_value));

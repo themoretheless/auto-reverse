@@ -39,6 +39,10 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Legacy vendor/product rule is shown as inherited and remains shared |  |  |  |  |
 |  |  | Serial > location > VID/PID precedence is stable regardless of TOML rule order | N/A | N/A |  |  |
 |  |  | Per-device wheel step overrides global step; omitted value inherits it |  |  |  |  |
+|  |  | Device direction cycles Inherit / Reverse / Don't reverse without losing alias, step, or preset |  |  |  |  |
+|  |  | Devices tab separates Connected, Remembered, and Unavailable services |  |  |  |  |
+|  |  | User alias survives restart; duplicate names retain stable identity suffixes |  |  |  |  |
+|  |  | Fresh discrete wheel attribution reports high/medium confidence; observations older than 50 ms time out without identity | N/A | N/A |  |  |
 |  |  | Virtual HID with public `Transport = Virtual` passes through and logs `virtual_hid_source` | N/A | N/A |  |  |
 |  |  | Attributed wheel with missing/unknown transport passes through; no HID snapshot keeps kind policy | N/A | N/A |  |  |
 |  |  | Multi-device USB/Bluetooth receiver keeps child devices separate |  |  |  |  |

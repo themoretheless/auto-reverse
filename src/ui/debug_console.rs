@@ -512,7 +512,10 @@ fn table_header(ui: &mut egui::Ui) {
 }
 
 fn table_row(ui: &mut egui::Ui, event: &debug_log::DebugEvent) {
-    let device_description = event.device_description();
+    let device_description = match event.attribution_status {
+        debug_log::AttributionStatus::NotApplicable => event.device_description(),
+        status => format!("{} · {}", event.device_description(), status.code()),
+    };
     let decision_text = event.decision_text();
 
     ui.horizontal(|ui| {

@@ -14,6 +14,15 @@ pub enum ProfileSource {
     GlobalDefault,
 }
 
+impl ProfileSource {
+    pub const fn is_device_rule(self) -> bool {
+        matches!(
+            self,
+            Self::ExactSerial | Self::ExactLocation | Self::Hardware
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedProfileValue<T> {
     pub value: T,
@@ -28,12 +37,21 @@ pub struct ResolvedDeviceProfile {
 }
 
 impl AppConfig {
+    pub fn device_alias<'a>(&'a self, identity: &DeviceIdentity) -> Option<&'a str> {
+        self.device_rules
+            .iter()
+            .filter(|rule| rule.matches(identity))
+            .filter_map(|rule| rule.alias.as_deref().map(|alias| (rule, alias)))
+            .max_by_key(|(rule, _)| rule.specificity())
+            .map(|(_, alias)| alias)
+    }
+
     pub fn resolve_device_profile(
         &self,
         device_kind: DeviceKind,
         identity: Option<&DeviceIdentity>,
     ) -> ResolvedDeviceProfile {
-        let reverse = resolve_rule_value(&self.device_rules, identity, |rule| Some(rule.reverse))
+        let reverse = resolve_rule_value(&self.device_rules, identity, |rule| rule.reverse)
             .unwrap_or(ResolvedProfileValue {
                 value: self.should_reverse_device(device_kind),
                 source: ProfileSource::DeviceKind(device_kind),
@@ -196,5 +214,27 @@ mod tests {
             first.resolve_device_profile(DeviceKind::Mouse, Some(&identity)),
             expected
         );
+    }
+
+    #[test]
+    fn exact_rule_can_inherit_direction_while_overriding_other_fields() {
+        let identity = identity();
+        let hardware = DeviceRule::for_hardware(identity.hardware, None, false);
+        let serial = DeviceRule {
+            reverse: None,
+            step_size: Some(11),
+            ..DeviceRule::for_identity(&identity, None, true)
+        };
+        let config = AppConfig {
+            device_rules: vec![serial, hardware],
+            ..AppConfig::default()
+        };
+
+        let resolved = config.resolve_device_profile(DeviceKind::Mouse, Some(&identity));
+
+        assert!(!resolved.reverse.value);
+        assert_eq!(resolved.reverse.source, ProfileSource::Hardware);
+        assert_eq!(resolved.step_size.value, 11);
+        assert_eq!(resolved.step_size.source, ProfileSource::ExactSerial);
     }
 }

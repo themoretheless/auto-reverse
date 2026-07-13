@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::device::{DeviceKind, HardwareId};
+pub use crate::device_attribution::AttributionStatus;
 pub use crate::diagnostics::{Axis, DecisionCategory, DecisionReason};
 
 /// Matches the design handoff's "ring buffer holds the last 500" label.
@@ -39,6 +40,7 @@ pub struct DebugEvent {
     /// Raw IOHID product name, preserved unchanged for structured export.
     pub device_name: Option<Arc<str>>,
     pub hardware: Option<HardwareId>,
+    pub attribution_status: AttributionStatus,
     pub source_pid: i64,
     pub synthetic: bool,
     pub continuous: bool,
@@ -83,6 +85,7 @@ impl DebugEvent {
             || contains_case_insensitive(self.reason.code(), needle)
             || contains_case_insensitive(self.category().code(), needle)
             || contains_case_insensitive(&hardware, needle)
+            || contains_case_insensitive(self.attribution_status.code(), needle)
             || self.source_pid.to_string().contains(needle)
             || contains_case_insensitive(if self.synthetic { "true" } else { "false" }, needle)
             || contains_case_insensitive(
@@ -240,6 +243,7 @@ mod tests {
                 vendor_id: 0x1234,
                 product_id: 0x5678,
             }),
+            attribution_status: AttributionStatus::HighConfidence,
             source_pid: 0,
             synthetic: false,
             continuous: false,
@@ -421,6 +425,7 @@ mod tests {
         assert!(event.matches_search("vertical"));
         assert!(event.matches_search("reversed"));
         assert!(event.matches_search("1234"));
+        assert!(event.matches_search("high"));
         assert!(event.matches_search("false"));
         assert!(event.matches_search("-1"));
         assert!(!event.matches_search("trackpad"));

@@ -14,6 +14,8 @@ Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
   `src/device_classifier.rs`;
 - field-by-field device profile resolution in `src/config/profiles.rs` and
   pure public HID source policy in `src/device_source.rs`;
+- pure bounded wheel-attribution confidence in `src/device_attribution.rs` and
+  connected/remembered/unavailable presentation in `src/device_catalog.rs`;
 - macOS-specific FFI under `src/platform/macos/`;
 - a public listen-only AppKit gesture monitor in
   `src/platform/macos/gesture.rs`;
@@ -57,7 +59,11 @@ framework code inside `platform/macos`.
   Trackpad, and gesture timing is used only when both sources are connected.
 - Profile fields resolve independently by serial, location, VID/PID, device
   kind, then global default. Keep them in the existing `device_rules`; do not
-  add a second profile database.
+  add a second profile database. Direction is optional: `None` inherits and
+  must not delete alias, step-size, or preset overrides.
+- Last-active IOHID wheel data is correlation evidence, not an exact event
+  identifier. Accept identity only at `high`/`medium` confidence within the
+  50 ms attribution timeout; stale or missing observations must not inherit it.
 - An attributed wheel with exact public transport `Virtual`, or with an
   unknown/missing observed transport, must pass through. No wheel snapshot is
   `NotObserved` and preserves the existing fallback. Transport alone does not

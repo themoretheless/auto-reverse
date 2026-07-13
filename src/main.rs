@@ -19,6 +19,7 @@ use std::process;
 use std::sync::{Arc, RwLock};
 
 use auto_reverse::config::{AppConfig, ConfigStore};
+use auto_reverse::device_catalog::{DeviceState, build_device_catalog};
 use auto_reverse::device_classifier;
 use auto_reverse::error::{AppError, AppResult};
 use auto_reverse::event_rate::{DeviceEventRate, millihertz_to_hertz};
@@ -498,30 +499,38 @@ fn json_escape(value: &str) -> String {
 
 fn list_devices() -> AppResult<()> {
     let config = ConfigStore::default().load_or_create()?;
-    let devices = hid::list_pointing_devices()?;
+    let observations = hid::list_pointing_device_observations()?;
+    let catalog = build_device_catalog(&observations, &config.device_rules);
 
-    if devices.is_empty() {
+    if catalog.is_empty() {
         println!("no mouse-usage HID devices found");
     } else {
-        println!("connected pointing devices:");
-        for device in &devices {
-            let rule = config.matching_device_rule(&device.identity);
-            let rule_note = match rule {
-                Some(rule) if rule.reverse => "  [rule: reverse]",
-                Some(_) => "  [rule: do not reverse]",
-                None => "",
-            };
-            println!(
-                "  {}  {}{}{}",
-                device.identity,
-                device.name.as_deref().unwrap_or("(unnamed)"),
-                device
+        for state in [
+            DeviceState::Connected,
+            DeviceState::Remembered,
+            DeviceState::Unavailable,
+        ] {
+            let entries: Vec<_> = catalog
+                .iter()
+                .filter(|entry| entry.state == state)
+                .collect();
+            if entries.is_empty() {
+                continue;
+            }
+            println!("{}:", device_state_code(state));
+            for entry in entries {
+                let identity = entry
+                    .identity
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "no stable public identity".to_string());
+                let transport = entry
                     .transport
                     .as_deref()
-                    .map(|t| format!(" via {t}"))
-                    .unwrap_or_default(),
-                rule_note,
-            );
+                    .map(|value| format!(" via {value}"))
+                    .unwrap_or_default();
+                println!("  {identity}  {}{transport}", entry.display_name);
+            }
         }
     }
 
@@ -535,13 +544,21 @@ fn list_devices() -> AppResult<()> {
     } else {
         println!("configured device rules:");
         for rule in &config.device_rules {
+            let direction = match rule.reverse {
+                Some(true) => "reverse",
+                Some(false) => "do-not-reverse",
+                None => "inherit",
+            };
             println!(
-                "  {} reverse={}{}",
+                "  {} direction={direction}{}{}",
                 rule.selector_description(),
-                rule.reverse,
                 rule.name
                     .as_deref()
                     .map(|n| format!("  # {n}"))
+                    .unwrap_or_default(),
+                rule.alias
+                    .as_deref()
+                    .map(|alias| format!("  alias={alias:?}"))
                     .unwrap_or_default(),
             );
         }
@@ -555,6 +572,14 @@ fn list_devices() -> AppResult<()> {
         Err(error) => println!("continuous-device classifier hint unavailable: {error}"),
     }
     Ok(())
+}
+
+fn device_state_code(state: DeviceState) -> &'static str {
+    match state {
+        DeviceState::Connected => "connected",
+        DeviceState::Remembered => "remembered",
+        DeviceState::Unavailable => "unavailable",
+    }
 }
 
 #[cfg(feature = "gui")]

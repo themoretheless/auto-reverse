@@ -238,6 +238,8 @@ src/scroll_dynamics.rs                    pure scalar-axis dynamics state machin
 src/scroll_scheduler.rs                   pure wake/fail-open orchestration
 src/scroll_scheduler/schedule.rs          generation, wake id and TTL contract
 src/config/profiles.rs                    inheritance and selector resolution
+src/device_attribution.rs                 bounded HID correlation confidence
+src/device_catalog.rs                     connected/remembered/unavailable view
 src/platform/macos/tap_metrics.rs         CGGetEventTapList diagnostics
 src/platform/macos/scroll_scheduler.rs    tagged, bounded output scheduling
 ```
@@ -292,7 +294,8 @@ Height hypothesis использует controlled viewport как proxy с basel
 1. [Done R31-R32] `DeviceRule` расширен optional step/preset, а
    field resolver наследует serial, location, hardware, kind и global без
    отдельной profile database. Legacy TOML получает `None`/`Off` defaults.
-2. Добавить inherit/on/off resolution и объяснение active rule.
+2. [Done R36-R39] Добавить bounded attribution, visible device states, aliases,
+   inherit/on/off resolution и объяснение active rule.
 3. Добавить device test row, settings search и versioned import dry-run.
 4. Прогнать compatibility matrix и оставить kill switch для dynamics.
 
@@ -343,6 +346,42 @@ pass-through. Отсутствие wheel snapshot означает `NotObserved`
 поэтому эта защита не заявлена как необходимая и достаточная проверка
 физического provenance.
 
+## Attribution, device UX and app rules R36-R40
+
+Public IOHID wheel callbacks и `CGEventTap` не дают общего pairing token.
+Поэтому R36 не называет last-active observation точным device ID: pure policy
+выдает `high` при age <= 8 ms, `medium` при age <= 50 ms и `timed_out` позже.
+Порог - локальный проверяемый engineering budget, не обещание Apple. Только
+high/medium передают identity, name и transport; missing/stale observation
+остается без device context и видна в structured diagnostics.
+
+R37-R39 добавляют только pure/product boundaries: `device_catalog` объединяет
+несколько HID services одного identity и отдельно показывает Connected,
+Remembered и Unavailable; user alias ограничен 64 видимыми символами, а
+duplicate names получают стабильный qualifier. Direction стал optional field,
+поэтому Inherit/Reverse/Don't reverse не копирует и не удаляет alias, step или
+preset.
+
+Для R40 рассмотрены Apple AppKit и существующие utilities. Apple
+[`frontmostApplication`](https://developer.apple.com/documentation/appkit/nsworkspace/frontmostapplication)
+возвращает frontmost app, а
+[`didActivateApplicationNotification`](https://developer.apple.com/documentation/appkit/nsworkspace/didactivateapplicationnotification)
+сообщает activation changes. Это не является доказательством, что именно это
+приложение получит scroll под курсором; это вывод из границ API. Кроме того,
+[`bundleIdentifier`](https://developer.apple.com/documentation/appkit/nsrunningapplication/bundleidentifier)
+может быть `nil`, а
+[`processIdentifier`](https://developer.apple.com/documentation/appkit/nsrunningapplication/processidentifier)
+является process instance, а не persisted identity.
+
+[Rectangle](https://github.com/rxhanson/Rectangle) использует bundle ID для
+ignored applications, [Mos](https://github.com/Caldis/Mos/blob/master/README.enUS.md)
+описывает per-application profiles с inheritance, а
+[LinearMouse](https://github.com/linearmouse/linearmouse/blob/aff09a488d727b13fbebeb7002585988f52071d9/LinearMouse/Model/Configuration/Scheme/If/If.swift)
+поддерживает app/process/path conditions. Это подтверждает product value, но
+не решает target ambiguity. Поэтому app allow/deny schema не добавлена в
+config version 1: сначала нужны R41 session pinning, nullable-ID fallback,
+versioned migration и явный fail-open contract.
+
 ## Приоритет
 
 Пакеты 1-6 (`R01-R30`) реализованы без изменения live scroll policy:
@@ -350,7 +389,9 @@ trace/replay/lab, ScrollTest-style benchmark, observed rates, repeated latency
 assessment, physical test strata, measurable dynamics contract и pure
 two-axis dynamics model с continuous bypass, bounded time/rate и conservation
 ledger, session reset, cancellation/stop policy и pure scheduler safety contract.
-Пакет `R31-R35` завершен: profile fields/precedence реализованы,
-device-address/receiver boundaries исследованы, virtual/unknown transport
-fail-open встроен в live discrete path. Следующий пакет - `R36-R40`:
-confidence attribution, device states/aliases, tri-state fields и app-rule research.
+Пакеты `R31-R40` завершены: profile fields/precedence, bounded attribution,
+device states/aliases и tri-state direction реализованы; device-address,
+receiver и app-rule boundaries исследованы; virtual/unknown transport fail-open
+встроен в live discrete path. Следующий пакет - `R41-R45`: session-pinned app
+policy research, explicit remote/injected handling, resolution diagnostics и
+навигация сложных настроек.

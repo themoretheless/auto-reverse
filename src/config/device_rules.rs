@@ -12,15 +12,14 @@ impl DeviceRule {
             serial_number: None,
             location_id: None,
             name,
-            reverse,
+            alias: None,
+            reverse: Some(reverse),
             step_size: None,
             smooth_preset: None,
         }
     }
 
-    /// Creates the narrowest rule supported by this device: serial first,
-    /// connection location second, legacy vendor/product scope last.
-    pub fn for_identity(identity: &DeviceIdentity, name: Option<String>, reverse: bool) -> Self {
+    pub fn inheriting_for_identity(identity: &DeviceIdentity, name: Option<String>) -> Self {
         let serial_number = identity.serial_number.as_deref().map(str::to_owned);
         let location_id = if serial_number.is_none() {
             identity.location_id
@@ -33,9 +32,19 @@ impl DeviceRule {
             serial_number,
             location_id,
             name,
-            reverse,
+            alias: None,
+            reverse: None,
             step_size: None,
             smooth_preset: None,
+        }
+    }
+
+    /// Creates the narrowest rule supported by this device: serial first,
+    /// connection location second, legacy vendor/product scope last.
+    pub fn for_identity(identity: &DeviceIdentity, name: Option<String>, reverse: bool) -> Self {
+        Self {
+            reverse: Some(reverse),
+            ..Self::inheriting_for_identity(identity, name)
         }
     }
 
@@ -56,6 +65,13 @@ impl DeviceRule {
 
     pub fn is_hardware_wide(&self) -> bool {
         self.serial_number.is_none() && self.location_id.is_none()
+    }
+
+    pub fn has_profile_overrides(&self) -> bool {
+        self.alias.is_some()
+            || self.reverse.is_some()
+            || self.step_size.is_some()
+            || self.smooth_preset.is_some()
     }
 
     pub(crate) fn is_preferred_for(&self, identity: &DeviceIdentity) -> bool {
@@ -173,6 +189,47 @@ pub fn with_device_rule_selection(
     name: Option<&str>,
     selection: Option<bool>,
 ) -> Vec<DeviceRule> {
+    update_preferred_rule(current_rules, identity, |preferred| {
+        if preferred.is_none() && selection.is_none() {
+            return None;
+        }
+        let mut rule = preferred.unwrap_or_else(|| {
+            DeviceRule::inheriting_for_identity(identity, name.map(str::to_owned))
+        });
+        rule.reverse = selection;
+        if let Some(name) = name {
+            rule.name = Some(name.to_owned());
+        }
+        rule.has_profile_overrides().then_some(rule)
+    })
+}
+
+pub fn with_device_alias(
+    current_rules: &[DeviceRule],
+    identity: &DeviceIdentity,
+    name: Option<&str>,
+    alias: Option<&str>,
+) -> Vec<DeviceRule> {
+    update_preferred_rule(current_rules, identity, |preferred| {
+        if preferred.is_none() && alias.is_none() {
+            return None;
+        }
+        let mut rule = preferred.unwrap_or_else(|| {
+            DeviceRule::inheriting_for_identity(identity, name.map(str::to_owned))
+        });
+        rule.alias = alias.map(str::to_owned);
+        if let Some(name) = name {
+            rule.name = Some(name.to_owned());
+        }
+        rule.has_profile_overrides().then_some(rule)
+    })
+}
+
+fn update_preferred_rule(
+    current_rules: &[DeviceRule],
+    identity: &DeviceIdentity,
+    update: impl FnOnce(Option<DeviceRule>) -> Option<DeviceRule>,
+) -> Vec<DeviceRule> {
     let preferred = current_rules
         .iter()
         .find(|rule| rule.is_preferred_for(identity))
@@ -182,15 +239,7 @@ pub fn with_device_rule_selection(
         .filter(|rule| !rule.is_preferred_for(identity))
         .cloned()
         .collect();
-
-    if let Some(reverse) = selection {
-        let mut rule = preferred.unwrap_or_else(|| {
-            DeviceRule::for_identity(identity, name.map(str::to_owned), reverse)
-        });
-        rule.reverse = reverse;
-        if let Some(name) = name {
-            rule.name = Some(name.to_owned());
-        }
+    if let Some(rule) = update(preferred) {
         updated.push(rule);
     }
     updated
@@ -221,7 +270,7 @@ mod tests {
                 DeviceRule::for_hardware(target.hardware, None, false),
                 DeviceRule {
                     location_id: Some(42),
-                    reverse: false,
+                    reverse: Some(false),
                     ..DeviceRule::for_hardware(target.hardware, None, false)
                 },
                 DeviceRule::for_identity(&target, None, true),
@@ -274,7 +323,7 @@ mod tests {
         assert!(updated[0].is_hardware_wide());
         assert!(preferred_device_rule(&updated, &target).is_none());
         assert_eq!(
-            matching_device_rule(&updated, &target).map(|rule| rule.reverse),
+            matching_device_rule(&updated, &target).and_then(|rule| rule.reverse),
             Some(false)
         );
     }
@@ -310,9 +359,39 @@ mod tests {
         let updated = with_device_rule_selection(&[rule], &target, Some("New name"), Some(false));
         let changed = preferred_device_rule(&updated, &target).unwrap();
 
-        assert!(!changed.reverse);
+        assert_eq!(changed.reverse, Some(false));
         assert_eq!(changed.name.as_deref(), Some("New name"));
         assert_eq!(changed.step_size, Some(8));
         assert_eq!(changed.smooth_preset, Some(SmoothPreset::Precise));
+    }
+
+    #[test]
+    fn default_direction_preserves_alias_and_step_override() {
+        let target = identity(Some("mouse-a"), Some(10));
+        let rule = DeviceRule {
+            alias: Some("Desk mouse".to_string()),
+            step_size: Some(8),
+            ..DeviceRule::for_identity(&target, None, true)
+        };
+
+        let updated = with_device_rule_selection(&[rule], &target, None, None);
+        let changed = preferred_device_rule(&updated, &target).unwrap();
+
+        assert_eq!(changed.reverse, None);
+        assert_eq!(changed.alias.as_deref(), Some("Desk mouse"));
+        assert_eq!(changed.step_size, Some(8));
+    }
+
+    #[test]
+    fn alias_can_create_and_remove_an_inheriting_profile() {
+        let target = identity(Some("mouse-a"), Some(10));
+
+        let aliased = with_device_alias(&[], &target, Some("Mouse"), Some("Desk mouse"));
+        let rule = preferred_device_rule(&aliased, &target).unwrap();
+        assert_eq!(rule.reverse, None);
+        assert_eq!(rule.alias.as_deref(), Some("Desk mouse"));
+
+        let cleared = with_device_alias(&aliased, &target, Some("Mouse"), None);
+        assert!(cleared.is_empty());
     }
 }

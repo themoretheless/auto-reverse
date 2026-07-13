@@ -1329,11 +1329,11 @@ R32. [Done] `config::profiles` фиксирует и тестирует неза
 R33. [Researched] Literal `DeviceAddress`, используемый Karabiner через parent IORegistry walk, не является публичным SDK key, поэтому не добавлен в persisted schema. Public `PhysicalDeviceUniqueID` остается diagnostic candidate только когда нет обычных identifiers и source не virtual.
 R34. [Done] `HidSourceClass` и public `Transport` в едином wheel snapshot дают exact pass-through для `Virtual` и observed unknown/missing transport; отсутствие HID observation не ломает прежний fallback. Debug/trace имеют stable reasons `virtual_hid_source` и `unknown_hid_source`.
 R35. [Researched] Shared receiver parent, location, `PhysicalDeviceUniqueID` и `HIDRMHash` не объединяются в policy identity: один parent может представлять несколько физических devices. Parent grouping допустим только для display; selector требует child-level wheel evidence и стабильный public key.
-R36. [Research] Сопоставлять last-active IOHID movement с scroll event только с confidence/timeout, не выдавая heuristic за точный ID.
-R37. [Improve] Показывать connected, remembered и unavailable device states раздельно.
-R38. [Improve] Добавить user alias и стабильный duplicate suffix для одинаковых product names.
-R39. [Improve] Profile fields должны иметь `inherit/on/off`, чтобы override не копировал все global booleans.
-R40. [Research] Bundle-id allow/deny rules добавлять только после стабильного device profile schema и migration.
+R36. [Done] Last-active IOHID wheel observation теперь является bounded correlation evidence, а не заявленным точным ID: `high` действует до 8 ms, `medium` до 50 ms, затем `timed_out`; stale/missing observation не передает identity, name или transport, а confidence виден в Debug Console и detailed CSV.
+R37. [Done] Pure `device_catalog` объединяет повторные HID services и раздельно формирует Connected, Remembered и Unavailable; Settings и `devices` используют один catalog, а отсутствие stable identity явно запрещает profile control.
+R38. [Done] `DeviceRule.alias` валидируется как trimmed, control-free строка до 64 символов; Settings редактирует alias, tray его показывает, а одинаковые display names получают стабильный serial/location/VID:PID suffix.
+R39. [Done] Direction profile хранится как `Option<bool>` и имеет `Inherit / Reverse / Don't reverse`; изменение direction сохраняет alias, step и preset, а каждый field независимо наследуется по exact serial, location, hardware, kind/global chain.
+R40. [Researched] Bundle-id allow/deny schema намеренно не добавлена: `frontmostApplication` не доказывает scroll target под курсором, bundle ID может отсутствовать, PID нестабилен, а безопасное внедрение требует versioned migration и session pinning из R41. Rectangle, Mos и LinearMouse подтверждают ценность app rules, но не снимают эти platform constraints.
 R41. [Improve] Если появятся app rules, фиксировать target PID на одну scroll session, не менять policy посередине momentum.
 R42. [Improve] Remote, injected и virtual input должны иметь явный bypass policy и видимый decision reason.
 R43. [Improve] Diagnostics должны объяснять весь resolution chain: snapshot, classifier, matched rule, preset и final decision.

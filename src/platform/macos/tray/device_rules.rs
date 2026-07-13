@@ -12,7 +12,7 @@ pub(super) fn toggle_device_rules(
     device: &DeviceInfo,
 ) -> Option<Vec<DeviceRule>> {
     let current_rule =
-        preferred_device_rule(current_rules, &device.identity).map(|rule| rule.reverse);
+        preferred_device_rule(current_rules, &device.identity).and_then(|rule| rule.reverse);
     if current_rule == Some(false) {
         return None;
     }
@@ -78,6 +78,25 @@ mod tests {
     }
 
     #[test]
+    fn reversed_device_cycles_to_inherit_without_losing_its_alias() {
+        let mut rule = DeviceRule::for_hardware(
+            HardwareId {
+                vendor_id: 0x1,
+                product_id: 0x2,
+            },
+            None,
+            true,
+        );
+        rule.alias = Some("Desk mouse".to_string());
+
+        let updated = toggle_device_rules(&[rule], &device(0x1, 0x2)).expect("should mutate");
+
+        assert_eq!(updated.len(), 1);
+        assert_eq!(updated[0].reverse, None);
+        assert_eq!(updated[0].alias.as_deref(), Some("Desk mouse"));
+    }
+
+    #[test]
     fn explicit_dont_reverse_rule_is_never_touched() {
         let rules = vec![DeviceRule::for_hardware(
             HardwareId {
@@ -126,7 +145,7 @@ mod tests {
         let rules = toggle_device_rules(&[], &first).expect("should mutate");
 
         assert_eq!(
-            preferred_device_rule(&rules, &first.identity).map(|r| r.reverse),
+            preferred_device_rule(&rules, &first.identity).and_then(|r| r.reverse),
             Some(true)
         );
         assert!(preferred_device_rule(&rules, &second.identity).is_none());

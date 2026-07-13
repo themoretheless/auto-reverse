@@ -4,9 +4,9 @@
 //! A CGEvent carries no device identity, so the event tap alone cannot tell
 //! two mice apart. IOHIDManager can: every discrete wheel tick also arrives
 //! as a HID value from a concrete device with a vendor/product ID. Both
-//! callbacks run on the same run loop thread, so "the device that most
-//! recently sent a wheel value" is the device whose CGEvent the tap is
-//! processing right now.
+//! callbacks run on the same run loop thread, so a very recent wheel value is
+//! useful correlation evidence for the following CGEvent. It is not an exact
+//! device identifier; `device_attribution` applies confidence and timeout.
 //!
 //! Honest limits: this covers DISCRETE wheels only. Magic Mouse and
 //! trackpad scrolling is synthesized from touch data and never appears as
@@ -35,6 +35,7 @@ use core_foundation_sys::runloop::{CFRunLoopRef, kCFRunLoopDefaultMode};
 use core_foundation_sys::set::{CFSetGetCount, CFSetGetValues, CFSetRef};
 
 use crate::device::{DeviceIdentity, HardwareId};
+use crate::device_catalog::ObservedDevice;
 use crate::device_classifier::ContinuousSourceHint;
 use crate::error::{AppError, AppResult};
 
@@ -142,6 +143,7 @@ pub struct WheelSnapshot {
     pub identity: Option<Arc<DeviceIdentity>>,
     pub name: Option<Arc<str>>,
     pub transport: Option<Arc<str>>,
+    pub age: Duration,
 }
 
 /// Starts a mouse-matching HID monitor on the CURRENT thread's run loop.
@@ -201,13 +203,15 @@ pub fn start_wheel_monitor() -> AppResult<()> {
 /// Product name and transport are captured by the same callback as identity.
 pub fn recent_wheel_snapshot(max_age: Duration) -> Option<WheelSnapshot> {
     let last = LAST_WHEEL.lock().ok()?;
-    last.as_ref()
-        .filter(|recent| recent.at.elapsed() <= max_age)
-        .map(|recent| WheelSnapshot {
+    last.as_ref().and_then(|recent| {
+        let age = recent.at.elapsed();
+        (age <= max_age).then(|| WheelSnapshot {
             identity: recent.identity.clone(),
             name: recent.name.clone(),
             transport: recent.transport.clone(),
+            age,
         })
+    })
 }
 
 /// Lock-free current inventory for the scroll-event hot path. `None` means
@@ -363,7 +367,7 @@ fn continuous_source_hint_from_snapshots(
 /// short-lived manager so the CLI command works without starting the
 /// monitor; property reads do not require opening the devices.
 pub fn list_pointing_devices() -> AppResult<Vec<DeviceInfo>> {
-    let mut devices: Vec<_> = mouse_device_snapshots()?
+    let mut devices: Vec<_> = list_pointing_device_observations()?
         .into_iter()
         .filter_map(|snapshot| {
             Some(DeviceInfo {
@@ -376,6 +380,27 @@ pub fn list_pointing_devices() -> AppResult<Vec<DeviceInfo>> {
 
     devices.sort_by(|left, right| left.identity.cmp(&right.identity));
     devices.dedup_by(|left, right| left.identity == right.identity);
+    Ok(devices)
+}
+
+/// Enumerates every connected mouse-usage HID service, including services
+/// that do not expose enough public identity to support a persistent rule.
+pub fn list_pointing_device_observations() -> AppResult<Vec<ObservedDevice>> {
+    let mut devices: Vec<_> = mouse_device_snapshots()?
+        .into_iter()
+        .map(|snapshot| ObservedDevice {
+            identity: snapshot.identity,
+            name: snapshot.name,
+            transport: snapshot.transport,
+        })
+        .collect();
+    devices.sort_by(|left, right| {
+        left.identity
+            .cmp(&right.identity)
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.transport.cmp(&right.transport))
+    });
+    devices.dedup();
     Ok(devices)
 }
 

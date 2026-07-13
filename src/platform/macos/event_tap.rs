@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 use std::time::Duration;
 
 use crate::config::AppConfig;
+use crate::device_attribution::assess_wheel_attribution;
 use crate::device_classifier::ContinuousSourceHint;
 use crate::device_source::HidSourceClass;
 use crate::error::{AppError, AppResult};
@@ -21,12 +22,14 @@ use super::{daemon_lock, gesture, hid, scroll_events};
 use super::debug_log;
 #[cfg(feature = "gui")]
 use crate::device::DeviceKind;
+#[cfg(feature = "gui")]
+use crate::device_attribution::AttributionStatus;
 
 /// How recently a HID wheel tick must have arrived for a discrete CGEvent
 /// to be attributed to that device. Both callbacks share one run loop
 /// thread, so in practice the HID value lands immediately before the tap
 /// event; the window only needs to absorb run-loop scheduling jitter.
-const WHEEL_ATTRIBUTION_WINDOW: Duration = Duration::from_millis(500);
+const WHEEL_OBSERVATION_WINDOW: Duration = Duration::from_millis(500);
 
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
@@ -287,21 +290,29 @@ fn handle_event(
             // some other process injected did not come from a real device,
             // so pinning it to whatever mouse scrolled last would be wrong -
             // it could inherit that device's rule purely by wall-clock luck.
-            let from_hid = scroll_events::event_source_pid(event) == 0;
+            let source_pid = scroll_events::event_source_pid(event);
+            let from_hid = source_pid == 0;
             let wheel_snapshot = if continuous || !from_hid {
                 None
             } else {
-                hid::recent_wheel_snapshot(WHEEL_ATTRIBUTION_WINDOW)
+                hid::recent_wheel_snapshot(WHEEL_OBSERVATION_WINDOW)
             };
-            let identity = wheel_snapshot
+            let attribution_status = assess_wheel_attribution(
+                continuous,
+                source_pid,
+                wheel_snapshot.as_ref().map(|snapshot| snapshot.age),
+            );
+            let accepted_snapshot = wheel_snapshot
                 .as_ref()
-                .and_then(|snapshot| snapshot.identity.clone());
-            let hid_source = wheel_snapshot
-                .as_ref()
+                .filter(|_| attribution_status.accepts_identity());
+            let identity = accepted_snapshot.and_then(|snapshot| snapshot.identity.clone());
+            let hid_source = accepted_snapshot
                 .map(|snapshot| {
                     HidSourceClass::from_observed_transport(snapshot.transport.as_deref())
                 })
                 .unwrap_or(HidSourceClass::NotObserved);
+            #[cfg(feature = "gui")]
+            let device_name = accepted_snapshot.and_then(|snapshot| snapshot.name.clone());
 
             // Hot path: hold the read lock only long enough to clone the
             // config, then drop it before touching the CGEvent fields. A
@@ -341,7 +352,8 @@ fn handle_event(
             record_debug_event(
                 &config,
                 device_kind,
-                wheel_snapshot.and_then(|snapshot| snapshot.name),
+                device_name,
+                attribution_status,
                 temporarily_paused,
                 decision,
             );
@@ -365,6 +377,7 @@ fn record_debug_event(
     config: &AppConfig,
     device_kind: DeviceKind,
     device_name: Option<Arc<str>>,
+    attribution_status: AttributionStatus,
     temporarily_paused: bool,
     decision: TransformDecision,
 ) {
@@ -412,6 +425,7 @@ fn record_debug_event(
             device_kind,
             device_name: device_name.clone(),
             hardware,
+            attribution_status,
             source_pid: decision.original.source_pid,
             synthetic: decision.original.synthetic,
             continuous,
@@ -454,9 +468,11 @@ fn decision_reason(
         return debug_log::DecisionReason::RawInputGuard;
     }
     if axis_reversed {
-        let has_reverse_rule = identity
-            .and_then(|value| config.matching_device_rule(value))
-            .is_some_and(|rule| rule.reverse);
+        let has_reverse_rule = config
+            .resolve_device_profile(device_kind, identity)
+            .reverse
+            .source
+            .is_device_rule();
         return if has_reverse_rule {
             debug_log::DecisionReason::DeviceRuleReversed
         } else {
@@ -477,9 +493,11 @@ fn decision_reason(
         // off), contradicting a "Reversed" row from the same gesture's
         // vertical axis. See
         // trackpad_off_by_default_reads_natural_only_when_should_reverse_is_false.
-        let has_dont_reverse_rule = identity
-            .and_then(|value| config.matching_device_rule(value))
-            .is_some_and(|rule| !rule.reverse);
+        let has_dont_reverse_rule = config
+            .resolve_device_profile(device_kind, identity)
+            .reverse
+            .source
+            .is_device_rule();
         return if device_kind == DeviceKind::Unknown {
             debug_log::DecisionReason::UnknownDeviceNotReversed
         } else if has_dont_reverse_rule {

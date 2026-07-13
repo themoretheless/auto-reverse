@@ -573,9 +573,10 @@ fn rebuild_menu(
     } else {
         let submenu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str("Devices"));
         for (index, device) in devices.iter().enumerate() {
-            let mut label = device
-                .name
-                .clone()
+            let mut label = config
+                .device_alias(&device.identity)
+                .map(str::to_owned)
+                .or_else(|| device.name.clone())
                 .unwrap_or_else(|| "Unnamed device".to_string());
             if let Some(qualifier) = device.identity.compact_qualifier() {
                 label.push_str(" · ");
@@ -583,7 +584,7 @@ fn rebuild_menu(
             }
             let current_rule = config
                 .preferred_device_rule(&device.identity)
-                .map(|rule| rule.reverse);
+                .and_then(|rule| rule.reverse);
             // The tray's quick-pick only has a binary checkmark, but
             // device_rules is really three-way (Default/Reverse/Don't
             // reverse). An explicit Don't-reverse rule looks identical to

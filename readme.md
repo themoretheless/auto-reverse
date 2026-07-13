@@ -24,13 +24,18 @@ Implemented:
   secure timestamping, `notarytool`, stapling, Gatekeeper assessment, and a
   checksummed final ZIP;
 - LaunchAgent start at login via `enable-startup`/`disable-startup`;
-- per-device rules: `[[device_rules]]` pins one physical wheel mouse on or off
-  and may override wheel step size or select a future smooth preset, using
+- per-device rules: `[[device_rules]]` can inherit, reverse, or not reverse one
+  physical wheel mouse and may independently set an alias, override wheel step
+  size, or select a future smooth preset, using
   vendor/product plus a serial number when available, otherwise its IOKit
   connection location; old vendor/product-only rules remain model-wide;
 - field-by-field profile resolution is fixed as exact serial, exact location,
   VID/PID hardware, device kind, then global default; no separate profile
   database is maintained;
+- a pure device catalog separates Connected, Remembered, and Unavailable HID
+  services; aliases are bounded and duplicate names get stable identity suffixes;
+- last-active HID wheel attribution is confidence-scored and expires after 50
+  ms, so stale or missing observations cannot lend their identity to a later event;
 - observed public HID transport `Virtual` and unknown/missing transport fail
   open without changing the event, with explicit Debug Console/trace reasons;
 - egui settings window (`ui`, default `gui` feature); opening it starts the
@@ -329,7 +334,8 @@ vendor_id = 0x1234       # from `auto-reverse devices`
 product_id = 0x5678      # from `auto-reverse devices`
 serial_number = "ABC123" # preferred when the device exposes one
 name = "My mouse"        # optional, display only
-reverse = false
+alias = "Desk mouse"     # optional user-facing name
+reverse = false          # omit to inherit direction
 step_size = 5            # optional; inherits global step when omitted
 smooth_preset = "precise" # optional; non-live until dynamics gates pass
 ```
@@ -345,10 +351,16 @@ Some low-cost firmware reports the same placeholder serial for every unit; use
 the printed `location_id` manually in that case.
 
 Each profile field resolves independently. A serial rule can provide only a
-step size while inheriting a smooth preset from its location or hardware rule.
-Reversal is still an explicit boolean in the current schema; the tri-state
-`inherit/on/off` migration is tracked as R39. `smooth_preset` is deliberately
-stored but not connected to the event tap yet.
+step size or alias while inheriting direction and a smooth preset from its
+location, hardware, kind, or global fallback. The settings control exposes
+Inherit / Reverse / Don't reverse, and changing it never deletes the other
+fields. `smooth_preset` is deliberately stored but not connected to the event
+tap yet.
+
+The Devices tab and `auto-reverse devices` use the same pure catalog. Connected
+devices have a stable identity and can be edited, Remembered profiles remain
+visible while unplugged, and Unavailable services are shown without unsafe
+profile controls. Repeated HID services for one identity collapse into one row.
 
 For attributed discrete wheels, Auto Reverse reads the public IOHID
 `Transport` from the same snapshot as identity. Exact `Virtual`, an unknown
@@ -356,6 +368,12 @@ value, or a missing value passes through untouched. No snapshot is a distinct
 `NotObserved` state and preserves the existing kind policy. Apple permits a
 virtual device to advertise a non-virtual transport, so this is a conservative
 compatibility guard, not proof of physical provenance.
+
+IOHID and CGEvent do not provide a public pairing token here. Auto Reverse
+therefore labels last-active correlation as `high` through 8 ms, `medium`
+through 50 ms, and `timed_out` afterward. Only high/medium observations may
+contribute identity, product name, and transport. Detailed CSV exports retain
+that confidence code; privacy traces omit it together with device identity.
 
 `reverse_magic_mouse` is live and independent from `reverse_trackpad`. Public
 IOHID product inventory now wins when only a trackpad or only a Magic Mouse is
@@ -521,10 +539,11 @@ The implementation order is intentionally conservative:
    but remains intentionally disconnected from live input. Its pure scheduler
    contract now adds tagged generation/TTL samples, idle teardown, and latched
    fail-open without creating a timer.
-3. Per-device step/preset inheritance and public HID source compatibility are
-   implemented. Next come confidence-scored attribution, visible device states,
-   aliases, tri-state fields, and app-rule research; live dynamics still waits
-   for measurements and the physical matrix.
+3. Per-device field inheritance, public HID source compatibility,
+   confidence-scored attribution, visible device states, aliases, and tri-state
+   direction are implemented. App rules remain research-only until target
+   session pinning and versioned schema migration are defined; live dynamics
+   still waits for measurements and the physical matrix.
 
 Trackpad and Magic Mouse continuous events are not smoothed again. Any future
 scheduler must still write only `DeltaAxis1/2`; private touch APIs, HID seizure,

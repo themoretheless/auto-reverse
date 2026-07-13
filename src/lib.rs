@@ -25,6 +25,8 @@
 
 pub mod config;
 pub mod device;
+pub mod device_attribution;
+pub mod device_catalog;
 pub mod device_classifier;
 pub mod device_source;
 pub mod diagnostics;

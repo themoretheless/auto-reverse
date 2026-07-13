@@ -53,12 +53,19 @@
 //! Event Manager level - see that module's doc comment for why this is
 //! done there and not via `NSApplicationDelegate`.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use eframe::egui::{self, Color32, RichText, ViewportCommand};
 
-use crate::config::{AppConfig, ConfigRevision, ConfigStore, with_device_rule_selection};
-use crate::device::DeviceIdentity;
+use crate::config::{
+    AppConfig, ConfigRevision, ConfigStore, ProfileSource, with_device_alias,
+    with_device_rule_selection,
+};
+use crate::device::{DeviceIdentity, DeviceKind};
+use crate::device_catalog::{
+    DeviceCatalogEntry, DeviceState, ObservedDevice, build_device_catalog,
+};
 use crate::platform::macos::{
     activation, daemon_lock, hid, login_item, permissions, power_events, quit_handler, tray,
 };
@@ -228,7 +235,8 @@ struct SettingsApp {
     config_revision: Arc<Mutex<Option<ConfigRevision>>>,
     /// Process-local pause shared by the UI, tray and tap hot path.
     runtime_control: Arc<RuntimeControl>,
-    devices: Vec<hid::DeviceInfo>,
+    devices: Vec<ObservedDevice>,
+    device_alias_edits: HashMap<DeviceIdentity, String>,
     /// Why the device list is empty, when it failed rather than genuinely
     /// finding nothing - shown inline instead of silently swallowed.
     devices_error: Option<String>,
@@ -315,6 +323,7 @@ impl SettingsApp {
             config_revision,
             runtime_control,
             devices: Vec::new(),
+            device_alias_edits: HashMap::new(),
             devices_error: None,
             save_error: None,
             load_error,
@@ -354,7 +363,7 @@ impl SettingsApp {
     }
 
     fn refresh_devices(&mut self) {
-        match hid::list_pointing_devices() {
+        match hid::list_pointing_device_observations() {
             Ok(devices) => {
                 self.devices = devices;
                 self.devices_error = None;
@@ -949,8 +958,12 @@ impl SettingsApp {
             }
             SettingsTab::Devices => {
                 section(ui, "Per-device rules");
-                let (rules_changed, wants_refresh) =
-                    device_rules(ui, &self.devices, &mut self.config);
+                let (rules_changed, wants_refresh) = device_rules(
+                    ui,
+                    &self.devices,
+                    &mut self.device_alias_edits,
+                    &mut self.config,
+                );
                 changed |= rules_changed;
                 if wants_refresh {
                     self.refresh_devices();
@@ -1062,68 +1075,40 @@ impl SettingsApp {
     }
 }
 
-/// Per-device rows: each connected pointing device gets a
-/// Default / Reverse / Don't reverse choice that edits `device_rules`.
+/// Connected, remembered, and unattributable pointing-device rows.
 /// Returns (config changed, user asked to refresh the device list).
 fn device_rules(
     ui: &mut egui::Ui,
-    devices: &[hid::DeviceInfo],
+    devices: &[ObservedDevice],
+    alias_edits: &mut HashMap<DeviceIdentity, String>,
     config: &mut AppConfig,
 ) -> (bool, bool) {
     let mut changed = false;
     let mut wants_refresh = false;
+    let catalog = build_device_catalog(devices, &config.device_rules);
 
-    if devices.is_empty() {
+    if catalog.is_empty() {
         ui.label(RichText::new("No pointing devices detected.").weak());
     }
 
-    for device in devices {
-        let current = config
-            .preferred_device_rule(&device.identity)
-            .map(|rule| rule.reverse);
-        let inherited_note = if current.is_none() {
-            config.matching_device_rule(&device.identity).map(|rule| {
-                let scope = if rule.is_hardware_wide() {
-                    "Shared model rule"
-                } else {
-                    "Port fallback"
-                };
-                format!(
-                    "{scope}: {}",
-                    if rule.reverse {
-                        "Reverse"
-                    } else {
-                        "Don't reverse"
-                    }
-                )
-            })
-        } else {
-            None
-        };
+    for state in [
+        DeviceState::Connected,
+        DeviceState::Remembered,
+        DeviceState::Unavailable,
+    ] {
+        let entries: Vec<_> = catalog
+            .iter()
+            .filter(|entry| entry.state == state)
+            .collect();
+        if entries.is_empty() {
+            continue;
+        }
 
-        let label = device.name.clone().unwrap_or_else(|| "Unnamed".to_string());
-        let identity_label = compact_device_identity(&device.identity);
-        let mut selection = current;
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.label(&label);
-                ui.label(RichText::new(&identity_label).small().monospace().weak());
-                if let Some(note) = &inherited_note {
-                    ui.label(RichText::new(note).small().weak());
-                }
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                device_rule_chip(ui, ("device-rule", &device.identity), &mut selection);
-            });
-        });
-        if selection != current {
-            config.device_rules = with_device_rule_selection(
-                &config.device_rules,
-                &device.identity,
-                device.name.as_deref(),
-                selection,
-            );
-            changed = true;
+        ui.add_space(4.0);
+        ui.label(RichText::new(device_state_label(state)).small().strong());
+        for entry in entries {
+            changed |= device_rule_row(ui, entry, alias_edits, config);
+            ui.separator();
         }
     }
 
@@ -1140,6 +1125,146 @@ fn device_rules(
     });
 
     (changed, wants_refresh)
+}
+
+fn device_state_label(state: DeviceState) -> &'static str {
+    match state {
+        DeviceState::Connected => "CONNECTED",
+        DeviceState::Remembered => "REMEMBERED",
+        DeviceState::Unavailable => "UNAVAILABLE",
+    }
+}
+
+fn device_rule_row(
+    ui: &mut egui::Ui,
+    entry: &DeviceCatalogEntry,
+    alias_edits: &mut HashMap<DeviceIdentity, String>,
+    config: &mut AppConfig,
+) -> bool {
+    let Some(identity) = entry.identity.as_ref() else {
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(&entry.display_name);
+                ui.label(
+                    RichText::new(
+                        entry
+                            .transport
+                            .as_deref()
+                            .map(|transport| format!("{transport} · stable identity unavailable"))
+                            .unwrap_or_else(|| "Stable identity unavailable".to_string()),
+                    )
+                    .small()
+                    .weak(),
+                );
+            });
+        });
+        return false;
+    };
+
+    let current = config
+        .preferred_device_rule(identity)
+        .and_then(|rule| rule.reverse);
+    let resolved = config.resolve_device_profile(DeviceKind::Mouse, Some(identity));
+    let inherited_note = if current.is_none() && resolved.reverse.source.is_device_rule() {
+        let scope = match resolved.reverse.source {
+            ProfileSource::ExactSerial => "Serial rule",
+            ProfileSource::ExactLocation => "Port rule",
+            ProfileSource::Hardware => "Shared model rule",
+            ProfileSource::DeviceKind(_) | ProfileSource::GlobalDefault => "Inherited rule",
+        };
+        Some(format!(
+            "{scope}: {}",
+            if resolved.reverse.value {
+                "Reverse"
+            } else {
+                "Don't reverse"
+            }
+        ))
+    } else {
+        None
+    };
+    let configured_alias = config
+        .preferred_device_rule(identity)
+        .and_then(|rule| rule.alias.as_deref())
+        .unwrap_or_default()
+        .to_string();
+    let mut selection = current;
+    let mut commit_alias = false;
+    let mut finish_alias_edit = false;
+    let mut alias_value = String::new();
+
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.label(&entry.display_name);
+            if entry.alias.is_some()
+                && let Some(product_name) = &entry.product_name
+            {
+                ui.label(RichText::new(product_name).small().weak());
+            }
+            ui.label(
+                RichText::new(compact_device_identity(identity))
+                    .small()
+                    .monospace()
+                    .weak(),
+            );
+            if let Some(note) = &inherited_note {
+                ui.label(RichText::new(note).small().weak());
+            }
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.vertical(|ui| {
+                device_rule_chip(ui, ("device-rule", identity), &mut selection);
+                let edit = alias_edits
+                    .entry(identity.clone())
+                    .or_insert_with(|| configured_alias.clone());
+                let response = ui.add(
+                    egui::TextEdit::singleline(edit)
+                        .hint_text("Alias")
+                        .char_limit(64)
+                        .desired_width(150.0),
+                );
+                let enter_pressed =
+                    response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                finish_alias_edit = response.lost_focus() || enter_pressed;
+                let valid_live_edit =
+                    response.changed() && (edit.is_empty() || edit.trim() == edit.as_str());
+                commit_alias = finish_alias_edit || valid_live_edit;
+                if commit_alias {
+                    alias_value = edit.trim().to_string();
+                }
+                if enter_pressed {
+                    response.surrender_focus();
+                }
+            });
+        });
+    });
+
+    let mut changed = false;
+    if selection != current {
+        config.device_rules = with_device_rule_selection(
+            &config.device_rules,
+            identity,
+            entry.product_name.as_deref(),
+            selection,
+        );
+        changed = true;
+    }
+    if commit_alias {
+        if finish_alias_edit {
+            alias_edits.remove(identity);
+        }
+        let alias = (!alias_value.is_empty()).then_some(alias_value.as_str());
+        if alias != (!configured_alias.is_empty()).then_some(configured_alias.as_str()) {
+            config.device_rules = with_device_alias(
+                &config.device_rules,
+                identity,
+                entry.product_name.as_deref(),
+                alias,
+            );
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn compact_device_identity(identity: &DeviceIdentity) -> String {
