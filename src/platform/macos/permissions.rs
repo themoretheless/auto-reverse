@@ -9,16 +9,21 @@ use std::path::Path;
 // AXIsProcessTrustedWithOptions + kAXTrustedCheckOptionPrompt (AXUIElement.h)
 // is the documented way to make the OS actually show the Accessibility
 // consent dialog; plain AXIsProcessTrusted never prompts, only reports.
-// CGPreflightListenEventAccess/CGRequestListenEventAccess (CGEvent.h,
-// macOS 10.15+) are the equivalent pair for Input Monitoring. All four
-// verified directly against this machine's SDK headers, not assumed.
+//
+// Auto Reverse installs an active CGEventTap that observes and modifies scroll
+// events. Accessibility grants both event posting and listening; Input
+// Monitoring grants listening only and is therefore neither sufficient nor a
+// separate requirement for this runtime. Do not gate startup on
+// CGPreflightListenEventAccess: macOS can keep that value false in a process
+// whose Accessibility grant already allows the tap, which was the exact
+// false-negative reproduced on 2026-07-13.
+//
 // The AX functions return the Carbon-era `Boolean` (a plain `unsigned char`,
-// per CFBase.h - any nonzero byte is a valid "true"), not the two-valued C99
-// `bool` the CoreGraphics functions below use. Declaring these `-> bool`
-// would be unsound: Rust's `bool` has a hard 0x00/0x01 validity invariant,
-// so a real implementation returning e.g. 0xFF for true would be undefined
-// behavior the moment it crosses the FFI boundary. Bind them as `u8` and
-// compare explicitly instead.
+// per CFBase.h - any nonzero byte is a valid "true"), not Rust's two-valued
+// `bool`. Declaring these `-> bool` would be unsound: Rust's `bool` has a hard
+// 0x00/0x01 validity invariant, so a real implementation returning e.g. 0xFF
+// for true would be undefined behavior the moment it crosses the FFI
+// boundary. Bind them as `u8` and compare explicitly instead.
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
     fn AXIsProcessTrusted() -> u8;
@@ -26,21 +31,9 @@ unsafe extern "C" {
     static kAXTrustedCheckOptionPrompt: CFStringRef;
 }
 
-#[link(name = "CoreGraphics", kind = "framework")]
-unsafe extern "C" {
-    fn CGPreflightListenEventAccess() -> bool;
-    fn CGRequestListenEventAccess() -> bool;
-}
-
 /// Whether the user has already granted this process Accessibility trust.
 pub fn has_accessibility_trust() -> bool {
     unsafe { AXIsProcessTrusted() != 0 }
-}
-
-/// Whether the user has already granted this process Input Monitoring
-/// access, which CGEventTap needs independently of Accessibility trust.
-pub fn has_input_monitoring_access() -> bool {
-    unsafe { CGPreflightListenEventAccess() }
 }
 
 /// Prompts the system to show the Accessibility consent dialog if this
@@ -53,30 +46,21 @@ pub fn request_accessibility_trust() -> bool {
     }
 }
 
-/// Prompts the system to show the Input Monitoring consent dialog if this
-/// process is not yet approved. A no-op if access was already granted.
-pub fn request_input_monitoring_access() -> bool {
-    unsafe { CGRequestListenEventAccess() }
+/// Whether the active scroll tap can observe and modify events.
+pub fn has_scroll_control_access() -> bool {
+    scroll_control_access_from(has_accessibility_trust())
 }
 
-/// Whether both permissions CGEventTap depends on are currently granted.
-pub fn is_trusted() -> bool {
-    has_accessibility_trust() && has_input_monitoring_access()
+/// Requests the one TCC grant required by the active scroll tap.
+pub fn request_scroll_control_access() -> bool {
+    scroll_control_access_from(has_accessibility_trust() || request_accessibility_trust())
 }
 
-/// Asks the OS to show whichever consent dialogs are still outstanding,
-/// then reports whether both permissions ended up granted. Calling the
-/// Request variants is safe regardless of order - the two TCC services are
-/// independent - and either call is a no-op if already granted, so this can
-/// be called every time `run` starts without side effects on repeat runs.
-pub fn request_missing_permissions() -> bool {
-    let accessibility = has_accessibility_trust() || request_accessibility_trust();
-    let input_monitoring = has_input_monitoring_access() || request_input_monitoring_access();
-    accessibility && input_monitoring
+const fn scroll_control_access_from(accessibility: bool) -> bool {
+    accessibility
 }
 
-/// Actionable guidance for the two privacy permissions a scroll-wheel event
-/// tap depends on, since macOS gives no in-process detail beyond "denied".
+/// Actionable guidance for the Accessibility grant the active event tap uses.
 pub fn print_permission_help() {
     let permission_target = env::current_exe()
         .ok()
@@ -88,20 +72,22 @@ pub fn print_permission_help() {
         })
         .unwrap_or_else(|| "the exact Auto Reverse.app or executable you launched".to_string());
     eprintln!(
-        "auto-reverse needs two permissions to intercept scroll events:\n\
+        "auto-reverse needs Accessibility permission to control scroll events:\n\
          \n\
          1. Accessibility:    {}\n\
-         2. Input Monitoring: {}\n\
          \n\
          If macOS just showed a permission dialog, approve it and re-run.\n\
-         Otherwise open System Settings > Privacy & Security and use the\n\
-         \"+\" button in whichever list(s) above say \"required\". Add this\n\
+         Otherwise open System Settings > Privacy & Security > Accessibility\n\
+         and use the \"+\" button. Add this\n\
          exact app or executable: {permission_target}\n\
          \n\
-         Rebuilding can change the code identity, so remove and re-add the\n\
-         app/binary if macOS keeps denying access.",
+         Input Monitoring is not separately required: Accessibility already\n\
+         grants the event listening used by this active scroll tap.\n\
+         \n\
+         Ad-hoc rebuilds change the code identity. Use a stable Apple\n\
+         Development or Developer ID signature; after changing identity,\n\
+         remove and re-add the app if macOS keeps denying access.",
         permission_status(has_accessibility_trust()),
-        permission_status(has_input_monitoring_access()),
     );
 }
 
@@ -134,5 +120,11 @@ mod tests {
             app_bundle_root(Path::new("/usr/local/bin/auto-reverse")),
             None
         );
+    }
+
+    #[test]
+    fn accessibility_alone_is_enough_for_the_active_scroll_tap() {
+        assert!(scroll_control_access_from(true));
+        assert!(!scroll_control_access_from(false));
     }
 }

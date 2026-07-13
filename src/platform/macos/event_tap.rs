@@ -114,8 +114,8 @@ pub enum TapRunOutcome {
 /// Installs a system-wide event tap that applies the configured direction to
 /// mouse, trackpad, and Magic Mouse scrolling, then blocks running the current
 /// thread's run loop forever. Returns an error if macOS refused to create the
-/// active tap, which is almost always a missing Input Monitoring /
-/// Accessibility permission. Failure of the optional passive gesture tap is
+/// active tap, which is almost always missing Accessibility permission.
+/// Failure of the optional passive gesture tap is
 /// non-fatal and falls back to conservative continuous-source behavior.
 ///
 /// `config` is shared (`Arc<RwLock<_>>`) rather than owned outright so a
@@ -158,8 +158,7 @@ pub fn install_and_run_with_ready(
     )
     .map_err(|_| {
         AppError::Platform(
-            "failed to install scroll event tap; Accessibility or Input Monitoring may be missing"
-                .to_string(),
+            "failed to install scroll event tap; Accessibility may be missing".to_string(),
         )
     })?;
     let loop_source = event_tap

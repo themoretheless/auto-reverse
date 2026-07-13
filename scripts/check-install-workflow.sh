@@ -17,6 +17,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+if "$script_dir/install-app-bundle.sh" \
+  --debug \
+  --no-build \
+  --no-open \
+  --development-sign-identity "Apple Development: Test (TEAMID)" \
+  --destination "$destination" >/dev/null 2>&1; then
+  echo "installer accepted a signing request without a build" >&2
+  exit 1
+fi
+
 "$script_dir/install-app-bundle.sh" \
   --debug \
   --no-build \

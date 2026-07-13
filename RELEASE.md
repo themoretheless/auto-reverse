@@ -18,8 +18,8 @@ A production artifact must have all of these properties:
 - a successful Gatekeeper execution assessment.
 
 `packaging/AutoReverse.entitlements` is intentionally empty. Auto Reverse is an
-unsandboxed Accessibility/Input Monitoring utility; those user approvals are
-managed by TCC and do not require weakening hardened runtime.
+unsandboxed Accessibility utility; that user approval is managed by TCC and
+does not require weakening hardened runtime.
 
 Apple references:
 
@@ -108,7 +108,7 @@ target/dist/Auto-Reverse-<version>-macOS.notary.json
 - The notary result says `Accepted`; its JSON log has been reviewed.
 - `scripts/check-app-bundle.sh --require-notarized --app <path>` passes.
 - Gatekeeper accepts a quarantined copy on a clean supported Mac.
-- Accessibility, Input Monitoring, login item, scrolling, and uninstall rows in
+- Accessibility, login item, scrolling, and uninstall rows in
   `QA.md` pass on the exact stapled artifact.
 - The final ZIP and SHA-256 are published together.
 

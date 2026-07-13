@@ -103,10 +103,10 @@ fn run_event_tap() -> AppResult<()> {
         return Ok(());
     }
 
-    if !permissions::request_missing_permissions() {
+    if !permissions::request_scroll_control_access() {
         permissions::print_permission_help();
         return Err(AppError::Platform(
-            "Accessibility or Input Monitoring permission is not granted".to_string(),
+            "Accessibility permission is not granted".to_string(),
         ));
     }
 
@@ -137,7 +137,6 @@ fn doctor(options: DoctorOptions) -> AppResult<()> {
     let (config, config_state) = load_config_for_diagnostics(&store, options.create_config)?;
 
     let accessibility = permissions::has_accessibility_trust();
-    let input_monitoring = permissions::has_input_monitoring_access();
     let current_exe = startup::current_executable()?;
     // Deliberately not `?`: an unreadable LaunchAgent must not suppress the
     // rest of the diagnostics - permissions are what doctor exists to show.
@@ -147,7 +146,7 @@ fn doctor(options: DoctorOptions) -> AppResult<()> {
     };
     let status = if !config.enabled {
         "OFF (disabled in config)"
-    } else if !accessibility || !input_monitoring {
+    } else if !accessibility {
         "NEEDS PERMISSION"
     } else {
         "ON"
@@ -170,10 +169,6 @@ fn doctor(options: DoctorOptions) -> AppResult<()> {
         permissions::permission_status(accessibility)
     );
     println!(
-        "input monitoring permission: {}",
-        permissions::permission_status(input_monitoring)
-    );
-    println!(
         "device classifier: {}",
         device_classifier::CLASSIFIER_DESCRIPTION
     );
@@ -192,7 +187,7 @@ fn doctor(options: DoctorOptions) -> AppResult<()> {
          applied by the runtime yet"
     );
 
-    if !accessibility || !input_monitoring {
+    if !accessibility {
         println!();
         permissions::print_permission_help();
     }
@@ -359,18 +354,18 @@ fn disable_gui_login_item_for_uninstall() -> AppResult<String> {
     Ok("not available in this lean build; no GUI bundle service was changed".to_string())
 }
 
-/// A LaunchAgent pointing into target/ is fragile: every rebuild changes
-/// the binary's identity, so the TCC grants stop matching and the login
-/// launch fails. Warn instead of refusing - it is still the right workflow
-/// for trying the feature out.
+/// A LaunchAgent pointing into target/ is fragile: unsigned and ad-hoc
+/// rebuilds change the binary's identity, so TCC grants stop matching and the
+/// login launch fails. Warn instead of refusing - it is still the right
+/// workflow for trying the feature out.
 fn warn_if_dev_tree_binary() {
     if let Ok(exe) = startup::current_executable() {
         let path = exe.display().to_string();
         if path.contains("/target/debug/") || path.contains("/target/release/") {
             println!(
-                "warning: this is a build-tree binary; every rebuild invalidates its \
-                 Accessibility/Input Monitoring approval, so the login launch will fail \
-                 until re-approved. Consider installing a stable copy outside target/."
+                "warning: this is a build-tree binary; unsigned or ad-hoc rebuilds can \
+                 invalidate its Accessibility approval. Install a consistently signed copy \
+                 outside target/ for reliable login launches."
             );
         }
     }

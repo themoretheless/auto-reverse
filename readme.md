@@ -17,7 +17,8 @@ Implemented:
   pure timing state machine carries the source through momentum scrolling;
 - wheel step size;
 - raw-input guard through `source_pid`;
-- Accessibility and Input Monitoring checks;
+- Accessibility check and targeted first-run request; Input Monitoring is not
+  separately required because Accessibility already grants event listening;
 - local macOS `.app` bundle for Privacy & Security;
 - a production release pipeline for Developer ID signing, hardened runtime,
   secure timestamping, `notarytool`, stapling, Gatekeeper assessment, and a
@@ -45,7 +46,7 @@ Implemented:
   events rather than timeout-inferred booleans;
 - GUI sleep/wake recovery through `NSWorkspace`: after wake it rechecks
   permissions, safely re-arms a live tap, or restarts one stopped tap;
-- permission-first initial tab, targeted Accessibility/Input Monitoring actions,
+- permission-first initial tab with one targeted Accessibility action,
   and confirmation before Restore defaults removes per-device rules;
 - branded opposing-arrows app icon and generated Retina `.icns` in the bundle;
 - GUI Start at Login toggle via `SMAppService.mainAppService()`;
@@ -94,10 +95,15 @@ cargo clippy -- -D warnings
 scripts/check-app-bundle.sh
 ```
 
-`run` installs the macOS event tap. It requires:
+`run` installs an active macOS event tap that observes and modifies scroll
+events. It requires:
 
-- System Settings -> Privacy & Security -> Accessibility;
-- System Settings -> Privacy & Security -> Input Monitoring.
+- System Settings -> Privacy & Security -> Accessibility.
+
+Input Monitoring is not a second requirement. Apple DTS confirms that
+Accessibility grants both event posting and listening, while Input Monitoring
+grants listening only. Requiring both caused a false `NEEDS PERMISSION` state
+even when macOS had already enabled the app.
 
 For safe checks without installing the event tap, use `doctor`, `startup-status`, `show-config`, and `simulate`. `doctor --no-create` reports defaults without creating the config file.
 
@@ -121,6 +127,17 @@ builds ad-hoc with hardened runtime and the least-privilege entitlement file,
 and validates the Mach-O/plist/icon/signature structure. Ad-hoc still means
 development-only: it has no stable public signing identity or notarization
 ticket.
+
+For a stable local TCC identity across rebuilds, use an Apple Development
+certificate explicitly:
+
+```bash
+scripts/install-app-bundle.sh \
+  --development-sign-identity "Apple Development: Name (TEAMID)"
+```
+
+This remains a development-only artifact and cannot pass the Developer ID
+release gate.
 
 For a stable daily path, build the release profile, atomically install it to
 `/Applications`, and launch it:
@@ -180,7 +197,6 @@ verified but a real Apple notarization submission remains external release QA.
 Use that `.app` in macOS:
 
 - System Settings -> Privacy & Security -> Accessibility -> add `target/debug/Auto Reverse.app`;
-- System Settings -> Privacy & Security -> Input Monitoring -> add `target/debug/Auto Reverse.app`.
 
 Then launch the bundled app:
 
@@ -188,7 +204,7 @@ Then launch the bundled app:
 open "target/debug/Auto Reverse.app"
 ```
 
-Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and both permissions are granted, sharing one live config with the window so changes made in that window apply immediately with no restart. If the app was opened before permissions were granted, it keeps watching the permission state and retries starting the tap once both checks become ready; if startup failed or stopped immediately, turning Reverse scrolling off clears that pending attempt so turning it on again can retry cleanly. A menu-bar icon stays up for as long as the process runs: it uses an opposing-arrows template glyph plus a separate colored status dot for active/paused/permission-blocked states. Its native menu includes Reverse Scrolling, device quick-picks, Open Settings, Open Debug Console, and Quit; holding Option while opening the icon opens the Debug Console directly. Closing the settings window hides it rather than quitting. A separate `ui.lock` prevents duplicate windows/menu-bar icons. When a second GUI launch finds that lock held, it atomically writes a PID-addressed `ui.activate` request and exits with success; the existing process consumes the request on its hidden-window tick, makes the settings viewport visible, and focuses it. An exclusive tap lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. External CLI edits made while the settings window is already open are not live-watched. They are nevertheless protected: the next GUI/tray save detects the exact TOML revision mismatch, reloads the newer disk state, and asks the user to repeat the local action instead of silently overwriting it. Reopen the window to apply an external edit immediately. For terminal diagnostics through the bundled identity:
+Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and Accessibility is granted, sharing one live config with the window so changes made in that window apply immediately with no restart. If the app was opened before Accessibility was granted, it keeps watching the permission state and retries starting the tap once the check becomes ready; if startup failed or stopped immediately, turning Reverse scrolling off clears that pending attempt so turning it on again can retry cleanly. A menu-bar icon stays up for as long as the process runs: it uses an opposing-arrows template glyph plus a separate colored status dot for active/paused/permission-blocked states. Its native menu includes Reverse Scrolling, device quick-picks, Open Settings, Open Debug Console, and Quit; holding Option while opening the icon opens the Debug Console directly. Closing the settings window hides it rather than quitting. A separate `ui.lock` prevents duplicate windows/menu-bar icons. When a second GUI launch finds that lock held, it atomically writes a PID-addressed `ui.activate` request and exits with success; the existing process consumes the request on its hidden-window tick, makes the settings viewport visible, and focuses it. An exclusive tap lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. External CLI edits made while the settings window is already open are not live-watched. They are nevertheless protected: the next GUI/tray save detects the exact TOML revision mismatch, reloads the newer disk state, and asks the user to repeat the local action instead of silently overwriting it. Reopen the window to apply an external edit immediately. For terminal diagnostics through the bundled identity:
 
 Debug Console rows keep raw source metadata in memory and derive display text
 only while the console is searching or rendering. Export preserves the raw HID
@@ -209,7 +225,17 @@ explicit CLI arguments still work through the same bundled executable.
 
 ## Config
 
-`run` actually triggers both OS consent dialogs now (`AXIsProcessTrustedWithOptions` for Accessibility, `CGRequestListenEventAccess` for Input Monitoring), not just passive checks; `doctor` reports both permission states without prompting and prints the fix instructions when something is missing. Magic Mouse/trackpad classification is now wired into the real runtime: a separate listen-only `NSEventTypeGesture` tap counts touching fingers through public AppKit APIs, and `src/device_classifier.rs` turns those observations plus the public momentum phase into a device kind. No private MultitouchSupport API is used. See `recommendation.md` for the verified three-pass implementation and review record.
+`run` triggers the documented Accessibility consent dialog through
+`AXIsProcessTrustedWithOptions`, not just a passive check; `doctor` reports the
+required Accessibility state without prompting and prints the exact recovery
+path when it is missing. It deliberately does not request Input Monitoring:
+the active tap already receives listening access through Accessibility. Magic
+Mouse/trackpad classification is wired into the real runtime: a separate
+listen-only `NSEventTypeGesture` tap counts touching fingers through public
+AppKit APIs, and `src/device_classifier.rs` turns those observations plus the
+public momentum phase into a device kind. No private MultitouchSupport API is
+used. See `recommendation.md` for the verified three-pass implementation and
+review record.
 
 Default path on macOS:
 
@@ -316,7 +342,7 @@ src/config/store.rs                  paths, TOML I/O, atomic save, lock, snapsho
 src/platform/mod.rs                  cfg-gated platform adapters
 src/platform/macos/mod.rs            macOS integration overview
 src/platform/macos/scroll_events.rs  CGEvent field mapping (read event, write decision)
-src/platform/macos/permissions.rs    Accessibility + Input Monitoring TCC calls
+src/platform/macos/permissions.rs    Accessibility TCC policy/check/request
 src/platform/macos/hid.rs            IOHIDManager identity + wheel attribution/cache
 src/platform/macos/gesture.rs        passive AppKit gesture tap + classifier adapter
 src/platform/macos/startup.rs        LaunchAgent start-at-login support (headless `run`)
@@ -504,16 +530,16 @@ items visible from the README without making the first read impossible.
 | 91 | Problem | `AppError::Platform` слишком общий. |
 | 92 | Done | Tap lifecycle типизирован через `ui::runtime::State` и `TapRunOutcome`. |
 | 93 | Done | Accessibility check реализован. |
-| 94 | Done | Input Monitoring preflight реализован. |
-| 95 | Problem | `request_input_monitoring_access` не используется в CLI flow. |
-| 96 | Improve | При missing Input Monitoring предлагать request action. |
-| 97 | Problem | Accessibility prompt не вызывается через trusted options. |
-| 98 | Improve | Добавить API для request Accessibility permission. |
+| 94 | Done | Лишний Input Monitoring preflight удалён из runtime gate; Accessibility достаточно. |
+| 95 | Done | Неиспользуемый `request_input_monitoring_access` удалён вместе с лишним permission gate. |
+| 96 | Done | Missing Input Monitoring больше не блокирует запуск и не требует request action. |
+| 97 | Done | Accessibility prompt вызывается через documented trusted options. |
+| 98 | Done | Один `request_scroll_control_access` обслуживает CLI и GUI startup. |
 | 99 | Done | `doctor` показывает exact current executable path. |
 | 100 | Done | `doctor` печатает current executable path рядом с config path. |
 | 101 | Done | `doctor --no-create` убирает config creation side effect. |
 | 102 | Done | `doctor --no-create` и first-run `init` теперь разделены. |
-| 103 | Done | `doctor` показывает Accessibility и Input Monitoring. |
+| 103 | Done | `doctor` показывает единственное обязательное Accessibility permission. |
 | 104 | Problem | `doctor` не проверяет event tap installability. |
 | 105 | Improve | Добавить dry install check или explicit explanation. |
 | 106 | Problem | Нет runtime diagnostics buffer. |
@@ -624,8 +650,8 @@ items visible from the README without making the first read impossible.
 | 211 | Problem | Import может принести invalid TOML. |
 | 212 | Improve | Validate before applying imported config. |
 | 213 | Done | Permissions panel имеет action button для открытия Privacy & Security. |
-| 214 | Improve | Later split buttons: Request Input Monitoring, Open Accessibility Settings. |
-| 215 | Problem | Accessibility request flow сложнее Input Monitoring. |
+| 214 | Done | Permission UI открывает только обязательный Accessibility pane. |
+| 215 | Done | Accessibility flow унифицирован между CLI, UI и tray. |
 | 216 | Improve | Добавить OS-specific instructions. |
 | 217 | Problem | Permission status только в CLI. |
 | 218 | Improve | Показывать status badges in UI. |

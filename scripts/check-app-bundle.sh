@@ -13,6 +13,7 @@ Usage:
   scripts/check-app-bundle.sh --app /path/to/Auto\ Reverse.app
   scripts/check-app-bundle.sh --identity-only --app /path/to/Auto\ Reverse.app
   scripts/check-app-bundle.sh --require-hardened-runtime [debug|release]
+  scripts/check-app-bundle.sh --require-apple-development [debug|release]
   scripts/check-app-bundle.sh --require-release-signature [debug|release]
   scripts/check-app-bundle.sh --require-notarized --app /path/to/app
 
@@ -30,6 +31,7 @@ profile="debug"
 app=""
 identity_only=false
 require_hardened_runtime=false
+require_apple_development=false
 require_developer_id=false
 require_secure_timestamp=false
 require_notarized=false
@@ -54,6 +56,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --require-hardened-runtime)
       require_hardened_runtime=true
+      ;;
+    --require-apple-development)
+      require_hardened_runtime=true
+      require_apple_development=true
       ;;
     --require-developer-id)
       require_developer_id=true
@@ -87,6 +93,7 @@ done
 
 if [[ "$identity_only" == true ]] && {
   [[ "$require_hardened_runtime" == true ]] ||
+    [[ "$require_apple_development" == true ]] ||
     [[ "$require_developer_id" == true ]] ||
     [[ "$require_secure_timestamp" == true ]] ||
     [[ "$require_notarized" == true ]]
@@ -182,6 +189,10 @@ if [[ "$signature_details" != *"Identifier=$AUTO_REVERSE_BUNDLE_IDENTIFIER"* ]];
 fi
 if [[ "$require_hardened_runtime" == true && "$signature_details" != *"flags="*"runtime"* ]]; then
   echo "bundle signature does not enable hardened runtime" >&2
+  exit 1
+fi
+if [[ "$require_apple_development" == true && "$signature_details" != *"Authority=Apple Development:"* ]]; then
+  echo "bundle is not signed by an Apple Development certificate" >&2
   exit 1
 fi
 if [[ "$require_developer_id" == true && "$signature_details" != *"Authority=Developer ID Application:"* ]]; then

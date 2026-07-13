@@ -34,6 +34,9 @@ framework code inside `platform/macos`.
 
 - Only write CGEvent `DeltaAxis1/2`; macOS derives fixed-point/pixel deltas.
 - Accessibility APIs return Carbon `Boolean` (`u8`), not Rust `bool`.
+- The active modifying event tap requires Accessibility only. Accessibility
+  grants both posting and listening; never block runtime startup on a separate
+  Input Monitoring preflight.
 - AppKit gesture event type 29 must cross the passive callback as raw `u32`;
   the `core-graphics` crate's Rust enum omits it, so constructing that enum is
   invalid. Do not replace this bridge with private MultitouchSupport APIs.

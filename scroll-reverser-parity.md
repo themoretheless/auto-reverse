@@ -32,7 +32,7 @@
 - Защита от повторного reverse synthetic events.
 - Pass-through mode при ошибке permissions или platform hook.
 - Permissions model для Accessibility.
-- Permissions model для Input Monitoring.
+- Accessibility permission model for the active modifying event tap.
 - UI-статус permissions: granted/required.
 - Action `Request permission`.
 - Action `Open permission settings`.
@@ -104,7 +104,7 @@
 - Security section для input hooks.
 - Recovery instructions for broken permissions.
 - UX state for missing Accessibility permission.
-- UX state for missing Input Monitoring permission.
+- UX state for missing Accessibility permission.
 - UX state for app paused.
 - UX state for hook failed.
 - UX state for no devices detected.
@@ -170,7 +170,7 @@
 | Wheel | Step size control | Partial | Implemented; detection-driven conditional visibility is still open. |
 | UI | Menu bar app with preferences | Done | Handoff 1b/1e implemented. |
 | Pause | Temporary pause without changing settings | Done | 15-minute auto-resume and Resume Now exist in settings and tray. |
-| Permissions | Accessibility and Input Monitoring flow | Done | Permission-first tab and separate pane actions exist; live human QA remains. |
+| Permissions | Accessibility flow | Done | Permission-first tab and targeted pane action exist; Input Monitoring is correctly not required; live human QA remains. |
 | Debug | Option-click debug console | Done | Search/filter/export/clear and bounded local ring buffer exist. |
 | Startup | Start at login | Done | GUI uses SMAppService; lean CLI keeps LaunchAgent support. |
 | Status icon | Retina menu status and app identity | Done | Template glyph, colored state dot, SVG-to-ICNS app icon pipeline. |

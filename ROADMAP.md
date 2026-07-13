@@ -25,7 +25,7 @@ independently.
 14. [Done] Add a branded app icon and `.icns` bundle pipeline.
 15. [Done] Route first launch with missing permissions to the Permissions tab.
 16. [Done] Protect Restore defaults with an explicit confirmation step.
-17. [Done] Open Accessibility and Input Monitoring panes independently.
+17. [Done] Require and open only Accessibility; remove the unnecessary Input Monitoring gate.
 18. [Implemented] Native Save Panel and Finder reveal are built; manual panel workflow QA remains open.
 19. [Implemented] Serial-first device identity with location fallback is built; identical-device/reconnect manual QA remains open.
 20. [Implemented] A public listen-only AppKit gesture tap now distinguishes

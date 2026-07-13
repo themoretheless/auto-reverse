@@ -157,7 +157,7 @@ src/
       scroll_events.rs             маппинг полей CGEvent
       hid.rs                       IOHIDManager: serial/location identity + wheel attribution
       gesture.rs                   passive public AppKit gesture tap + classifier adapter
-      permissions.rs               Accessibility + Input Monitoring TCC
+      permissions.rs               Accessibility TCC policy/check/request
       startup.rs                   LaunchAgent start at login (headless `run`)
       event_tap.rs                 CGEventTap runtime, config shared via Arc<RwLock<_>>
       power_events.rs              NSWorkspace sleep/wake observer (gui only)
@@ -228,7 +228,7 @@ src/
 start
   -> load_or_create config
   -> validate config
-  -> check/request Accessibility/Input Monitoring
+  -> check/request Accessibility (the active tap does not separately require Input Monitoring)
   -> if permissions are ready: install event tap
   -> report Started / AlreadyRunning / Stopped / Failed through ui/runtime channel
   -> on NSWorkspace DidWake: re-check permissions, re-arm a live tap, or restart a stopped tap once within a bounded window
@@ -540,16 +540,16 @@ Acceptance:
 | 91 | Problem | `AppError::Platform` слишком общий. |
 | 92 | Done | Tap lifecycle типизирован через `ui::runtime::State` и `TapRunOutcome`. |
 | 93 | Done | Accessibility check реализован. |
-| 94 | Done | Input Monitoring preflight реализован. |
-| 95 | Problem | `request_input_monitoring_access` не используется в CLI flow. |
-| 96 | Improve | При missing Input Monitoring предлагать request action. |
-| 97 | Problem | Accessibility prompt не вызывается через trusted options. |
-| 98 | Improve | Добавить API для request Accessibility permission. |
+| 94 | Done | Лишний Input Monitoring preflight удалён из runtime gate; Accessibility достаточно. |
+| 95 | Done | Неиспользуемый `request_input_monitoring_access` удалён вместе с лишним permission gate. |
+| 96 | Done | Missing Input Monitoring больше не блокирует запуск и не требует request action. |
+| 97 | Done | Accessibility prompt вызывается через documented trusted options. |
+| 98 | Done | Один `request_scroll_control_access` обслуживает CLI и GUI startup. |
 | 99 | Done | `doctor` показывает exact current executable path. |
 | 100 | Done | `doctor` печатает current executable path рядом с config path. |
 | 101 | Done | `doctor --no-create` убирает config creation side effect. |
 | 102 | Done | `doctor --no-create` и first-run `init` теперь разделены. |
-| 103 | Done | `doctor` показывает Accessibility и Input Monitoring. |
+| 103 | Done | `doctor` показывает единственное обязательное Accessibility permission. |
 | 104 | Problem | `doctor` не проверяет event tap installability. |
 | 105 | Improve | Добавить dry install check или explicit explanation. |
 | 106 | Problem | Нет runtime diagnostics buffer. |
@@ -660,8 +660,8 @@ Acceptance:
 | 211 | Problem | Import может принести invalid TOML. |
 | 212 | Improve | Validate before applying imported config. |
 | 213 | Done | Permissions panel имеет action button для открытия Privacy & Security. |
-| 214 | Improve | Later split buttons: Request Input Monitoring, Open Accessibility Settings. |
-| 215 | Problem | Accessibility request flow сложнее Input Monitoring. |
+| 214 | Done | Permission UI открывает только обязательный Accessibility pane. |
+| 215 | Done | Accessibility flow унифицирован между CLI, UI и tray. |
 | 216 | Improve | Добавить OS-specific instructions. |
 | 217 | Problem | Permission status только в CLI. |
 | 218 | Improve | Показывать status badges in UI. |

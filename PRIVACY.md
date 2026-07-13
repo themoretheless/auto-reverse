@@ -26,9 +26,11 @@ data is removed only when `scripts/uninstall-app-bundle.sh` is invoked with
 `--remove-user-data`; that option is limited to Auto Reverse's Application
 Support directory and local `auto-reverse.log`.
 
-Accessibility and Input Monitoring are required by macOS to observe and modify
-scroll events. Auto Reverse does not record key presses, pointer coordinates, or
-application content. Its passive AppKit gesture tap stores only whether a
+Accessibility is required by macOS for the active event tap that observes and
+modifies scroll events. It already grants event listening, so Auto Reverse does
+not separately require or request Input Monitoring. Auto Reverse does not
+record key presses, pointer coordinates, or application content. Its passive
+AppKit gesture tap stores only whether a
 gesture had at least two touching fingers and a monotonic observation time; it
 does not retain touch positions, identities, pressure, gesture content, or raw
 events, and none of that state is exported. A future update that adds any

@@ -14,7 +14,7 @@ untouched. It is layered so pure logic never touches OS frameworks:
 - `src/config/` - `schema.rs` (fields, defaults, validation) + `store.rs`
   (paths, TOML I/O, atomic save), re-exported through `mod.rs`
 - `src/platform/macos/` - ALL unsafe/FFI code: `scroll_events.rs` (CGEvent
-  field mapping), `permissions.rs` (Accessibility + Input Monitoring TCC),
+  field mapping), `permissions.rs` (Accessibility TCC policy/check/request),
   `hid.rs` (IOHIDManager wheel monitor attributing discrete scrolls to a
   serial/location-qualified identity), `gesture.rs` (public listen-only
   AppKit gesture tap), `startup.rs` (LaunchAgent start-at-login),
@@ -90,9 +90,10 @@ See `readme.md` (overview + module map), `architecture.md` (target
 architecture, SOLID/DRY layering), `recommendation.md` (backlog + verified
 review findings), and `RELEASE.md` (canonical distribution checklist).
 
-Development caveat: macOS ties the Accessibility/Input Monitoring grants to
-the binary's identity, so every rebuild requires re-approving the binary in
-System Settings > Privacy & Security.
+Development caveat: macOS ties the Accessibility grant to code identity.
+Unsigned and ad-hoc rebuilds may require re-approval in System Settings >
+Privacy & Security; use `--development-sign-identity` for a stable local
+identity.
 
 ## Commands
 

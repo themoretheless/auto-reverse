@@ -9,7 +9,7 @@ usage() {
   cat <<'USAGE'
 Usage:
   scripts/build-app-bundle.sh [--debug|--release]
-      [--ad-hoc|--sign-identity IDENTITY]
+      [--ad-hoc|--development-sign-identity IDENTITY|--sign-identity IDENTITY]
 
 Builds a local macOS app bundle:
   target/debug/Auto Reverse.app
@@ -17,13 +17,14 @@ Builds a local macOS app bundle:
 
 Double-clicking the bundle opens the settings window (`auto-reverse ui`).
 It also gives macOS Privacy & Security a stable .app target for granting
-Accessibility and Input Monitoring. The settings window also owns the live
+Accessibility. The settings window also owns the live
 scroll event tap when enabled; the legacy `run` command is still available
 for headless diagnostics.
 
-Local builds use an ad-hoc signature by default. Passing a signing identity
-requires a Developer ID Application signature, secure timestamp, and hardened
-runtime suitable for the notarization workflow.
+Local builds use an ad-hoc signature by default. A development identity keeps
+TCC identity stable across local rebuilds but can never pass the public release
+gate. --sign-identity requires Developer ID Application authority, a secure
+timestamp, and hardened runtime suitable for the notarization workflow.
 USAGE
 }
 
@@ -40,15 +41,28 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ad-hoc)
       if [[ -n "$sign_selection" ]]; then
-        echo "choose only one of --ad-hoc or --sign-identity" >&2
+        echo "choose only one signing mode" >&2
         exit 2
       fi
       sign_identity="-"
       sign_selection="ad-hoc"
       ;;
+    --development-sign-identity)
+      if [[ -n "$sign_selection" ]]; then
+        echo "choose only one signing mode" >&2
+        exit 2
+      fi
+      shift
+      if [[ $# -eq 0 || -z "$1" ]]; then
+        echo "--development-sign-identity needs a non-empty identity" >&2
+        exit 2
+      fi
+      sign_identity="$1"
+      sign_selection="development"
+      ;;
     --sign-identity)
       if [[ -n "$sign_selection" ]]; then
-        echo "choose only one of --ad-hoc or --sign-identity" >&2
+        echo "choose only one signing mode" >&2
         exit 2
       fi
       shift
@@ -179,7 +193,9 @@ codesign_args=(
   --options runtime
   --entitlements "$entitlements"
 )
-if [[ "$sign_identity" == "-" ]]; then
+if [[ "$sign_selection" == "development" ]]; then
+  sign_note="Apple Development signed with hardened runtime (local use only)"
+elif [[ "$sign_identity" == "-" ]]; then
   sign_note="ad-hoc signed with hardened runtime"
 else
   codesign_args+=(--timestamp)
@@ -188,7 +204,9 @@ fi
 codesign "${codesign_args[@]}" "$app" >/dev/null
 
 check_args=("$profile" --require-hardened-runtime)
-if [[ "$sign_identity" != "-" ]]; then
+if [[ "$sign_selection" == "development" ]]; then
+  check_args+=(--require-apple-development)
+elif [[ "$sign_identity" != "-" ]]; then
   check_args+=(--require-developer-id --require-secure-timestamp)
 fi
 scripts/check-app-bundle.sh "${check_args[@]}"
@@ -197,7 +215,6 @@ echo "Built $app ($sign_note)"
 echo
 echo "Add this app in:"
 echo "  System Settings > Privacy & Security > Accessibility"
-echo "  System Settings > Privacy & Security > Input Monitoring"
 echo
 echo "Open the settings window with:"
 echo "  open \"$repo_root/$app\""

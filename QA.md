@@ -48,7 +48,7 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Developer ID authority, hardened runtime, and secure timestamp | N/A | N/A |  |  |
 |  |  | Notary result is Accepted and JSON audit log is reviewed | N/A | N/A |  |  |
 |  |  | Stapled ticket validates; quarantined clean-Mac Gatekeeper launch passes |  |  |  |  |
-|  |  | Developer-ID update preserves Accessibility, Input Monitoring, and login item |  |  |  |  |
+|  |  | Developer-ID update preserves Accessibility and login item |  |  |  |  |
 |  |  | Fresh release install to `/Applications` launches one process |  |  |  |  |
 | 2026-07-11 | 26.6 | Update running `/Applications` app; config survives, release binary matches, new PID stays alive | N/A | N/A | Pass | Codex |
 |  |  | Uninstall removes both startup registrations and preserves config |  |  |  |  |

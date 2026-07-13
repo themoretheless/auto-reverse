@@ -1,6 +1,6 @@
 //! macOS integration, split by concern:
-//! - `permissions`: the two TCC permissions (Accessibility, Input
-//!   Monitoring) a scroll event tap depends on - checking and prompting.
+//! - `permissions`: the Accessibility permission required by the active
+//!   scroll event tap - checking and prompting.
 //! - `scroll_events`: reading/writing scroll data on raw CGEvents.
 //! - `hid`: IOHIDManager wheel monitor that attributes discrete scroll
 //!   events to a specific physical device (vendor/product ID).

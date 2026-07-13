@@ -143,15 +143,14 @@ pub fn start_wheel_monitor() -> AppResult<()> {
 
         let status = IOHIDManagerOpen(manager, KIOHID_OPTIONS_TYPE_NONE);
         if status != KIO_RETURN_SUCCESS {
-            // Undo the scheduling and release the manager: on this error path
-            // (usually a denied Input Monitoring grant) the caller keeps
+            // Undo the scheduling and release the manager. The caller keeps
             // running in degraded per-kind mode, so a dead manager left
             // attached to the run loop would leak for the whole process.
             IOHIDManagerUnscheduleFromRunLoop(manager, run_loop, kCFRunLoopDefaultMode);
             CFRelease(manager as CFTypeRef);
             return Err(AppError::Platform(format!(
-                "IOHIDManagerOpen failed with IOReturn {status:#010x}; Input Monitoring \
-                 permission is the usual cause"
+                "IOHIDManagerOpen failed with IOReturn {status:#010x}; per-device attribution \
+                 is unavailable"
             )));
         }
         // Success: the manager intentionally lives for the rest of the

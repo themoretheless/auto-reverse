@@ -14,6 +14,8 @@ Options:
   --release              Build/install release profile (default)
   --debug                Build/install debug profile
   --destination PATH     Install path (default: /Applications/Auto Reverse.app)
+  --development-sign-identity IDENTITY
+                         Sign a newly built local bundle with Apple Development
   --no-build             Use an already-built target/<profile> bundle
   --no-open              Do not launch the installed app
   -h, --help             Show this help
@@ -28,6 +30,7 @@ profile="release"
 destination="/Applications/$AUTO_REVERSE_APP_BASENAME"
 build_bundle=true
 open_after_install=true
+development_sign_identity=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -44,6 +47,14 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       destination="$1"
+      ;;
+    --development-sign-identity)
+      shift
+      if [[ $# -eq 0 || -z "$1" ]]; then
+        echo "--development-sign-identity needs a non-empty identity" >&2
+        exit 2
+      fi
+      development_sign_identity="$1"
       ;;
     --no-build)
       build_bundle=false
@@ -64,6 +75,11 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+if [[ "$build_bundle" == false && -n "$development_sign_identity" ]]; then
+  echo "--development-sign-identity cannot be combined with --no-build" >&2
+  exit 2
+fi
+
 if [[ "$destination" != /* ]]; then
   destination="$PWD/$destination"
 fi
@@ -78,7 +94,11 @@ fi
 
 source_app="$repo_root/target/$profile/$AUTO_REVERSE_APP_BASENAME"
 if [[ "$build_bundle" == true ]]; then
-  "$script_dir/build-app-bundle.sh" "--$profile"
+  build_args=("--$profile")
+  if [[ -n "$development_sign_identity" ]]; then
+    build_args+=(--development-sign-identity "$development_sign_identity")
+  fi
+  "$script_dir/build-app-bundle.sh" "${build_args[@]}"
 fi
 "$script_dir/check-app-bundle.sh" --app "$source_app"
 
@@ -149,6 +169,8 @@ echo "Bundle identifier: $AUTO_REVERSE_BUNDLE_IDENTIFIER"
 signature_details="$(codesign --display --verbose=2 "$destination" 2>&1)"
 if [[ "$signature_details" == *"Authority=Developer ID Application:"* ]]; then
   echo "Signature: Developer ID Application (see RELEASE.md for the remaining distribution gates)."
+elif [[ "$signature_details" == *"Authority=Apple Development:"* ]]; then
+  echo "Signature: Apple Development (stable local TCC identity; not for distribution)."
 else
   echo "Signature: local ad-hoc (use the RELEASE.md workflow for a stable public identity)."
 fi

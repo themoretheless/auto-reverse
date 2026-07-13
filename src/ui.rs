@@ -277,7 +277,7 @@ impl SettingsApp {
         // are read-only and never do this. Without it, an install whose
         // only entry point is this window never appears in System
         // Settings > Privacy & Security for the user to grant.
-        let permissions_ready = permissions::request_missing_permissions();
+        let permissions_ready = permissions::request_scroll_control_access();
 
         let store = ConfigStore::default();
         let (config, config_revision, load_error) = match store.load_or_create_snapshot() {
@@ -1129,67 +1129,48 @@ fn compact_device_identity(identity: &DeviceIdentity) -> String {
     label
 }
 
-/// Pure check, independent of any widget - both permissions granted. Used
+/// Pure check, independent of any widget - Accessibility granted. Used
 /// by `panel_contents` to drive the tap-start/retry logic on every tick
 /// regardless of which tab (if any) is currently rendering the Permissions
 /// section, so granting permissions while on the General or Devices tab
 /// still auto-starts scroll reversal instead of requiring a visit to
 /// Permissions first.
 fn permissions_ready() -> bool {
-    permissions::has_accessibility_trust() && permissions::has_input_monitoring_access()
+    permissions::has_scroll_control_access()
 }
 
-fn permissions_panel(ui: &mut egui::Ui) -> bool {
+fn permissions_panel(ui: &mut egui::Ui) {
     let accessibility = permissions::has_accessibility_trust();
-    let input_monitoring = permissions::has_input_monitoring_access();
-    let rows = [
-        ("Accessibility", accessibility),
-        ("Input Monitoring", input_monitoring),
-    ];
-    let mut any_missing = false;
-    for (name, granted) in rows {
-        ui.horizontal(|ui| {
-            ui.label(name);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if granted {
-                    ui.label(
-                        RichText::new("Granted")
-                            .color(Color32::from_rgb(0x34, 0xA8, 0x53))
-                            .strong(),
-                    );
-                } else {
-                    any_missing = true;
-                    ui.label(
-                        RichText::new("Required")
-                            .color(Color32::from_rgb(0xE5, 0x9E, 0x2F))
-                            .strong(),
-                    );
-                }
-            });
+    ui.horizontal(|ui| {
+        ui.label("Accessibility");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if accessibility {
+                ui.label(
+                    RichText::new("Granted")
+                        .color(Color32::from_rgb(0x34, 0xA8, 0x53))
+                        .strong(),
+                );
+            } else {
+                ui.label(
+                    RichText::new("Required")
+                        .color(Color32::from_rgb(0xE5, 0x9E, 0x2F))
+                        .strong(),
+                );
+            }
         });
-    }
-    if any_missing {
+    });
+    if !accessibility {
         ui.label(
             RichText::new(
-                "Scroll reversal cannot run without both. Add Auto Reverse.app in System Settings.",
+                "Add Auto Reverse.app in System Settings to observe and modify scroll events.",
             )
             .small()
             .weak(),
         );
-        ui.horizontal(|ui| {
-            if !accessibility
-                && styled_button(ui, "Open Accessibility", egui::vec2(12.0, 5.0)).clicked()
-            {
-                open_privacy_pane("Privacy_Accessibility");
-            }
-            if !input_monitoring
-                && styled_button(ui, "Open Input Monitoring", egui::vec2(12.0, 5.0)).clicked()
-            {
-                open_privacy_pane("Privacy_ListenEvent");
-            }
-        });
+        if styled_button(ui, "Open Accessibility", egui::vec2(12.0, 5.0)).clicked() {
+            open_privacy_pane("Privacy_Accessibility");
+        }
     }
-    !any_missing
 }
 
 fn open_privacy_pane(pane: &str) {

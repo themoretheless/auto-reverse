@@ -18,6 +18,17 @@ if "$script_dir/check-app-bundle.sh" --debug --require-release-signature \
   echo "ad-hoc signature incorrectly passed the Developer ID release gate" >&2
   exit 1
 fi
+if "$script_dir/check-app-bundle.sh" --debug --require-apple-development \
+  >/dev/null 2>&1; then
+  echo "ad-hoc signature incorrectly passed the Apple Development gate" >&2
+  exit 1
+fi
+if "$script_dir/build-app-bundle.sh" --debug --ad-hoc \
+  --development-sign-identity "Apple Development: Test (TEAMID)" \
+  >/dev/null 2>&1; then
+  echo "bundle builder accepted two signing modes" >&2
+  exit 1
+fi
 if "$script_dir/check-app-bundle.sh" --debug --identity-only \
   --require-notarized >/dev/null 2>&1; then
   echo "identity-only mode bypassed strict notarization checks" >&2

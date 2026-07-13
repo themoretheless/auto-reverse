@@ -65,7 +65,7 @@ Mouse policy does not resize controls or disturb the stable section hierarchy.
 - Active: reversal is enabled, permissions are ready, and no temporary pause exists.
 - Paused: persistent reversal is off.
 - Temporarily paused: settings stay enabled but events pass through until the timer ends.
-- Needs permission: Accessibility or Input Monitoring is missing.
+- Needs permission: Accessibility is missing.
 - Error: tap, tray, login-item, config-load, or config-save failure is visible inline.
 
 ## Icon system

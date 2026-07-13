@@ -28,7 +28,7 @@ pub(super) fn status_header(
     });
     let summary = match (permissions_ready, pause_remaining) {
         (false, _) if config.enabled => {
-            "Accessibility and Input Monitoring are required before reversal can run.".to_string()
+            "Accessibility is required before reversal can run.".to_string()
         }
         (_, Some(remaining)) => {
             let minutes = remaining.as_secs().div_ceil(60).max(1);

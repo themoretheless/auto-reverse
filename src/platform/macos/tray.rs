@@ -136,7 +136,7 @@ impl TrayStatus {
     pub fn from_config(config: &AppConfig, temporarily_paused: bool) -> Self {
         Self::from_state(
             config.enabled,
-            permissions::has_accessibility_trust() && permissions::has_input_monitoring_access(),
+            permissions::has_scroll_control_access(),
             temporarily_paused,
         )
     }
