@@ -67,6 +67,52 @@ impl ContinuousSourceHint {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClassificationEvidence {
+    DiscreteWheel,
+    ExclusiveTrackpadInventory,
+    ExclusiveMagicMouseInventory,
+    UnknownInventoryFallback,
+    RecentTwoFingerGesture,
+    MomentumContinuation,
+    RecentSourceContinuation,
+    StaleTouchMagicMouse,
+}
+
+impl ClassificationEvidence {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::DiscreteWheel => "discrete_wheel",
+            Self::ExclusiveTrackpadInventory => "exclusive_trackpad_inventory",
+            Self::ExclusiveMagicMouseInventory => "exclusive_magic_mouse_inventory",
+            Self::UnknownInventoryFallback => "unknown_inventory_fallback",
+            Self::RecentTwoFingerGesture => "recent_two_finger_gesture",
+            Self::MomentumContinuation => "momentum_continuation",
+            Self::RecentSourceContinuation => "recent_source_continuation",
+            Self::StaleTouchMagicMouse => "stale_touch_magic_mouse",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::DiscreteWheel => "discrete wheel",
+            Self::ExclusiveTrackpadInventory => "exclusive trackpad inventory",
+            Self::ExclusiveMagicMouseInventory => "exclusive Magic Mouse inventory",
+            Self::UnknownInventoryFallback => "unknown inventory fallback",
+            Self::RecentTwoFingerGesture => "recent two-finger gesture",
+            Self::MomentumContinuation => "pinned momentum source",
+            Self::RecentSourceContinuation => "recent continuous source",
+            Self::StaleTouchMagicMouse => "stale-touch Magic Mouse fallback",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClassifiedDevice {
+    pub kind: DeviceKind,
+    pub evidence: ClassificationEvidence,
+}
+
 /// Stateful public-API heuristic for separating two continuous sources.
 ///
 /// A two-finger AppKit gesture immediately preceding a scroll identifies a
@@ -126,55 +172,112 @@ impl GestureSourceClassifier {
         momentum_phase: MomentumPhase,
         now: Instant,
     ) -> DeviceKind {
+        self.classify_scroll_with_evidence(continuous, momentum_phase, now)
+            .kind
+    }
+
+    pub fn classify_scroll_with_evidence(
+        &mut self,
+        continuous: bool,
+        momentum_phase: MomentumPhase,
+        now: Instant,
+    ) -> ClassifiedDevice {
         // Every scroll consumes the pending gesture observation. Otherwise a
         // mouse-wheel tick between a trackpad gesture and a later continuous
         // event could incorrectly lend that stale touch to the later device.
         let touch_pending = std::mem::take(&mut self.two_finger_touch_pending);
         if !continuous {
-            return DeviceKind::Mouse;
+            return ClassifiedDevice {
+                kind: DeviceKind::Mouse,
+                evidence: ClassificationEvidence::DiscreteWheel,
+            };
         }
 
         if let Some(kind) = self.source_hint.exclusive_kind() {
             self.last_continuous_kind = kind;
-            return kind;
+            return ClassifiedDevice {
+                kind,
+                evidence: match kind {
+                    DeviceKind::Trackpad => ClassificationEvidence::ExclusiveTrackpadInventory,
+                    DeviceKind::MagicMouse => ClassificationEvidence::ExclusiveMagicMouseInventory,
+                    DeviceKind::Mouse | DeviceKind::Unknown => {
+                        ClassificationEvidence::UnknownInventoryFallback
+                    }
+                },
+            };
         }
         if self.source_hint == ContinuousSourceHint::Unknown {
             self.last_continuous_kind = DeviceKind::Trackpad;
-            return DeviceKind::Trackpad;
+            return ClassifiedDevice {
+                kind: DeviceKind::Trackpad,
+                evidence: ClassificationEvidence::UnknownInventoryFallback,
+            };
         }
 
         let touch_elapsed = self
             .last_two_finger_touch
             .map(|observed| now.saturating_duration_since(observed));
 
-        let kind = if touch_pending
+        let (kind, evidence) = if touch_pending
             && touch_elapsed.is_some_and(|elapsed| elapsed < TRACKPAD_TOUCH_WINDOW)
         {
-            DeviceKind::Trackpad
+            (
+                DeviceKind::Trackpad,
+                ClassificationEvidence::RecentTwoFingerGesture,
+            )
         } else if momentum_phase == MomentumPhase::None
             && touch_elapsed.is_none_or(|elapsed| elapsed > SOURCE_RESET_WINDOW)
         {
-            DeviceKind::MagicMouse
+            (
+                DeviceKind::MagicMouse,
+                ClassificationEvidence::StaleTouchMagicMouse,
+            )
+        } else if momentum_phase != MomentumPhase::None {
+            (
+                self.last_continuous_kind,
+                ClassificationEvidence::MomentumContinuation,
+            )
         } else {
-            self.last_continuous_kind
+            (
+                self.last_continuous_kind,
+                ClassificationEvidence::RecentSourceContinuation,
+            )
         };
 
         self.last_continuous_kind = kind;
-        kind
+        ClassifiedDevice { kind, evidence }
     }
 
     /// Safe classification when the passive gesture monitor is unavailable.
     /// Exclusive hardware evidence remains useful; ambiguous/unknown input
     /// stays natural by falling back to trackpad.
     pub const fn classify_without_gesture(&self, continuous: bool) -> DeviceKind {
+        self.classify_without_gesture_with_evidence(continuous).kind
+    }
+
+    pub const fn classify_without_gesture_with_evidence(
+        &self,
+        continuous: bool,
+    ) -> ClassifiedDevice {
         if !continuous {
-            return DeviceKind::Mouse;
+            return ClassifiedDevice {
+                kind: DeviceKind::Mouse,
+                evidence: ClassificationEvidence::DiscreteWheel,
+            };
         }
         match self.source_hint {
-            ContinuousSourceHint::MagicMouseOnly => DeviceKind::MagicMouse,
-            ContinuousSourceHint::TrackpadOnly
-            | ContinuousSourceHint::Both
-            | ContinuousSourceHint::Unknown => DeviceKind::Trackpad,
+            ContinuousSourceHint::MagicMouseOnly => ClassifiedDevice {
+                kind: DeviceKind::MagicMouse,
+                evidence: ClassificationEvidence::ExclusiveMagicMouseInventory,
+            },
+            ContinuousSourceHint::TrackpadOnly => ClassifiedDevice {
+                kind: DeviceKind::Trackpad,
+                evidence: ClassificationEvidence::ExclusiveTrackpadInventory,
+            },
+            ContinuousSourceHint::Both | ContinuousSourceHint::Unknown => ClassifiedDevice {
+                kind: DeviceKind::Trackpad,
+                evidence: ClassificationEvidence::UnknownInventoryFallback,
+            },
         }
     }
 }
@@ -208,6 +311,40 @@ mod tests {
         assert_eq!(
             ContinuousSourceHint::from_presence(false, false),
             ContinuousSourceHint::Unknown
+        );
+    }
+
+    #[test]
+    fn classification_exposes_the_evidence_used_for_each_major_path() {
+        let now = Instant::now();
+        let mut both = both_sources();
+        both.observe_gesture(2, now);
+
+        assert_eq!(
+            both.classify_scroll_with_evidence(true, MomentumPhase::None, now),
+            ClassifiedDevice {
+                kind: DeviceKind::Trackpad,
+                evidence: ClassificationEvidence::RecentTwoFingerGesture,
+            }
+        );
+        assert_eq!(
+            both.classify_scroll_with_evidence(true, MomentumPhase::Continued, after(now, 500),),
+            ClassifiedDevice {
+                kind: DeviceKind::Trackpad,
+                evidence: ClassificationEvidence::MomentumContinuation,
+            }
+        );
+        assert_eq!(
+            GestureSourceClassifier::new(ContinuousSourceHint::MagicMouseOnly)
+                .classify_without_gesture_with_evidence(true)
+                .evidence,
+            ClassificationEvidence::ExclusiveMagicMouseInventory
+        );
+        assert_eq!(
+            GestureSourceClassifier::default()
+                .classify_without_gesture_with_evidence(false)
+                .evidence,
+            ClassificationEvidence::DiscreteWheel
         );
     }
 

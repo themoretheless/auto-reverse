@@ -109,7 +109,9 @@ impl DecisionReason {
             Self::SyntheticEvent => Cow::Borrowed("Ignored – synthetic event"),
             Self::VirtualHidSource => Cow::Borrowed("Ignored - virtual HID source"),
             Self::UnknownHidSource => Cow::Borrowed("Ignored - unknown HID transport"),
-            Self::RawInputGuard => Cow::Borrowed("Ignored – raw input guard (remote desktop)"),
+            Self::RawInputGuard => {
+                Cow::Borrowed("Ignored - posted/injected input (remote desktop guard)")
+            }
             Self::Reversed => Cow::Borrowed("Reversed"),
             Self::DeviceRuleReversed => Cow::Borrowed("Reversed – device rule"),
             Self::UnknownDeviceNotReversed => {

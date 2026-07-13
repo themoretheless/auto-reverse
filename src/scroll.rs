@@ -6,6 +6,7 @@
 
 use crate::config::AppConfig;
 use crate::input::ScrollEvent;
+use crate::input_policy::evaluate_input_policy;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransformDecision {
@@ -48,13 +49,14 @@ impl TransformDecision {
 }
 
 pub fn transform_event(config: &AppConfig, event: ScrollEvent) -> TransformDecision {
-    let skip_as_injected = config.reverse_only_raw_input && event.source_pid != 0;
+    let input_policy = evaluate_input_policy(
+        event.synthetic,
+        event.hid_source,
+        event.source_pid,
+        config.reverse_only_raw_input,
+    );
 
-    if !config.enabled
-        || event.synthetic
-        || event.hid_source.requires_passthrough()
-        || skip_as_injected
-    {
+    if !config.enabled || input_policy.bypass.is_some() {
         return TransformDecision::passthrough(event);
     }
 

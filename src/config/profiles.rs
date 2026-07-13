@@ -21,6 +21,32 @@ impl ProfileSource {
             Self::ExactSerial | Self::ExactLocation | Self::Hardware
         )
     }
+
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::ExactSerial => "exact_serial",
+            Self::ExactLocation => "exact_location",
+            Self::Hardware => "hardware",
+            Self::DeviceKind(DeviceKind::Mouse) => "mouse_kind",
+            Self::DeviceKind(DeviceKind::Trackpad) => "trackpad_kind",
+            Self::DeviceKind(DeviceKind::MagicMouse) => "magic_mouse_kind",
+            Self::DeviceKind(DeviceKind::Unknown) => "unknown_kind",
+            Self::GlobalDefault => "global_default",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ExactSerial => "exact serial rule",
+            Self::ExactLocation => "port rule",
+            Self::Hardware => "shared hardware rule",
+            Self::DeviceKind(DeviceKind::Mouse) => "mouse setting",
+            Self::DeviceKind(DeviceKind::Trackpad) => "trackpad setting",
+            Self::DeviceKind(DeviceKind::MagicMouse) => "Magic Mouse setting",
+            Self::DeviceKind(DeviceKind::Unknown) => "unknown-device setting",
+            Self::GlobalDefault => "global default",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

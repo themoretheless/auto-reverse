@@ -24,6 +24,10 @@ use super::debug_log;
 use crate::device::DeviceKind;
 #[cfg(feature = "gui")]
 use crate::device_attribution::AttributionStatus;
+#[cfg(feature = "gui")]
+use crate::device_classifier::ClassificationEvidence;
+#[cfg(feature = "gui")]
+use crate::input_policy::{InputBypassReason, evaluate_input_policy};
 
 /// How recently a HID wheel tick must have arrived for a discrete CGEvent
 /// to be attributed to that device. Both callbacks share one run loop
@@ -282,8 +286,9 @@ fn handle_event(
             };
 
             let continuous = !scroll_events::is_physical_mouse_wheel(event);
-            let device_kind =
+            let classification =
                 gesture::classify_scroll(event, continuous, hid::live_continuous_source_hint());
+            let device_kind = classification.kind;
             // Attribute only genuine hardware wheel ticks: discrete
             // (continuous scrolling never produces HID wheel values) AND
             // originating from the HID system (source_pid == 0). An event
@@ -354,6 +359,7 @@ fn handle_event(
                 device_kind,
                 device_name,
                 attribution_status,
+                classification.evidence,
                 temporarily_paused,
                 decision,
             );
@@ -378,6 +384,7 @@ fn record_debug_event(
     device_kind: DeviceKind,
     device_name: Option<Arc<str>>,
     attribution_status: AttributionStatus,
+    classification_evidence: ClassificationEvidence,
     temporarily_paused: bool,
     decision: TransformDecision,
 ) {
@@ -386,6 +393,13 @@ fn record_debug_event(
     let identity = decision.original.identity.as_deref();
     let hardware = identity.map(|value| value.hardware);
     let continuous = decision.original.continuous;
+    let input_policy = evaluate_input_policy(
+        decision.original.synthetic,
+        decision.original.hid_source,
+        decision.original.source_pid,
+        config.reverse_only_raw_input,
+    );
+    let profile = config.resolve_device_profile(device_kind, identity);
 
     // Two rows (vertical/horizontal) whenever the event carries a nonzero
     // delta on that axis - mirrors the handoff's per-axis rows exactly.
@@ -426,6 +440,10 @@ fn record_debug_event(
             device_name: device_name.clone(),
             hardware,
             attribution_status,
+            classification_evidence,
+            input_provenance: input_policy.provenance,
+            hid_source: decision.original.hid_source,
+            profile,
             source_pid: decision.original.source_pid,
             synthetic: decision.original.synthetic,
             continuous,
@@ -456,16 +474,19 @@ fn decision_reason(
     if temporarily_paused {
         return debug_log::DecisionReason::TemporarilyPaused;
     }
-    if event.synthetic {
-        return debug_log::DecisionReason::SyntheticEvent;
-    }
-    match event.hid_source {
-        HidSourceClass::Virtual => return debug_log::DecisionReason::VirtualHidSource,
-        HidSourceClass::Unknown => return debug_log::DecisionReason::UnknownHidSource,
-        HidSourceClass::NotObserved | HidSourceClass::Physical => {}
-    }
-    if config.reverse_only_raw_input && event.source_pid != 0 {
-        return debug_log::DecisionReason::RawInputGuard;
+    let input_policy = evaluate_input_policy(
+        event.synthetic,
+        event.hid_source,
+        event.source_pid,
+        config.reverse_only_raw_input,
+    );
+    if let Some(reason) = input_policy.bypass {
+        return match reason {
+            InputBypassReason::SelfSynthetic => debug_log::DecisionReason::SyntheticEvent,
+            InputBypassReason::VirtualHid => debug_log::DecisionReason::VirtualHidSource,
+            InputBypassReason::UnknownHid => debug_log::DecisionReason::UnknownHidSource,
+            InputBypassReason::PostedInputGuard => debug_log::DecisionReason::RawInputGuard,
+        };
     }
     if axis_reversed {
         let has_reverse_rule = config

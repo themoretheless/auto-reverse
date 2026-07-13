@@ -70,6 +70,7 @@ use crate::platform::macos::{
     activation, daemon_lock, hid, login_item, permissions, power_events, quit_handler, tray,
 };
 use crate::runtime::{DEFAULT_PAUSE_DURATION, RuntimeControl};
+use crate::settings_search::{SettingsDestination, search_settings};
 
 mod debug_console;
 mod local_export;
@@ -265,8 +266,9 @@ struct SettingsApp {
     /// as building the tray icon, so it is done lazily on the first tick
     /// rather than in `load()`.
     quit_handler_installed: bool,
-    /// Which of the three segmented tabs (handoff "1b") is showing.
+    /// Which compact segmented settings tab is showing.
     selected_tab: SettingsTab,
+    settings_search: String,
     /// Two-step guard for the destructive Restore defaults action.
     confirm_restore_defaults: bool,
     /// Set by the tray's "Open Debug Console…" item (`TrayAction::OpenDebugConsole`)
@@ -283,7 +285,7 @@ struct SettingsApp {
     scroll_benchmark: scroll_benchmark::State,
 }
 
-/// The three tabs of the settings window (handoff "1b" - segmented tabs).
+/// Compact settings tabs; Advanced keeps uncommon policy off the main screen.
 /// Status and the master "Reverse scrolling" toggle stay pinned above these
 /// tabs, and Config path/Restore defaults stay pinned below, per the
 /// handoff's own design note.
@@ -292,6 +294,66 @@ enum SettingsTab {
     General,
     Devices,
     Permissions,
+    Advanced,
+}
+
+fn settings_search(ui: &mut egui::Ui, query: &mut String) -> Option<SettingsDestination> {
+    let response = ui.add_sized(
+        [ui.available_width(), 24.0],
+        egui::TextEdit::singleline(query)
+            .hint_text("Search settings")
+            .char_limit(80),
+    );
+    if response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+        query.clear();
+        response.surrender_focus();
+        return None;
+    }
+    if query.trim().is_empty() {
+        return None;
+    }
+
+    let results = search_settings(query, 5);
+    if results.is_empty() {
+        ui.label(RichText::new("No matching settings").small().weak());
+        return None;
+    }
+
+    let mut selected = (response.has_focus()
+        && ui.input(|input| input.key_pressed(egui::Key::Enter)))
+    .then_some(results[0].destination);
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        for result in results {
+            let (rect, response) = ui
+                .allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::click());
+            if response.hovered() {
+                ui.painter()
+                    .rect_filled(rect, 4.0, ui.visuals().widgets.hovered.weak_bg_fill);
+            }
+            ui.painter().text(
+                rect.left_center() + egui::vec2(6.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                result.title,
+                egui::FontId::proportional(12.0),
+                ui.visuals().text_color(),
+            );
+            ui.painter().text(
+                rect.right_center() - egui::vec2(6.0, 0.0),
+                egui::Align2::RIGHT_CENTER,
+                result.section,
+                egui::FontId::proportional(11.0),
+                ui.visuals().widgets.noninteractive.fg_stroke.color,
+            );
+            if response.clicked() {
+                selected = Some(result.destination);
+            }
+        }
+    });
+    if selected.is_some() {
+        query.clear();
+    }
+    selected
 }
 
 impl SettingsApp {
@@ -341,6 +403,7 @@ impl SettingsApp {
             } else {
                 SettingsTab::Permissions
             },
+            settings_search: String::new(),
             confirm_restore_defaults: false,
             show_debug_console: false,
             debug_console: debug_console::State::default(),
@@ -747,8 +810,8 @@ impl eframe::App for SettingsApp {
 }
 
 impl SettingsApp {
-    /// Restructured into three tabs (handoff "1b"): General, Devices,
-    /// Permissions. Status and the master "Reverse scrolling" toggle are
+    /// Restructured into compact tabs: General, Devices, Permissions,
+    /// Advanced. Status and the master "Reverse scrolling" toggle are
     /// pinned above the tab strip; Config path + Restore defaults are
     /// pinned below - both per the handoff's own design note that these
     /// are cross-cutting and should stay visible regardless of which tab
@@ -870,6 +933,16 @@ impl SettingsApp {
         ui.add_space(8.0);
         ui.separator();
 
+        if let Some(destination) = settings_search(ui, &mut self.settings_search) {
+            match destination {
+                SettingsDestination::General => self.selected_tab = SettingsTab::General,
+                SettingsDestination::Devices => self.selected_tab = SettingsTab::Devices,
+                SettingsDestination::Permissions => self.selected_tab = SettingsTab::Permissions,
+                SettingsDestination::Advanced => self.selected_tab = SettingsTab::Advanced,
+                SettingsDestination::Diagnostics => self.show_debug_console = true,
+            }
+        }
+
         tab_strip(ui, &mut self.selected_tab);
 
         match self.selected_tab {
@@ -985,6 +1058,22 @@ impl SettingsApp {
                 ui.separator();
                 section(ui, "Start at login");
                 self.login_item_row(ui);
+            }
+            SettingsTab::Advanced => {
+                section(ui, "Input policy");
+                changed |= styled_checkbox(
+                    ui,
+                    &mut self.config.reverse_only_raw_input,
+                    RichText::new("Ignore posted and remote scroll events").size(13.0),
+                    16.0,
+                    4.0,
+                )
+                .changed();
+
+                section(ui, "Diagnostics");
+                if styled_button(ui, "Open Debug Console", egui::vec2(12.0, 5.0)).clicked() {
+                    self.show_debug_console = true;
+                }
             }
         }
 

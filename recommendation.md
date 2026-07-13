@@ -1334,14 +1334,14 @@ R37. [Done] Pure `device_catalog` объединяет повторные HID se
 R38. [Done] `DeviceRule.alias` валидируется как trimmed, control-free строка до 64 символов; Settings редактирует alias, tray его показывает, а одинаковые display names получают стабильный serial/location/VID:PID suffix.
 R39. [Done] Direction profile хранится как `Option<bool>` и имеет `Inherit / Reverse / Don't reverse`; изменение direction сохраняет alias, step и preset, а каждый field независимо наследуется по exact serial, location, hardware, kind/global chain.
 R40. [Researched] Bundle-id allow/deny schema намеренно не добавлена: `frontmostApplication` не доказывает scroll target под курсором, bundle ID может отсутствовать, PID нестабилен, а безопасное внедрение требует versioned migration и session pinning из R41. Rectangle, Mos и LinearMouse подтверждают ценность app rules, но не снимают эти platform constraints.
-R41. [Improve] Если появятся app rules, фиксировать target PID на одну scroll session, не менять policy посередине momentum.
-R42. [Improve] Remote, injected и virtual input должны иметь явный bypass policy и видимый decision reason.
-R43. [Improve] Diagnostics должны объяснять весь resolution chain: snapshot, classifier, matched rule, preset и final decision.
+R41. [Done contract] Pure `AppTargetSessionPin` фиксирует positive target PID и generation на direct/momentum session, игнорирует candidate changes до end/cancel/150-ms gap и fail-open отклоняет orphaned momentum. App rules остаются non-live, поэтому platform target adapter пока отсутствует.
+R42. [Done] Единый pure `input_policy` классифицирует hardware, posted/injected process, self-synthetic, virtual HID и unknown HID; transform и diagnostics используют один resolver. Virtual/unknown/self всегда bypass, posted input управляется Advanced-toggle и имеет stable `raw_input_guard` reason.
+R43. [Done] Каждая Debug Console row хранит attribution, HID provenance, classifier evidence, resolved direction/step/preset sources и final reason; полный chain доступен в row hover, search и detailed CSV, но не попадает в privacy trace.
 
 ### Product UX and configuration
 
-R44. [Improve] Добавить fuzzy settings search, когда Advanced перестанет помещаться без длинного скролла.
-R45. [Improve] Оставить direction/device toggles на основном экране, а curve, latency и trace controls убрать в Advanced/Diagnostics.
+R44. [Done] Pure fuzzy settings index ищет по title/section/keywords, терпит пропущенную букву, ограничивает suggestions и ведет в General/Devices/Permissions/Advanced или Debug Console; Enter открывает первый result, Escape очищает поиск.
+R45. [Done] General и Devices сохраняют master/direction/device controls; uncommon posted-input policy вынесена в Advanced, а trace, CSV, benchmark, event-rate и latency остаются в отдельной Diagnostics window. Non-live smooth curve не показывается как рабочая настройка.
 R46. [Improve] Сделать versioned config export/import с schema validation и migration report.
 R47. [Improve] Перед импортом показывать dry-run diff и требовать подтверждение только изменяемых sections.
 R48. [Improve] Ограничить import size и отклонять небезопасные symlink/world-writable source cases.

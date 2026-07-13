@@ -240,6 +240,9 @@ src/scroll_scheduler/schedule.rs          generation, wake id and TTL contract
 src/config/profiles.rs                    inheritance and selector resolution
 src/device_attribution.rs                 bounded HID correlation confidence
 src/device_catalog.rs                     connected/remembered/unavailable view
+src/app_session.rs                        future target PID session pin
+src/input_policy.rs                       provenance and bypass precedence
+src/settings_search.rs                    fuzzy settings navigation
 src/platform/macos/tap_metrics.rs         CGGetEventTapList diagnostics
 src/platform/macos/scroll_scheduler.rs    tagged, bounded output scheduling
 ```
@@ -296,7 +299,8 @@ Height hypothesis использует controlled viewport как proxy с basel
    отдельной profile database. Legacy TOML получает `None`/`Off` defaults.
 2. [Done R36-R39] Добавить bounded attribution, visible device states, aliases,
    inherit/on/off resolution и объяснение active rule.
-3. Добавить device test row, settings search и versioned import dry-run.
+3. [Done R44 boundary] Добавить settings search; дальше device test row и
+   versioned import dry-run.
 4. Прогнать compatibility matrix и оставить kill switch для dynamics.
 
 Критерий выхода: основной экран остается компактным; advanced controls не
@@ -382,6 +386,42 @@ ignored applications, [Mos](https://github.com/Caldis/Mos/blob/master/README.enU
 config version 1: сначала нужны R41 session pinning, nullable-ID fallback,
 versioned migration и явный fail-open contract.
 
+## Session policy, diagnostics and information architecture R41-R45
+
+Apple описывает
+[`momentumPhase`](https://developer.apple.com/documentation/appkit/nsevent/momentumphase)
+как phase одного scroll/flick stream и отдельно отмечает, что momentum events
+остаются привязаны к view под cursor в момент flick. Это поддерживает R41
+boundary: future app target нельзя перечитывать на каждом хвостовом event.
+Pure `AppTargetSessionPin` фиксирует PID/generation на session, меняет target
+только после end/cancel или gap > 150 ms и не принимает orphaned momentum.
+150 ms - локальный contract, совпадающий с уже измеряемой dynamics session
+границей, а не системная константа Apple. Live app adapter и app-rule schema
+по-прежнему отсутствуют.
+
+R42 удаляет три независимых трактовки provenance. `input_policy` теперь один
+разрешает hardware, posted process, self-synthetic, virtual и unknown HID;
+scroll transform и diagnostic reason используют один result. Public
+[`eventSourceUnixProcessID`](https://developer.apple.com/documentation/coregraphics/cgeventfield/eventsourceunixprocessid)
+дает process source field, но не различает remote desktop, automation и все
+другие posted events, поэтому UI честно называет группу "posted and remote",
+а не обещает точный remote detector.
+
+R43 расширяет только local detailed diagnostics: snapshot confidence/HID,
+classifier evidence, input provenance, independent profile values/sources и
+final reason. Эти поля searchable и попадают в explicit Detailed CSV, но
+privacy trace остается прежним replay-minimal format без PID/device/profile
+context.
+
+Для R44 использована Apple HIG по
+[`Search fields`](https://developer.apple.com/design/human-interface-guidelines/search-fields):
+Settings-подобный поиск должен быстро открывать deep sections. Pure fuzzy index
+дает bounded suggestions, typo/subsequence matching и destination; inline egui
+field поддерживает click, Enter и Escape. R45 сохраняет task frequency:
+direction/device controls остаются в General/Devices, uncommon posted-input
+policy находится в Advanced, а trace/CSV/benchmark/rates/latency - в отдельном
+Debug Console. Non-live smooth preset не выдается за рабочий curve control.
+
 ## Приоритет
 
 Пакеты 1-6 (`R01-R30`) реализованы без изменения live scroll policy:
@@ -389,9 +429,9 @@ trace/replay/lab, ScrollTest-style benchmark, observed rates, repeated latency
 assessment, physical test strata, measurable dynamics contract и pure
 two-axis dynamics model с continuous bypass, bounded time/rate и conservation
 ledger, session reset, cancellation/stop policy и pure scheduler safety contract.
-Пакеты `R31-R40` завершены: profile fields/precedence, bounded attribution,
-device states/aliases и tri-state direction реализованы; device-address,
-receiver и app-rule boundaries исследованы; virtual/unknown transport fail-open
-встроен в live discrete path. Следующий пакет - `R41-R45`: session-pinned app
-policy research, explicit remote/injected handling, resolution diagnostics и
-навигация сложных настроек.
+Пакеты `R31-R45` завершены: profile fields/precedence, bounded attribution,
+device states/aliases, tri-state direction, shared provenance, full local
+resolution diagnostics и settings navigation реализованы; target PID session
+pin готов как non-live contract. Следующий пакет - `R46-R50`: versioned config
+transfer, dry-run/security boundaries, privacy-safe diagnostics summary и
+interactive device testing.

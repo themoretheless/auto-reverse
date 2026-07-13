@@ -36,6 +36,9 @@ Implemented:
   services; aliases are bounded and duplicate names get stable identity suffixes;
 - last-active HID wheel attribution is confidence-scored and expires after 50
   ms, so stale or missing observations cannot lend their identity to a later event;
+- one pure input-provenance resolver owns hardware, posted/injected,
+  self-synthetic, virtual-HID, and unknown-HID bypass precedence; an Advanced
+  toggle controls posted/remote input without duplicating runtime policy;
 - observed public HID transport `Virtual` and unknown/missing transport fail
   open without changing the event, with explicit Debug Console/trace reasons;
 - egui settings window (`ui`, default `gui` feature); opening it starts the
@@ -49,7 +52,8 @@ Implemented:
   and Quit;
 - local Debug Console with search, decision filters, clear, and a bounded
   structured ring buffer; CSV export includes stable reason codes, source PID,
-  synthetic flag, device kind, raw HID name, and vendor/product IDs, while
+  synthetic flag, device kind, raw HID name, vendor/product IDs, attribution,
+  classifier evidence, input provenance, and resolved profile sources, while
   serial/location qualifiers stay out of automatic exports; a native Save Panel
   chooses the destination and the receipt can reveal it in Finder; the same
   Export menu creates a versioned privacy trace with relative monotonic time and
@@ -86,6 +90,9 @@ Implemented:
   permissions, safely re-arms a live tap, or restarts one stopped tap;
 - permission-first initial tab with one targeted Accessibility action,
   and confirmation before Restore defaults removes per-device rules;
+- fuzzy settings search routes directly to General, Devices, Permissions,
+  Advanced, or Diagnostics; common direction/device controls stay on the main
+  tabs while input policy and diagnostic tools remain separated;
 - branded opposing-arrows app icon and generated Retina `.icns` in the bundle;
 - GUI Start at Login toggle via `SMAppService.mainAppService()`;
 - CLI diagnostics, JSON startup status and simulation;
@@ -375,6 +382,17 @@ through 50 ms, and `timed_out` afterward. Only high/medium observations may
 contribute identity, product name, and transport. Detailed CSV exports retain
 that confidence code; privacy traces omit it together with device identity.
 
+The Debug Console resolution chain is available by hovering an event row and
+in Detailed CSV: snapshot confidence/HID class, classifier evidence, input
+provenance, direction/step/preset values with their source, and final reason.
+The replayable privacy trace intentionally keeps only behavior needed for
+replay and omits this device/process context.
+
+Application rules are still not live. A pure `AppTargetSessionPin` is ready for
+their future platform adapter: a positive target PID is fixed across direct and
+momentum events until end, cancellation, or a gap over 150 ms. Orphaned
+momentum cannot adopt whichever app happens to be frontmost later.
+
 `reverse_magic_mouse` is live and independent from `reverse_trackpad`. Public
 IOHID product inventory now wins when only a trackpad or only a Magic Mouse is
 connected, so a missing touch observation can no longer route a lone built-in
@@ -418,6 +436,9 @@ src/device.rs                        DeviceKind + HardwareId/DeviceIdentity voca
 src/device_classifier.rs             pure inventory/gesture/timing policy + fallback
 src/device_source.rs                 pure public HID transport/fail-open policy
 src/diagnostics.rs                   pure axis and stable decision-reason vocabulary
+src/app_session.rs                   future app-target session pin, non-live
+src/input_policy.rs                  shared input provenance and bypass
+src/settings_search.rs               fuzzy settings/diagnostics navigation
 src/input.rs                         normalized ScrollEvent with optional shared identity
 src/runtime.rs                       lock-free process-local pause control
 src/scroll.rs                        pure reversal policy (no CoreGraphics)

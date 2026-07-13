@@ -19,8 +19,8 @@ below in fixed batches of five.
 | 6 | R26-R30 | Implemented as pure safety contract; platform timer remains non-live |
 | 7 | R31-R35 | Implemented/researched; physical virtual-HID and receiver QA remain |
 | 8 | R36-R40 | Implemented/researched; physical attribution and visual catalog QA remain |
-| 9 | R41-R45 | Next |
-| 10 | R46-R50 | Pending |
+| 9 | R41-R45 | Implemented as session contract, provenance diagnostics, search and IA |
+| 10 | R46-R50 | Next |
 | 11 | R51-R55 | Pending |
 | 12 | R56-R60 | Pending |
 

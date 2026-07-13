@@ -87,11 +87,12 @@ pub(super) fn tab_strip(ui: &mut egui::Ui, selected: &mut SettingsTab) {
             let total_width = ui.available_width();
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                let segment_width = (total_width - 4.0) / 3.0;
+                let segment_width = (total_width - 6.0) / 4.0;
                 for (tab, label) in [
                     (SettingsTab::General, "General"),
                     (SettingsTab::Devices, "Devices"),
                     (SettingsTab::Permissions, "Permissions"),
+                    (SettingsTab::Advanced, "Advanced"),
                 ] {
                     let is_active = *selected == tab;
                     let (color, text_color) = if is_active {

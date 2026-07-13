@@ -20,8 +20,9 @@ use objc2::rc::autoreleasepool;
 use objc2_app_kit::{NSEvent, NSTouchPhase};
 use objc2_core_graphics::CGEvent as ObjcCGEvent;
 
-use crate::device::DeviceKind;
-use crate::device_classifier::{ContinuousSourceHint, GestureSourceClassifier, MomentumPhase};
+use crate::device_classifier::{
+    ClassifiedDevice, ContinuousSourceHint, GestureSourceClassifier, MomentumPhase,
+};
 use crate::error::{AppError, AppResult};
 
 const SESSION_EVENT_TAP: u32 = 1;
@@ -192,13 +193,13 @@ pub fn classify_scroll(
     event: &CGEvent,
     continuous: bool,
     live_source_hint: Option<ContinuousSourceHint>,
-) -> DeviceKind {
+) -> ClassifiedDevice {
     let mut classifier = classifier_guard();
     if let Some(source_hint) = live_source_hint {
         classifier.update_source_hint(source_hint);
     }
     if !GESTURE_AVAILABLE.load(Ordering::Acquire) {
-        return classifier.classify_without_gesture(continuous);
+        return classifier.classify_without_gesture_with_evidence(continuous);
     }
 
     let momentum_phase = match event.get_integer_value_field(SCROLL_MOMENTUM_PHASE_FIELD) {
@@ -208,5 +209,5 @@ pub fn classify_scroll(
         3 => MomentumPhase::Ended,
         _ => MomentumPhase::Unknown,
     };
-    classifier.classify_scroll(continuous, momentum_phase, Instant::now())
+    classifier.classify_scroll_with_evidence(continuous, momentum_phase, Instant::now())
 }

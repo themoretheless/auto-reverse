@@ -43,6 +43,7 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Devices tab separates Connected, Remembered, and Unavailable services |  |  |  |  |
 |  |  | User alias survives restart; duplicate names retain stable identity suffixes |  |  |  |  |
 |  |  | Fresh discrete wheel attribution reports high/medium confidence; observations older than 50 ms time out without identity | N/A | N/A |  |  |
+|  |  | Advanced toggle ignores a posted/injected source PID and logs `raw_input_guard`; off processes it normally | N/A | N/A |  |  |
 |  |  | Virtual HID with public `Transport = Virtual` passes through and logs `virtual_hid_source` | N/A | N/A |  |  |
 |  |  | Attributed wheel with missing/unknown transport passes through; no HID snapshot keeps kind policy | N/A | N/A |  |  |
 |  |  | Multi-device USB/Bluetooth receiver keeps child devices separate |  |  |  |  |
@@ -55,7 +56,9 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Hide window, launch app again: one icon and focused existing window |  |  |  |  |
 |  |  | Menu, device submenu, Option-click console |  |  |  |  |
 |  |  | Debug filter/clear; Save Panel cancel/save/overwrite; Reveal in Finder |  |  |  |  |
+|  |  | Hovering a Debug row explains attribution, classifier evidence, profile sources, preset, and final reason |  |  |  |  |
 |  |  | Debug Export menu: privacy trace and detailed CSV remain distinct |  |  |  |  |
+|  |  | Settings search routes typo, multiword, Advanced, and Diagnostics results; Enter/Escape work |  |  |  |  |
 |  |  | Privacy trace contains no wall time, PID, HID identity, app or window data | N/A | N/A |  |  |
 |  |  | `trace-lab` replay, constant baseline and clutch threshold on exported trace | N/A | N/A |  |  |
 |  |  | Benchmark Known/Unknown instructions produce separate result sessions |  |  |  |  |

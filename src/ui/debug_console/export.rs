@@ -116,7 +116,7 @@ fn export_directory(previous: Option<&Receipt>) -> Option<PathBuf> {
 
 fn events_to_csv(events: &[debug_log::DebugEvent]) -> String {
     let mut csv = String::from(
-        "timestamp_ms,device,device_kind,device_name,vendor_id,product_id,attribution_confidence,source_pid,synthetic,axis,raw_delta,output_delta,category,reason_code,decision\n",
+        "timestamp_ms,device,device_kind,device_name,vendor_id,product_id,attribution_confidence,input_provenance,classification_evidence,hid_source,reverse_value,reverse_source,step_size,step_source,smooth_preset,smooth_source,source_pid,synthetic,axis,raw_delta,output_delta,category,reason_code,decision\n",
     );
 
     for event in events {
@@ -135,7 +135,7 @@ fn events_to_csv(events: &[debug_log::DebugEvent]) -> String {
 
         writeln!(
             csv,
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             event.timestamp_ms,
             local_export::csv_escape(&device_description),
             event.device_kind.as_str(),
@@ -143,6 +143,15 @@ fn events_to_csv(events: &[debug_log::DebugEvent]) -> String {
             vendor_id,
             product_id,
             event.attribution_status.code(),
+            event.input_provenance.code(),
+            event.classification_evidence.code(),
+            event.hid_source.code(),
+            event.profile.reverse.value,
+            event.profile.reverse.source.code(),
+            event.profile.step_size.value,
+            event.profile.step_size.source.code(),
+            event.profile.smooth_preset.value.as_str(),
+            event.profile.smooth_preset.source.code(),
             event.source_pid,
             event.synthetic,
             event.axis.code(),
@@ -182,7 +191,11 @@ fn events_to_trace(events: &[debug_log::DebugEvent]) -> Result<ScrollTrace, Stri
 mod tests {
     use std::sync::Arc;
 
+    use crate::config::AppConfig;
     use crate::device::{DeviceKind, HardwareId};
+    use crate::device_classifier::ClassificationEvidence;
+    use crate::device_source::HidSourceClass;
+    use crate::input_policy::InputProvenance;
 
     use super::*;
 
@@ -198,6 +211,10 @@ mod tests {
                 product_id: 0xb034,
             }),
             attribution_status: debug_log::AttributionStatus::MediumConfidence,
+            classification_evidence: ClassificationEvidence::DiscreteWheel,
+            input_provenance: InputProvenance::SelfSynthetic,
+            hid_source: HidSourceClass::Physical,
+            profile: AppConfig::default().resolve_device_profile(DeviceKind::Mouse, None),
             source_pid: 123,
             synthetic: true,
             continuous: false,
@@ -210,12 +227,12 @@ mod tests {
         let csv = events_to_csv(&[event]);
 
         assert!(csv.starts_with(
-            "timestamp_ms,device,device_kind,device_name,vendor_id,product_id,attribution_confidence,source_pid,synthetic,axis,raw_delta,output_delta,category,reason_code,decision\n"
+            "timestamp_ms,device,device_kind,device_name,vendor_id,product_id,attribution_confidence,input_provenance,classification_evidence,hid_source,reverse_value,reverse_source,step_size,step_source,smooth_preset,smooth_source,source_pid,synthetic,axis,raw_delta,output_delta,category,reason_code,decision\n"
         ));
         assert!(csv.contains("Mouse wheel · MX, Master 3S"));
         assert!(csv.contains("\"MX, Master\n3S\""));
         assert!(
-            csv.contains("0x046d,0xb034,medium,123,true,vertical,1,-1,ignored,synthetic_event")
+            csv.contains("0x046d,0xb034,medium,self_synthetic,discrete_wheel,physical,true,mouse_kind,3,global_default,off,global_default,123,true,vertical,1,-1,ignored,synthetic_event")
         );
     }
 
@@ -232,6 +249,10 @@ mod tests {
                     product_id: 0xb034,
                 }),
                 attribution_status: debug_log::AttributionStatus::HighConfidence,
+                classification_evidence: ClassificationEvidence::DiscreteWheel,
+                input_provenance: InputProvenance::PostedProcess,
+                hid_source: HidSourceClass::Physical,
+                profile: AppConfig::default().resolve_device_profile(DeviceKind::Mouse, None),
                 source_pid: 123,
                 synthetic: false,
                 continuous: false,
@@ -254,6 +275,10 @@ mod tests {
                         product_id: 0xb034,
                     }),
                     attribution_status: debug_log::AttributionStatus::HighConfidence,
+                    classification_evidence: ClassificationEvidence::DiscreteWheel,
+                    input_provenance: InputProvenance::PostedProcess,
+                    hid_source: HidSourceClass::Physical,
+                    profile: AppConfig::default().resolve_device_profile(DeviceKind::Mouse, None),
                     source_pid: 123,
                     synthetic: false,
                     continuous: false,
@@ -276,6 +301,12 @@ mod tests {
             "vendor_id",
             "product_id",
             "attribution_confidence",
+            "input_provenance",
+            "classification_evidence",
+            "hid_source",
+            "reverse_source",
+            "step_source",
+            "smooth_source",
             "1000000",
         ] {
             assert!(!serialized.contains(private_value));

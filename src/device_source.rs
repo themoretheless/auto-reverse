@@ -12,6 +12,24 @@ pub enum HidSourceClass {
 }
 
 impl HidSourceClass {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::NotObserved => "not_observed",
+            Self::Physical => "physical",
+            Self::Virtual => "virtual",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NotObserved => "Not observed",
+            Self::Physical => "Physical HID",
+            Self::Virtual => "Virtual HID",
+            Self::Unknown => "Unknown HID transport",
+        }
+    }
+
     pub fn from_observed_transport(transport: Option<&str>) -> Self {
         match transport {
             Some("Virtual") => Self::Virtual,
@@ -21,10 +39,6 @@ impl HidSourceClass {
             ) => Self::Physical,
             Some(_) | None => Self::Unknown,
         }
-    }
-
-    pub const fn requires_passthrough(self) -> bool {
-        matches!(self, Self::Virtual | Self::Unknown)
     }
 }
 
@@ -38,7 +52,6 @@ mod tests {
             HidSourceClass::from_observed_transport(Some("Virtual")),
             HidSourceClass::Virtual
         );
-        assert!(HidSourceClass::Virtual.requires_passthrough());
     }
 
     #[test]
@@ -49,7 +62,6 @@ mod tests {
                 HidSourceClass::Physical
             );
         }
-        assert!(!HidSourceClass::Physical.requires_passthrough());
     }
 
     #[test]
@@ -62,7 +74,5 @@ mod tests {
             HidSourceClass::from_observed_transport(None),
             HidSourceClass::Unknown
         );
-        assert!(HidSourceClass::Unknown.requires_passthrough());
-        assert!(!HidSourceClass::NotObserved.requires_passthrough());
     }
 }

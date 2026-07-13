@@ -18,9 +18,13 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use crate::config::ResolvedDeviceProfile;
 use crate::device::{DeviceKind, HardwareId};
 pub use crate::device_attribution::AttributionStatus;
+use crate::device_classifier::ClassificationEvidence;
+use crate::device_source::HidSourceClass;
 pub use crate::diagnostics::{Axis, DecisionCategory, DecisionReason};
+use crate::input_policy::InputProvenance;
 
 /// Matches the design handoff's "ring buffer holds the last 500" label.
 pub const CAPACITY: usize = 500;
@@ -41,6 +45,10 @@ pub struct DebugEvent {
     pub device_name: Option<Arc<str>>,
     pub hardware: Option<HardwareId>,
     pub attribution_status: AttributionStatus,
+    pub classification_evidence: ClassificationEvidence,
+    pub input_provenance: InputProvenance,
+    pub hid_source: HidSourceClass,
+    pub profile: ResolvedDeviceProfile,
     pub source_pid: i64,
     pub synthetic: bool,
     pub continuous: bool,
@@ -61,6 +69,29 @@ impl DebugEvent {
 
     pub fn category(&self) -> DecisionCategory {
         self.reason.category()
+    }
+
+    pub fn resolution_summary(&self) -> String {
+        format!(
+            "Snapshot: attribution {}, HID {}; classifier: {} -> {}; input: {}; profile: direction {} from {}, step {} from {}, preset {} from {}; final: {} ({})",
+            self.attribution_status.code(),
+            self.hid_source.label(),
+            self.classification_evidence.label(),
+            self.device_kind,
+            self.input_provenance.label(),
+            if self.profile.reverse.value {
+                "reverse"
+            } else {
+                "natural"
+            },
+            self.profile.reverse.source.label(),
+            self.profile.step_size.value,
+            self.profile.step_size.source.label(),
+            self.profile.smooth_preset.value.as_str(),
+            self.profile.smooth_preset.source.label(),
+            self.category().code(),
+            self.reason.code(),
+        )
     }
 
     pub fn matches_search(&self, needle: &str) -> bool {
@@ -86,6 +117,15 @@ impl DebugEvent {
             || contains_case_insensitive(self.category().code(), needle)
             || contains_case_insensitive(&hardware, needle)
             || contains_case_insensitive(self.attribution_status.code(), needle)
+            || contains_case_insensitive(self.classification_evidence.code(), needle)
+            || contains_case_insensitive(self.input_provenance.code(), needle)
+            || contains_case_insensitive(self.hid_source.code(), needle)
+            || contains_case_insensitive(self.profile.reverse.source.code(), needle)
+            || contains_case_insensitive(self.profile.step_size.source.code(), needle)
+            || contains_case_insensitive(self.profile.smooth_preset.source.code(), needle)
+            || contains_case_insensitive(self.profile.smooth_preset.value.as_str(), needle)
+            || self.profile.reverse.value.to_string().contains(needle)
+            || self.profile.step_size.value.to_string().contains(needle)
             || self.source_pid.to_string().contains(needle)
             || contains_case_insensitive(if self.synthetic { "true" } else { "false" }, needle)
             || contains_case_insensitive(
@@ -98,6 +138,7 @@ impl DebugEvent {
             )
             || self.raw_delta.to_string().contains(needle)
             || self.output_delta.to_string().contains(needle)
+            || contains_case_insensitive(&self.resolution_summary(), needle)
     }
 }
 
@@ -232,6 +273,7 @@ pub fn now_monotonic_micros() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::AppConfig;
 
     fn sample_event(tag: u32) -> DebugEvent {
         DebugEvent {
@@ -244,6 +286,10 @@ mod tests {
                 product_id: 0x5678,
             }),
             attribution_status: AttributionStatus::HighConfidence,
+            classification_evidence: ClassificationEvidence::DiscreteWheel,
+            input_provenance: InputProvenance::Hardware,
+            hid_source: HidSourceClass::Physical,
+            profile: AppConfig::default().resolve_device_profile(DeviceKind::Mouse, None),
             source_pid: 0,
             synthetic: false,
             continuous: false,
@@ -426,6 +472,10 @@ mod tests {
         assert!(event.matches_search("reversed"));
         assert!(event.matches_search("1234"));
         assert!(event.matches_search("high"));
+        assert!(event.matches_search("discrete_wheel"));
+        assert!(event.matches_search("mouse_kind"));
+        assert!(event.matches_search("mouse setting"));
+        assert!(event.matches_search("off"));
         assert!(event.matches_search("false"));
         assert!(event.matches_search("-1"));
         assert!(!event.matches_search("trackpad"));
@@ -433,12 +483,32 @@ mod tests {
         let sourced_event = DebugEvent {
             source_pid: 4242,
             synthetic: true,
+            input_provenance: InputProvenance::SelfSynthetic,
             reason: DecisionReason::RawInputGuard,
             ..sample_event(2)
         };
         assert!(sourced_event.matches_search("4242"));
         assert!(sourced_event.matches_search("TRUE"));
         assert!(sourced_event.matches_search("raw_input_guard"));
+    }
+
+    #[test]
+    fn resolution_summary_covers_snapshot_classifier_profile_and_final_decision() {
+        let summary = sample_event(1).resolution_summary();
+
+        for required in [
+            "Snapshot: attribution high",
+            "classifier: discrete wheel -> mouse",
+            "input: Hardware",
+            "direction reverse from mouse setting",
+            "preset off from global default",
+            "final: reversed (reversed)",
+        ] {
+            assert!(
+                summary.contains(required),
+                "missing {required:?} in {summary:?}"
+            );
+        }
     }
 
     #[test]

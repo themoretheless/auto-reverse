@@ -518,7 +518,7 @@ fn table_row(ui: &mut egui::Ui, event: &debug_log::DebugEvent) {
     };
     let decision_text = event.decision_text();
 
-    ui.horizontal(|ui| {
+    let row = ui.horizontal(|ui| {
         cell(
             ui,
             96.0,
@@ -542,6 +542,7 @@ fn table_row(ui: &mut egui::Ui, event: &debug_log::DebugEvent) {
             RichText::new(decision_text.as_ref()).color(color),
         );
     });
+    row.response.on_hover_text(event.resolution_summary());
 }
 
 fn cell(ui: &mut egui::Ui, width: f32, text: impl Into<egui::WidgetText>) {
