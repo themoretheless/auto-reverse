@@ -21,9 +21,7 @@ use objc2_app_kit::{NSEvent, NSTouchPhase};
 use objc2_core_graphics::CGEvent as ObjcCGEvent;
 
 use crate::device::DeviceKind;
-use crate::device_classifier::{
-    GestureSourceClassifier, MomentumPhase, conservative_kind_from_continuity,
-};
+use crate::device_classifier::{ContinuousSourceHint, GestureSourceClassifier, MomentumPhase};
 use crate::error::{AppError, AppResult};
 
 const SESSION_EVENT_TAP: u32 = 1;
@@ -67,8 +65,8 @@ fn classifier_guard() -> MutexGuard<'static, GestureSourceClassifier> {
     }
 }
 
-fn reset_classifier() {
-    *classifier_guard() = GestureSourceClassifier::default();
+fn reset_classifier(source_hint: ContinuousSourceHint) {
+    *classifier_guard() = GestureSourceClassifier::new(source_hint);
 }
 
 unsafe extern "C-unwind" fn handle_gesture_event(
@@ -116,14 +114,17 @@ pub struct GestureMonitor {
 }
 
 impl GestureMonitor {
-    pub fn start() -> AppResult<Self> {
+    pub fn start(source_hint: ContinuousSourceHint) -> AppResult<Self> {
         if GESTURE_PORT.load(Ordering::Acquire) != 0 {
             return Err(AppError::Platform(
                 "a gesture monitor is already installed in this process".to_string(),
             ));
         }
 
-        reset_classifier();
+        // Configure the inventory fallback before creating the optional tap.
+        // If tap creation fails, `classify_scroll` can still use exclusive
+        // trackpad/Magic Mouse evidence instead of guessing from continuity.
+        reset_classifier(source_hint);
         let raw_tap = unsafe {
             CGEventTapCreate(
                 SESSION_EVENT_TAP,
@@ -178,7 +179,7 @@ impl Drop for GestureMonitor {
             .is_ok()
         {
             GESTURE_AVAILABLE.store(false, Ordering::Release);
-            reset_classifier();
+            reset_classifier(ContinuousSourceHint::Unknown);
         }
         self.run_loop
             .remove_source(&self.source, unsafe { kCFRunLoopCommonModes });
@@ -187,9 +188,17 @@ impl Drop for GestureMonitor {
 }
 
 /// Classifies one active scroll event using the optional passive signal.
-pub fn classify_scroll(event: &CGEvent, continuous: bool) -> DeviceKind {
+pub fn classify_scroll(
+    event: &CGEvent,
+    continuous: bool,
+    live_source_hint: Option<ContinuousSourceHint>,
+) -> DeviceKind {
+    let mut classifier = classifier_guard();
+    if let Some(source_hint) = live_source_hint {
+        classifier.update_source_hint(source_hint);
+    }
     if !GESTURE_AVAILABLE.load(Ordering::Acquire) {
-        return conservative_kind_from_continuity(continuous);
+        return classifier.classify_without_gesture(continuous);
     }
 
     let momentum_phase = match event.get_integer_value_field(SCROLL_MOMENTUM_PHASE_FIELD) {
@@ -199,5 +208,5 @@ pub fn classify_scroll(event: &CGEvent, continuous: bool) -> DeviceKind {
         3 => MomentumPhase::Ended,
         _ => MomentumPhase::Unknown,
     };
-    classifier_guard().classify_scroll(continuous, momentum_phase, Instant::now())
+    classifier.classify_scroll(continuous, momentum_phase, Instant::now())
 }

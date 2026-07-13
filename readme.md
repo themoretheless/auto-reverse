@@ -12,9 +12,9 @@ Implemented:
 - global enable/disable;
 - vertical and horizontal reverse flags;
 - mouse, trackpad, Magic Mouse and unknown-device config flags;
-- independent live mouse, trackpad, and Magic Mouse policies: a separate
-  listen-only AppKit gesture tap observes public two-finger signals, while a
-  pure timing state machine carries the source through momentum scrolling;
+- independent live mouse, trackpad, and Magic Mouse policies: public IOHID
+  inventory resolves an exclusive continuous source, while a listen-only
+  AppKit gesture tap and pure timing state machine handle the `Both` case;
 - wheel step size;
 - raw-input guard through `source_pid`;
 - Accessibility check and targeted first-run request; Input Monitoring is not
@@ -292,15 +292,16 @@ removes a sibling device's shared fallback when one exact rule is edited.
 Some low-cost firmware reports the same placeholder serial for every unit; use
 the printed `location_id` manually in that case.
 
-`reverse_magic_mouse` is live and independent from `reverse_trackpad`. The
-distinction is intentionally best-effort: a two-finger gesture observed within
-222 ms identifies a trackpad, momentum keeps the last continuous source, and a
-normal continuous event after 333 ms without a fresh touch is Magic Mouse-like.
-If the passive monitor cannot start, all continuous scrolling falls back to the
-trackpad policy, preserving the previous conservative behavior. Rapidly
-alternating a trackpad and Magic Mouse, accessibility gestures, or a third-party
-high-resolution wheel can still be classified imperfectly. Per-device rules
-remain limited to discrete HID wheel devices.
+`reverse_magic_mouse` is live and independent from `reverse_trackpad`. Public
+IOHID product inventory now wins when only a trackpad or only a Magic Mouse is
+connected, so a missing touch observation can no longer route a lone built-in
+trackpad through the Magic Mouse setting. When both are connected, a two-finger
+gesture within 222 ms identifies the trackpad, momentum keeps the last source,
+and a normal continuous event after 333 ms without a fresh touch is Magic
+Mouse-like. IOHID matching/removal callbacks update the hint after hot-plug and
+sleep/wake. Failed or unknown probes conservatively use the trackpad policy.
+Rapid dual-device alternation and third-party smooth wheels remain heuristic;
+per-device rules remain limited to discrete HID wheel devices.
 
 ## Start At Login
 
@@ -331,7 +332,7 @@ src/cli.rs                           command/flag parser and CLI option structs
 src/lib.rs                           library facade documenting the layering
 src/error.rs                         shared AppError / AppResult
 src/device.rs                        DeviceKind + HardwareId/DeviceIdentity vocabulary
-src/device_classifier.rs             pure gesture/timing source state machine + fallback
+src/device_classifier.rs             pure inventory/gesture/timing policy + fallback
 src/input.rs                         normalized ScrollEvent with optional shared identity
 src/runtime.rs                       lock-free process-local pause control
 src/scroll.rs                        pure reversal policy (no CoreGraphics)
@@ -343,7 +344,7 @@ src/platform/mod.rs                  cfg-gated platform adapters
 src/platform/macos/mod.rs            macOS integration overview
 src/platform/macos/scroll_events.rs  CGEvent field mapping (read event, write decision)
 src/platform/macos/permissions.rs    Accessibility TCC policy/check/request
-src/platform/macos/hid.rs            IOHIDManager identity + wheel attribution/cache
+src/platform/macos/hid.rs            IOHID inventory + wheel identity/attribution cache
 src/platform/macos/gesture.rs        passive AppKit gesture tap + classifier adapter
 src/platform/macos/startup.rs        LaunchAgent start-at-login support (headless `run`)
 src/platform/macos/event_tap.rs      CGEventTap runtime loop, config shared via Arc<RwLock<_>>
@@ -405,8 +406,8 @@ Build the app surface:
 
 Make it releasable:
 
-- physical Magic Mouse/trackpad and rapid-alternation validation of the
-  implemented public gesture classifier;
+- physical dual-device Magic Mouse/trackpad and rapid-alternation validation
+  of the inventory-first public classifier;
 - manual sleep/wake validation of the implemented recovery path;
 - packaging/signing;
 - localization;
@@ -461,7 +462,7 @@ items visible from the README without making the first read impossible.
 | 22 | Done | `DeviceKind` покрывает mouse, trackpad, Magic Mouse, unknown. |
 | 23 | Done | Magic Mouse определяется live как отдельный best-effort continuous source. |
 | 24 | Done | Добавлен отдельный public AppKit gesture classifier без private API. |
-| 25 | Done | Continuous scroll различается по two-finger timing signal и momentum phase. |
+| 25 | Done | Continuous source сначала определяется по exclusive IOHID inventory; timing signal нужен только при `Both`. |
 | 26 | Done | `doctor`, README и UI честно показывают отдельную Magic Mouse policy и heuristic caveat. |
 | 27 | Done | Non-continuous scroll считается mouse. |
 | 28 | Done | `DeviceIdentity` использует serial, затем port/location fallback. |
@@ -560,8 +561,8 @@ items visible from the README without making the first read impossible.
 | 121 | Improve | Добавить unknown-device transform test. |
 | 122 | Done | Pure transform покрывает Magic Mouse config. |
 | 123 | Done | Live Magic Mouse distinction подключен через passive gesture adapter. |
-| 124 | Done | Pure classifier contract отделен от AppKit и покрывает timing/momentum transitions. |
-| 125 | Done | Conservative fallback и gesture classifier покрыты unit tests. |
+| 124 | Done | Pure classifier contract отделен от AppKit и покрывает inventory/timing/momentum transitions. |
+| 125 | Done | Inventory matrix, conservative fallback и gesture classifier покрыты unit tests. |
 | 126 | Done | Device parse/display round-trip покрыт. |
 | 127 | Problem | Нет serde round-trip для `DeviceKind`. |
 | 128 | Improve | Добавить TOML test для `magic-mouse`. |

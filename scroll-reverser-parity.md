@@ -165,7 +165,7 @@
 | Area | Target behavior | Status | Gap / next action |
 | --- | --- | --- | --- |
 | Core | Reverse scroll direction | Done | Physical wheel and continuous precision paths are tested separately. |
-| Devices | Mouse, trackpad and Magic Mouse independent settings | Implemented | Public two-finger timing classifier and separate live toggles are wired; physical hardware and rapid-alternation QA remains open. |
+| Devices | Mouse, trackpad and Magic Mouse independent settings | Implemented | Exclusive public IOHID inventory wins; two-finger timing handles `Both`; physical dual-device QA remains open. |
 | Axes | Vertical and horizontal toggles | Done | Both policy and CGEvent field writes have regression tests. |
 | Wheel | Step size control | Partial | Implemented; detection-driven conditional visibility is still open. |
 | UI | Menu bar app with preferences | Done | Handoff 1b/1e implemented. |

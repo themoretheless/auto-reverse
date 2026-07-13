@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 use std::time::Duration;
 
 use crate::config::AppConfig;
+use crate::device_classifier::ContinuousSourceHint;
 use crate::error::{AppError, AppResult};
 use crate::runtime::RuntimeControl;
 use crate::scroll::TransformDecision;
@@ -214,7 +215,26 @@ pub fn install_and_run_with_ready(
         ),
     }
 
-    let gesture_monitor = match gesture::GestureMonitor::start() {
+    let continuous_source_hint = match hid::live_continuous_source_hint()
+        .map(Ok)
+        .unwrap_or_else(hid::continuous_source_hint)
+    {
+        Ok(hint) => {
+            println!(
+                "auto-reverse: connected continuous devices: {}",
+                hint.description()
+            );
+            hint
+        }
+        Err(error) => {
+            eprintln!(
+                "auto-reverse: continuous-device inventory failed ({error}); unknown input \
+                 falls back to trackpad"
+            );
+            ContinuousSourceHint::Unknown
+        }
+    };
+    let gesture_monitor = match gesture::GestureMonitor::start(continuous_source_hint) {
         Ok(monitor) => {
             println!(
                 "auto-reverse: public gesture monitor started; Magic Mouse/trackpad heuristic enabled"
@@ -258,7 +278,8 @@ fn handle_event(
             };
 
             let continuous = !scroll_events::is_physical_mouse_wheel(event);
-            let device_kind = gesture::classify_scroll(event, continuous);
+            let device_kind =
+                gesture::classify_scroll(event, continuous, hid::live_continuous_source_hint());
             // Attribute only genuine hardware wheel ticks: discrete
             // (continuous scrolling never produces HID wheel values) AND
             // originating from the HID system (source_pid == 0). An event

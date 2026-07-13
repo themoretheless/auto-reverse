@@ -21,6 +21,7 @@
 
 use std::ffi::c_void;
 use std::ptr;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -34,6 +35,7 @@ use core_foundation_sys::runloop::{CFRunLoopRef, kCFRunLoopDefaultMode};
 use core_foundation_sys::set::{CFSetGetCount, CFSetGetValues, CFSetRef};
 
 use crate::device::{DeviceIdentity, HardwareId};
+use crate::device_classifier::ContinuousSourceHint;
 use crate::error::{AppError, AppResult};
 
 type IOHIDManagerRef = *mut c_void;
@@ -68,6 +70,7 @@ const IDENTITY_CACHE_MAX_IDLE: Duration = Duration::from_secs(5);
 // clean, deterministic abort instead. Nothing above the callback could
 // catch an unwind anyway, so "C-unwind" would buy nothing.
 type ValueCallback = extern "C" fn(*mut c_void, IOReturn, *mut c_void, IOHIDValueRef);
+type DeviceCallback = extern "C" fn(*mut c_void, IOReturn, *mut c_void, IOHIDDeviceRef);
 
 #[link(name = "IOKit", kind = "framework")]
 unsafe extern "C" {
@@ -76,6 +79,16 @@ unsafe extern "C" {
     fn IOHIDManagerRegisterInputValueCallback(
         manager: IOHIDManagerRef,
         callback: ValueCallback,
+        context: *mut c_void,
+    );
+    fn IOHIDManagerRegisterDeviceMatchingCallback(
+        manager: IOHIDManagerRef,
+        callback: DeviceCallback,
+        context: *mut c_void,
+    );
+    fn IOHIDManagerRegisterDeviceRemovalCallback(
+        manager: IOHIDManagerRef,
+        callback: DeviceCallback,
         context: *mut c_void,
     );
     fn IOHIDManagerScheduleWithRunLoop(
@@ -112,6 +125,12 @@ struct RecentWheel {
 }
 
 static LAST_WHEEL: Mutex<Option<RecentWheel>> = Mutex::new(None);
+const LIVE_HINT_TRACKPAD_ONLY: u8 = 1;
+const LIVE_HINT_MAGIC_MOUSE_ONLY: u8 = 2;
+const LIVE_HINT_BOTH: u8 = 3;
+const LIVE_HINT_UNKNOWN: u8 = 4;
+static LIVE_CONTINUOUS_HINT: AtomicU8 = AtomicU8::new(0);
+static LIVE_CONTINUOUS_HINT_READY: AtomicBool = AtomicBool::new(false);
 
 /// One consistent view of the last attributed wheel tick. Returning the
 /// identity and display name together avoids taking `LAST_WHEEL` twice
@@ -127,6 +146,7 @@ pub struct WheelSnapshot {
 /// before entering it. On success the manager intentionally lives for the
 /// rest of the process; on failure it is cleaned up before returning.
 pub fn start_wheel_monitor() -> AppResult<()> {
+    LIVE_CONTINUOUS_HINT_READY.store(false, Ordering::Release);
     unsafe {
         let manager = IOHIDManagerCreate(ptr::null(), KIOHID_OPTIONS_TYPE_NONE);
         if manager.is_null() {
@@ -139,6 +159,19 @@ pub fn start_wheel_monitor() -> AppResult<()> {
         let matching = mouse_matching_dictionary();
         IOHIDManagerSetDeviceMatching(manager, matching.as_concrete_TypeRef());
         IOHIDManagerRegisterInputValueCallback(manager, wheel_value_callback, ptr::null_mut());
+        // The manager already tracks all generic mouse-usage devices for wheel
+        // attribution. Reuse its lifecycle notifications to keep the cheap
+        // continuous-device hint current across hot-plug and sleep/wake.
+        IOHIDManagerRegisterDeviceMatchingCallback(
+            manager,
+            pointing_device_inventory_changed,
+            manager,
+        );
+        IOHIDManagerRegisterDeviceRemovalCallback(
+            manager,
+            pointing_device_inventory_changed,
+            manager,
+        );
         IOHIDManagerScheduleWithRunLoop(manager, run_loop, kCFRunLoopDefaultMode);
 
         let status = IOHIDManagerOpen(manager, KIOHID_OPTIONS_TYPE_NONE);
@@ -148,11 +181,13 @@ pub fn start_wheel_monitor() -> AppResult<()> {
             // attached to the run loop would leak for the whole process.
             IOHIDManagerUnscheduleFromRunLoop(manager, run_loop, kCFRunLoopDefaultMode);
             CFRelease(manager as CFTypeRef);
+            LIVE_CONTINUOUS_HINT_READY.store(false, Ordering::Release);
             return Err(AppError::Platform(format!(
                 "IOHIDManagerOpen failed with IOReturn {status:#010x}; per-device attribution \
                  is unavailable"
             )));
         }
+        refresh_live_continuous_hint(manager);
         // Success: the manager intentionally lives for the rest of the
         // process (a `run` invocation never returns), so it is not released.
     }
@@ -169,6 +204,47 @@ pub fn recent_wheel_snapshot(max_age: Duration) -> Option<WheelSnapshot> {
             identity: Arc::clone(&recent.identity),
             name: recent.name.clone(),
         })
+}
+
+/// Lock-free current inventory for the scroll-event hot path. `None` means
+/// the long-lived HID monitor did not start, so the caller should keep the
+/// one-shot hint it obtained during setup.
+pub fn live_continuous_source_hint() -> Option<ContinuousSourceHint> {
+    if !LIVE_CONTINUOUS_HINT_READY.load(Ordering::Acquire) {
+        return None;
+    }
+    match LIVE_CONTINUOUS_HINT.load(Ordering::Acquire) {
+        LIVE_HINT_TRACKPAD_ONLY => Some(ContinuousSourceHint::TrackpadOnly),
+        LIVE_HINT_MAGIC_MOUSE_ONLY => Some(ContinuousSourceHint::MagicMouseOnly),
+        LIVE_HINT_BOTH => Some(ContinuousSourceHint::Both),
+        LIVE_HINT_UNKNOWN => Some(ContinuousSourceHint::Unknown),
+        _ => None,
+    }
+}
+
+extern "C" fn pointing_device_inventory_changed(
+    context: *mut c_void,
+    result: IOReturn,
+    _sender: *mut c_void,
+    _device: IOHIDDeviceRef,
+) {
+    if result != KIO_RETURN_SUCCESS || context.is_null() {
+        return;
+    }
+    unsafe { refresh_live_continuous_hint(context as IOHIDManagerRef) };
+}
+
+unsafe fn refresh_live_continuous_hint(manager: IOHIDManagerRef) {
+    let snapshots = unsafe { mouse_device_snapshots_from_manager(manager) };
+    let hint = continuous_source_hint_from_snapshots(&snapshots);
+    let encoded = match hint {
+        ContinuousSourceHint::TrackpadOnly => LIVE_HINT_TRACKPAD_ONLY,
+        ContinuousSourceHint::MagicMouseOnly => LIVE_HINT_MAGIC_MOUSE_ONLY,
+        ContinuousSourceHint::Both => LIVE_HINT_BOTH,
+        ContinuousSourceHint::Unknown => LIVE_HINT_UNKNOWN,
+    };
+    LIVE_CONTINUOUS_HINT.store(encoded, Ordering::Release);
+    LIVE_CONTINUOUS_HINT_READY.store(true, Ordering::Release);
 }
 
 extern "C" fn wheel_value_callback(
@@ -241,10 +317,60 @@ pub struct DeviceInfo {
     pub transport: Option<String>,
 }
 
+#[derive(Debug)]
+struct MouseDeviceSnapshot {
+    identity: Option<DeviceIdentity>,
+    name: Option<String>,
+    transport: Option<String>,
+}
+
+/// Connected continuous-source inventory used before the timing heuristic.
+/// Product names come from public IOHID properties and remain useful even for
+/// the built-in trackpad, whose generic mouse interface can omit the numeric
+/// identity fields required by per-device wheel rules.
+pub fn continuous_source_hint() -> AppResult<ContinuousSourceHint> {
+    Ok(continuous_source_hint_from_snapshots(
+        &mouse_device_snapshots()?,
+    ))
+}
+
+fn continuous_source_hint_from_snapshots(
+    snapshots: &[MouseDeviceSnapshot],
+) -> ContinuousSourceHint {
+    let mut trackpad = false;
+    let mut magic_mouse = false;
+    for device in snapshots {
+        let Some(name) = device.name.as_deref() else {
+            continue;
+        };
+        let (is_trackpad, is_magic_mouse) = continuous_device_name_flags(name);
+        trackpad |= is_trackpad;
+        magic_mouse |= is_magic_mouse;
+    }
+    ContinuousSourceHint::from_presence(trackpad, magic_mouse)
+}
+
 /// Enumerates currently connected mouse-usage HID devices. Uses its own
 /// short-lived manager so the CLI command works without starting the
 /// monitor; property reads do not require opening the devices.
 pub fn list_pointing_devices() -> AppResult<Vec<DeviceInfo>> {
+    let mut devices: Vec<_> = mouse_device_snapshots()?
+        .into_iter()
+        .filter_map(|snapshot| {
+            Some(DeviceInfo {
+                identity: snapshot.identity?,
+                name: snapshot.name,
+                transport: snapshot.transport,
+            })
+        })
+        .collect();
+
+    devices.sort_by(|left, right| left.identity.cmp(&right.identity));
+    devices.dedup_by(|left, right| left.identity == right.identity);
+    Ok(devices)
+}
+
+fn mouse_device_snapshots() -> AppResult<Vec<MouseDeviceSnapshot>> {
     unsafe {
         let manager = IOHIDManagerCreate(ptr::null(), KIOHID_OPTIONS_TYPE_NONE);
         if manager.is_null() {
@@ -255,31 +381,41 @@ pub fn list_pointing_devices() -> AppResult<Vec<DeviceInfo>> {
 
         let matching = mouse_matching_dictionary();
         IOHIDManagerSetDeviceMatching(manager, matching.as_concrete_TypeRef());
-
-        let device_set = IOHIDManagerCopyDevices(manager);
-        let mut devices = Vec::new();
-        if !device_set.is_null() {
-            let count = CFSetGetCount(device_set) as usize;
-            let mut refs: Vec<*const c_void> = vec![ptr::null(); count];
-            CFSetGetValues(device_set, refs.as_mut_ptr());
-            for device in refs {
-                let device = device as IOHIDDeviceRef;
-                if let Some(identity) = device_identity_of(device) {
-                    devices.push(DeviceInfo {
-                        identity,
-                        name: string_property(device, KEY_PRODUCT),
-                        transport: string_property(device, KEY_TRANSPORT),
-                    });
-                }
-            }
-            CFRelease(device_set as CFTypeRef);
-        }
+        let devices = mouse_device_snapshots_from_manager(manager);
         CFRelease(manager as CFTypeRef);
 
-        devices.sort_by(|left, right| left.identity.cmp(&right.identity));
-        devices.dedup_by(|left, right| left.identity == right.identity);
         Ok(devices)
     }
+}
+
+unsafe fn mouse_device_snapshots_from_manager(
+    manager: IOHIDManagerRef,
+) -> Vec<MouseDeviceSnapshot> {
+    let device_set = unsafe { IOHIDManagerCopyDevices(manager) };
+    let mut devices = Vec::new();
+    if !device_set.is_null() {
+        let count = unsafe { CFSetGetCount(device_set) } as usize;
+        let mut refs: Vec<*const c_void> = vec![ptr::null(); count];
+        unsafe { CFSetGetValues(device_set, refs.as_mut_ptr()) };
+        for device in refs {
+            let device = device as IOHIDDeviceRef;
+            devices.push(MouseDeviceSnapshot {
+                identity: unsafe { device_identity_of(device) },
+                name: unsafe { string_property(device, KEY_PRODUCT) },
+                transport: unsafe { string_property(device, KEY_TRANSPORT) },
+            });
+        }
+        unsafe { CFRelease(device_set as CFTypeRef) };
+    }
+    devices
+}
+
+fn continuous_device_name_flags(name: &str) -> (bool, bool) {
+    let normalized = name.to_ascii_lowercase();
+    (
+        normalized.contains("trackpad"),
+        normalized.contains("magic mouse"),
+    )
 }
 
 fn mouse_matching_dictionary() -> CFDictionary<CFString, CFNumber> {
@@ -339,5 +475,56 @@ unsafe fn string_property(device: IOHIDDeviceRef, key: &'static str) -> Option<S
                 .downcast::<CFString>()?
                 .to_string(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connected_apple_product_names_map_to_continuous_sources() {
+        assert_eq!(
+            continuous_device_name_flags("Apple Internal Keyboard / Trackpad"),
+            (true, false)
+        );
+        assert_eq!(
+            continuous_device_name_flags("Magic Trackpad 2"),
+            (true, false)
+        );
+        assert_eq!(continuous_device_name_flags("Magic Mouse"), (false, true));
+    }
+
+    #[test]
+    fn ordinary_discrete_devices_do_not_create_a_continuous_hint() {
+        assert_eq!(
+            continuous_device_name_flags("Logitech USB Receiver"),
+            (false, false)
+        );
+        assert_eq!(
+            continuous_device_name_flags("HyperX Alloy Origins 65"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn incomplete_hardware_identity_does_not_hide_continuous_product_names() {
+        let snapshots = [
+            MouseDeviceSnapshot {
+                identity: None,
+                name: Some("Apple Internal Keyboard / Trackpad".to_string()),
+                transport: Some("FIFO".to_string()),
+            },
+            MouseDeviceSnapshot {
+                identity: None,
+                name: Some("Magic Mouse".to_string()),
+                transport: Some("Bluetooth".to_string()),
+            },
+        ];
+
+        assert_eq!(
+            continuous_source_hint_from_snapshots(&snapshots),
+            ContinuousSourceHint::Both
+        );
     }
 }

@@ -28,9 +28,9 @@ independently.
 17. [Done] Require and open only Accessibility; remove the unnecessary Input Monitoring gate.
 18. [Implemented] Native Save Panel and Finder reveal are built; manual panel workflow QA remains open.
 19. [Implemented] Serial-first device identity with location fallback is built; identical-device/reconnect manual QA remains open.
-20. [Implemented] A public listen-only AppKit gesture tap now distinguishes
-    two-finger trackpad scrolling from Magic Mouse-like continuous scrolling;
-    physical-device, rapid-alternation, and system-gesture QA remains open.
+20. [Implemented] Public IOHID inventory identifies an exclusive trackpad or
+    Magic Mouse; the listen-only AppKit timing heuristic handles the `Both`
+    case. Physical dual-device and rapid-alternation QA remains open.
 
 ## P2 - Distribution and maintenance
 

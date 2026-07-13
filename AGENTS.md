@@ -10,7 +10,8 @@ Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
 - TOML config with validation and atomic save;
 - CLI commands in `src/main.rs` with parsing isolated in `src/cli.rs`;
 - pure scroll policy in `src/scroll.rs`;
-- pure Magic Mouse/trackpad timing policy in `src/device_classifier.rs`;
+- pure Magic Mouse/trackpad inventory and timing policy in
+  `src/device_classifier.rs`;
 - macOS-specific FFI under `src/platform/macos/`;
 - a public listen-only AppKit gesture monitor in
   `src/platform/macos/gesture.rs`;
@@ -40,6 +41,9 @@ framework code inside `platform/macos`.
 - AppKit gesture event type 29 must cross the passive callback as raw `u32`;
   the `core-graphics` crate's Rust enum omits it, so constructing that enum is
   invalid. Do not replace this bridge with private MultitouchSupport APIs.
+- Missing two-finger observations do not prove a Magic Mouse. An exclusive
+  public IOHID product inventory wins; unknown inventory falls back to
+  Trackpad, and gesture timing is used only when both sources are connected.
 - The GUI and CLI runtime paths share `daemon_lock`; never allow two runtime
   instances. One runtime owns the active scroll tap and optional passive
   gesture tap together.

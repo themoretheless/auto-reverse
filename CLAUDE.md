@@ -9,8 +9,8 @@ mouse-wheel scroll direction via a CGEventTap while leaving the trackpad
 untouched. It is layered so pure logic never touches OS frameworks:
 
 - `src/scroll.rs` - pure reversal policy (no CoreGraphics imports)
-- `src/device_classifier.rs` - pure Magic Mouse/trackpad timing and momentum
-  state machine, plus the conservative fallback
+- `src/device_classifier.rs` - pure Magic Mouse/trackpad inventory, timing and
+  momentum state machine, plus the conservative fallback
 - `src/config/` - `schema.rs` (fields, defaults, validation) + `store.rs`
   (paths, TOML I/O, atomic save), re-exported through `mod.rs`
 - `src/platform/macos/` - ALL unsafe/FFI code: `scroll_events.rs` (CGEvent
@@ -58,10 +58,11 @@ Key invariants, both empirically verified - do not "fix" them backwards:
   callback has its own autorelease pool and uses only public AppKit APIs.
 
 Known accepted limitations (documented in `doctor` output and
-`recommendation.md`): Magic Mouse vs trackpad is a public best-effort
-two-finger timing heuristic, not physical identity; failed passive-monitor
-startup falls back to the trackpad policy, and rapid device alternation or
-third-party smooth wheels may classify imperfectly. `reverse_unknown` has no
+`recommendation.md`): exclusive public IOHID inventory identifies a lone
+trackpad or Magic Mouse; two-finger timing is used only when both are present.
+Failed inventory/gesture probes fall back to the trackpad policy, and rapid
+device alternation or third-party smooth wheels may classify imperfectly.
+`reverse_unknown` has no
 live source yet. Four config fields
 (`show_menu_bar_icon`, `check_for_updates`, `include_beta_updates`,
 `show_discrete_scroll_options`) are stored for planned UI/updater behavior

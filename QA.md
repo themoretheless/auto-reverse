@@ -28,6 +28,8 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Built-in trackpad: two-finger scroll and momentum use Trackpad policy |  |  |  |  |
 |  |  | Magic Trackpad: two-finger scroll and momentum use Trackpad policy |  |  |  |  |
 |  |  | Magic Mouse continuous scroll uses independent Magic Mouse policy |  |  |  |  |
+| 2026-07-13 | 26.6 | Internal trackpad with no Magic Mouse yields `trackpad only` hardware hint | N/A | N/A | Pass | Codex |
+|  |  | Hot-plug/remove Magic Mouse updates the live classifier without restart |  |  |  |  |
 |  |  | Rapidly alternate Magic Mouse and trackpad around 222/333 ms windows |  |  |  |  |
 |  |  | Per-device Reverse / Don't reverse |  |  |  |  |
 |  |  | Two identical VID/PID mice with different serials stay independent |  |  |  |  |

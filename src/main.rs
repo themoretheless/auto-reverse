@@ -172,10 +172,13 @@ fn doctor(options: DoctorOptions) -> AppResult<()> {
         "device classifier: {}",
         device_classifier::CLASSIFIER_DESCRIPTION
     );
+    match hid::continuous_source_hint() {
+        Ok(hint) => println!("connected continuous devices: {}", hint.description()),
+        Err(error) => println!("connected continuous devices: unavailable ({error})"),
+    }
     println!(
-        "classifier note: Magic Mouse vs trackpad uses a public two-finger timing heuristic; if \
-         the passive gesture monitor cannot start, continuous scrolling safely falls back to \
-         trackpad behavior"
+        "classifier note: exclusive connected-device evidence wins; the public two-finger \
+         timing heuristic is used only when both a trackpad and Magic Mouse are present"
     );
     println!(
         "known gap: reverse_unknown has no live effect yet because DeviceKind::Unknown is \
@@ -538,6 +541,10 @@ fn list_devices() -> AppResult<()> {
         "note: rules apply to discrete wheel scrolling only - trackpad and Magic Mouse \
          continuous scrolling cannot be attributed to a specific device"
     );
+    match hid::continuous_source_hint() {
+        Ok(hint) => println!("continuous-device classifier hint: {}", hint.description()),
+        Err(error) => println!("continuous-device classifier hint unavailable: {error}"),
+    }
     Ok(())
 }
 
