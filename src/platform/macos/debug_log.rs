@@ -16,123 +16,13 @@
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::device::{DeviceKind, HardwareId};
+pub use crate::diagnostics::{Axis, DecisionCategory, DecisionReason};
 
 /// Matches the design handoff's "ring buffer holds the last 500" label.
 pub const CAPACITY: usize = 500;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Axis {
-    Vertical,
-    Horizontal,
-}
-
-impl Axis {
-    pub fn code(self) -> &'static str {
-        match self {
-            Axis::Vertical => "vertical",
-            Axis::Horizontal => "horizontal",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Axis::Vertical => "Vertical",
-            Axis::Horizontal => "Horizontal",
-        }
-    }
-}
-
-/// Coarse category `DebugEvent::reason` falls into - what the Debug
-/// Console's filter tabs (All/Reversed/Passed/Ignored) group by.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DecisionCategory {
-    Reversed,
-    Passed,
-    Ignored,
-}
-
-impl DecisionCategory {
-    pub fn code(self) -> &'static str {
-        match self {
-            Self::Reversed => "reversed",
-            Self::Passed => "passed",
-            Self::Ignored => "ignored",
-        }
-    }
-}
-
-/// Stable, machine-readable reason for one axis decision. These variants are
-/// stored by the event-tap callback and exported as `reason_code`; changing UI
-/// wording no longer changes the recorded data or allocates on the hot path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DecisionReason {
-    ScrollReversalOff,
-    TemporarilyPaused,
-    SyntheticEvent,
-    RawInputGuard,
-    Reversed,
-    UnknownDeviceNotReversed,
-    DeviceRuleDisabled,
-    TrackpadNatural,
-    DeviceReversalOff,
-    AxisDisabled,
-}
-
-impl DecisionReason {
-    pub fn code(self) -> &'static str {
-        match self {
-            Self::ScrollReversalOff => "scroll_reversal_off",
-            Self::TemporarilyPaused => "temporarily_paused",
-            Self::SyntheticEvent => "synthetic_event",
-            Self::RawInputGuard => "raw_input_guard",
-            Self::Reversed => "reversed",
-            Self::UnknownDeviceNotReversed => "unknown_device_not_reversed",
-            Self::DeviceRuleDisabled => "device_rule_disabled",
-            Self::TrackpadNatural => "trackpad_natural",
-            Self::DeviceReversalOff => "device_reversal_off",
-            Self::AxisDisabled => "axis_disabled",
-        }
-    }
-
-    pub fn category(self) -> DecisionCategory {
-        match self {
-            Self::Reversed => DecisionCategory::Reversed,
-            Self::TrackpadNatural | Self::AxisDisabled => DecisionCategory::Passed,
-            Self::ScrollReversalOff
-            | Self::TemporarilyPaused
-            | Self::SyntheticEvent
-            | Self::RawInputGuard
-            | Self::UnknownDeviceNotReversed
-            | Self::DeviceRuleDisabled
-            | Self::DeviceReversalOff => DecisionCategory::Ignored,
-        }
-    }
-
-    pub fn display_text(self, device_kind: DeviceKind) -> Cow<'static, str> {
-        match self {
-            Self::ScrollReversalOff => Cow::Borrowed("Ignored – scroll reversal is off"),
-            Self::TemporarilyPaused => Cow::Borrowed("Ignored - temporarily paused"),
-            Self::SyntheticEvent => Cow::Borrowed("Ignored – synthetic event"),
-            Self::RawInputGuard => Cow::Borrowed("Ignored – raw input guard (remote desktop)"),
-            Self::Reversed => Cow::Borrowed("Reversed"),
-            Self::UnknownDeviceNotReversed => {
-                Cow::Borrowed("Ignored – unknown devices not reversed")
-            }
-            Self::DeviceRuleDisabled => {
-                Cow::Borrowed("Ignored – this device has a Don't reverse rule")
-            }
-            Self::TrackpadNatural => Cow::Borrowed("Passed through – trackpad natural"),
-            Self::DeviceReversalOff => Cow::Owned(format!(
-                "Ignored – {} reversal is off",
-                reversal_kind_label(device_kind)
-            )),
-            Self::AxisDisabled => Cow::Borrowed("Passed through"),
-        }
-    }
-}
 
 /// One structured scroll-reversal decision. Device names use `Arc<str>` so a
 /// two-axis event shares one allocation, while all labels and explanations are
@@ -142,12 +32,16 @@ pub struct DebugEvent {
     /// Milliseconds since UNIX_EPOCH - plain integer, cheap to store/sort,
     /// formatted to a wall-clock time only when the console renders a row.
     pub timestamp_ms: u128,
+    /// Process-relative monotonic time used only to derive relative trace
+    /// intervals. Unlike timestamp_ms, this cannot reveal wall-clock time.
+    pub monotonic_us: u64,
     pub device_kind: DeviceKind,
     /// Raw IOHID product name, preserved unchanged for structured export.
     pub device_name: Option<Arc<str>>,
     pub hardware: Option<HardwareId>,
     pub source_pid: i64,
     pub synthetic: bool,
+    pub continuous: bool,
     pub axis: Axis,
     pub raw_delta: i64,
     pub output_delta: i64,
@@ -191,6 +85,14 @@ impl DebugEvent {
             || contains_case_insensitive(&hardware, needle)
             || self.source_pid.to_string().contains(needle)
             || contains_case_insensitive(if self.synthetic { "true" } else { "false" }, needle)
+            || contains_case_insensitive(
+                if self.continuous {
+                    "continuous"
+                } else {
+                    "discrete"
+                },
+                needle,
+            )
             || self.raw_delta.to_string().contains(needle)
             || self.output_delta.to_string().contains(needle)
     }
@@ -305,15 +207,6 @@ fn device_kind_label(device_kind: DeviceKind) -> &'static str {
     }
 }
 
-fn reversal_kind_label(device_kind: DeviceKind) -> &'static str {
-    match device_kind {
-        DeviceKind::Mouse => "mouse",
-        DeviceKind::Trackpad => "trackpad",
-        DeviceKind::MagicMouse => "Magic Mouse",
-        DeviceKind::Unknown => "unknown device",
-    }
-}
-
 fn normalized_device_name(name: &str) -> Option<String> {
     let normalized = name.split_whitespace().collect::<Vec<_>>().join(" ");
     (!normalized.is_empty()).then_some(normalized)
@@ -326,6 +219,13 @@ pub fn now_millis() -> u128 {
         .unwrap_or(0)
 }
 
+static MONOTONIC_ORIGIN: OnceLock<Instant> = OnceLock::new();
+
+pub fn now_monotonic_micros() -> u64 {
+    let elapsed = MONOTONIC_ORIGIN.get_or_init(Instant::now).elapsed();
+    u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,6 +233,7 @@ mod tests {
     fn sample_event(tag: u32) -> DebugEvent {
         DebugEvent {
             timestamp_ms: tag as u128,
+            monotonic_us: u64::from(tag),
             device_kind: DeviceKind::Mouse,
             device_name: Some(Arc::from(format!("Test {tag}"))),
             hardware: Some(HardwareId {
@@ -341,6 +242,7 @@ mod tests {
             }),
             source_pid: 0,
             synthetic: false,
+            continuous: false,
             axis: Axis::Vertical,
             raw_delta: 1,
             output_delta: -1,
@@ -448,6 +350,11 @@ mod tests {
             (
                 DecisionReason::Reversed,
                 "reversed",
+                DecisionCategory::Reversed,
+            ),
+            (
+                DecisionReason::DeviceRuleReversed,
+                "device_rule_reversed",
                 DecisionCategory::Reversed,
             ),
             (

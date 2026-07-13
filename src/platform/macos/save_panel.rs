@@ -1,6 +1,6 @@
 //! Native save and Finder-reveal adapter for user-selected local exports.
 //!
-//! The Debug Console owns CSV generation and file writing. This module owns
+//! The Debug Console owns export generation and file writing. This module owns
 //! only AppKit: presenting `NSSavePanel`, converting its file URL to a Rust
 //! path, and asking Finder to select a completed export.
 
@@ -15,6 +15,21 @@ pub fn choose_csv_path(
     default_filename: &str,
     initial_directory: Option<&Path>,
 ) -> Result<Option<PathBuf>, String> {
+    choose_export_path(default_filename, "csv", initial_directory)
+}
+
+pub fn choose_toml_path(
+    default_filename: &str,
+    initial_directory: Option<&Path>,
+) -> Result<Option<PathBuf>, String> {
+    choose_export_path(default_filename, "toml", initial_directory)
+}
+
+fn choose_export_path(
+    default_filename: &str,
+    extension: &str,
+    initial_directory: Option<&Path>,
+) -> Result<Option<PathBuf>, String> {
     let mtm = MainThreadMarker::new()
         .ok_or_else(|| "the save panel must be opened on the main thread".to_string())?;
     let panel = NSSavePanel::savePanel(mtm);
@@ -27,9 +42,9 @@ pub fn choose_csv_path(
     panel.setPrompt(Some(&NSString::from_str("Export")));
 
     // allowedContentTypes would require another framework dependency just for
-    // one CSV extension. This compatibility API is still supported by AppKit
-    // and gives the same extension/validation behavior here.
-    let file_types = NSArray::from_retained_slice(&[NSString::from_str("csv")]);
+    // these simple extensions. This compatibility API is still supported by
+    // AppKit and gives the same extension/validation behavior here.
+    let file_types = NSArray::from_retained_slice(&[NSString::from_str(extension)]);
     #[allow(deprecated)]
     panel.setAllowedFileTypes(Some(&file_types));
 

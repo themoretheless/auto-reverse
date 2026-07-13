@@ -4,9 +4,25 @@ This is the executable view of the 960-item audit in `recommendation.md`.
 Items are intentionally small enough to understand, implement, and verify
 independently.
 
-The research-derived `R01-R60` queue is analyzed and sequenced in
-`RESEARCH.md`. It is not promoted into this executable top 25 until the
-measurement-first iteration has an implementation slot.
+The research-derived `R01-R60` queue is analyzed in `RESEARCH.md` and executed
+below in fixed batches of five.
+
+## Research batches
+
+| Batch | Items | Status |
+| --- | --- | --- |
+| 1 | R01-R05 | Implemented; native privacy-trace Save Panel QA remains |
+| 2 | R06-R10 | Next |
+| 3 | R11-R15 | Pending |
+| 4 | R16-R20 | Pending |
+| 5 | R21-R25 | Pending |
+| 6 | R26-R30 | Pending |
+| 7 | R31-R35 | Pending |
+| 8 | R36-R40 | Pending |
+| 9 | R41-R45 | Pending |
+| 10 | R46-R50 | Pending |
+| 11 | R51-R55 | Pending |
+| 12 | R56-R60 | Pending |
 
 ## P0 - Correctness and recovery
 

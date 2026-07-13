@@ -17,6 +17,13 @@ Debug Console CSV exports deliberately include vendor/product IDs and the
 device's display name, but not serial numbers or location IDs. Those stronger
 identifiers are used only for local rule matching and are never transmitted.
 
+The separate privacy trace export is narrower than CSV. It contains only
+relative monotonic microseconds, coarse device kind, continuous/discrete class,
+axis, input/output deltas, and a stable decision reason. It contains no absolute
+time, PID, application/window data, HID name, vendor/product ID, serial, or
+location. The parser rejects unknown fields and limits traces to 1 MiB and
+10,000 samples. `TRACE.md` is the canonical field-level contract.
+
 Runtime coordination files (`run.lock`, `ui.lock`, `config.toml.lock`, and the
 transient `ui.activate` mailbox) stay in that same local directory. They contain
 only lock state or process IDs, never scroll events, device names, or settings.

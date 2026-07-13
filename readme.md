@@ -40,7 +40,12 @@ Implemented:
   structured ring buffer; CSV export includes stable reason codes, source PID,
   synthetic flag, device kind, raw HID name, and vendor/product IDs, while
   serial/location qualifiers stay out of automatic exports; a native Save Panel
-  chooses the destination and the receipt can reveal it in Finder;
+  chooses the destination and the receipt can reveal it in Finder; the same
+  Export menu creates a versioned privacy trace with relative monotonic time and
+  no process/device identity;
+- deterministic pure trace replay and `trace-lab`, which reports magnitude,
+  interval, direction, duration, clutch sessions, per-axis distance and an
+  always-present constant-gain baseline without changing live scrolling;
 - process-local 15-minute pause that leaves persisted settings untouched;
 - typed event-tap lifecycle with explicit started/already-running/stopped/failed
   events rather than timeout-inferred booleans;
@@ -80,6 +85,7 @@ cargo run -- show-config
 cargo run -- simulate --device mouse --dy 1 --dx 2 --continuous false
 cargo run -- simulate --device mouse --dy 1 --vendor-id 0x046d --product-id 0xc54d
 cargo run -- simulate --device mouse --dy 1 --vendor-id 0x046d --product-id 0xc54d --serial-number ABC123
+cargo run -- trace-lab /path/to/scroll-trace.toml --baseline-gain 1 --clutch-gap-ms 150
 cargo run -- enable
 cargo run -- disable
 cargo run -- toggle
@@ -105,7 +111,10 @@ Accessibility grants both event posting and listening, while Input Monitoring
 grants listening only. Requiring both caused a false `NEEDS PERMISSION` state
 even when macOS had already enabled the app.
 
-For safe checks without installing the event tap, use `doctor`, `startup-status`, `show-config`, and `simulate`. `doctor --no-create` reports defaults without creating the config file.
+For safe checks without installing the event tap, use `doctor`, `startup-status`,
+`show-config`, `simulate`, and `trace-lab`. `doctor --no-create` and `trace-lab`
+report against defaults without creating a config file when none exists. The
+trace format and privacy boundary are documented in `TRACE.md`.
 
 ## App Bundle
 
@@ -333,9 +342,12 @@ src/lib.rs                           library facade documenting the layering
 src/error.rs                         shared AppError / AppResult
 src/device.rs                        DeviceKind + HardwareId/DeviceIdentity vocabulary
 src/device_classifier.rs             pure inventory/gesture/timing policy + fallback
+src/diagnostics.rs                   pure axis and stable decision-reason vocabulary
 src/input.rs                         normalized ScrollEvent with optional shared identity
 src/runtime.rs                       lock-free process-local pause control
 src/scroll.rs                        pure reversal policy (no CoreGraphics)
+src/scroll_trace.rs                  bounded TOML schema + deterministic replay
+src/scroll_lab.rs                    transfer metrics + constant-gain baseline
 src/config/mod.rs                    facade re-exporting AppConfig/ConfigStore
 src/config/schema.rs                 fields, defaults and validation
 src/config/device_rules.rs           pure selector priority, matching and mutation
@@ -351,7 +363,7 @@ src/platform/macos/event_tap.rs      CGEventTap runtime loop, config shared via 
 src/platform/macos/power_events.rs   NSWorkspace sleep/wake observer and atomic signal
 src/platform/macos/daemon_lock.rs    flock: only one live CGEventTap at a time, any launch path
 src/platform/macos/activation.rs     second GUI launch -> existing-window focus mailbox
-src/platform/macos/save_panel.rs     native CSV destination picker + Finder reveal
+src/platform/macos/save_panel.rs     native export destination picker + Finder reveal
 src/platform/macos/debug_log.rs      structured decisions + local Debug Console ring buffer
 src/platform/macos/quit_handler.rs   AppleEvent quit interception so only tray Quit exits
 src/platform/macos/login_item.rs     SMAppService.mainAppService() wrapper (gui feature only)
@@ -361,7 +373,7 @@ src/ui.rs                            settings app coordinator and tab contents
 src/ui/runtime.rs                    typed tap lifecycle and explicit event channel
 src/ui/theme.rs                      handoff tokens and custom egui controls
 src/ui/debug_console.rs              Debug Console viewport/filter/table
-src/ui/debug_console/export.rs       CSV serialization, atomic write, export receipt
+src/ui/debug_console/export.rs       detailed CSV/privacy trace + atomic receipt
 tests/cli_integration.rs             real binary in isolated HOME/config sandboxes
 scripts/lib/app-bundle.sh            shared bundle identity + exact-process helpers
 scripts/build-app-bundle.sh          debug/release bundle construction
@@ -432,10 +444,10 @@ This should feel like a compact native utility:
 utilities and input projects plus primary papers on scrolling accuracy,
 transfer functions, filtering, and latency. It adds `R01-R60` to the backlog.
 
-The proposed order is intentionally conservative:
+The implementation order is intentionally conservative:
 
-1. Build privacy-bounded trace/replay, transfer-function benchmarks, and tap
-   latency diagnostics without changing scrolling.
+1. Privacy-bounded trace/replay and the transfer-function lab are implemented;
+   ScrollTest task metrics and tap-latency diagnostics remain next.
 2. Prototype an opt-in pure dynamics engine for discrete wheels only; preserve
    signed distance, cancel stale momentum, and fail open.
 3. Add inherited per-device presets and compact UX only after the measurements
@@ -967,6 +979,7 @@ README without making the first read impossible.
 - `architecture.md` - current and target architecture, SOLID/DRY split, UX direction.
 - `recommendation.md` - 960 recommendations, problems and improvements (500 base items + N01-N400 implementation follow-ups + R01-R60 research follow-ups).
 - `RESEARCH.md` - 10-repository source review, scientific/platform sources, rejected approaches, and three incremental implementation iterations.
+- `TRACE.md` - privacy trace schema, limits, replay semantics, CLI lab, and ownership boundaries.
 - `ROADMAP.md` - the executable top 25, grouped P0/P1/P2.
 - `RELEASE.md` - canonical Developer ID, notarization, stapling, and
   distribution checklist.

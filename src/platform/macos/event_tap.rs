@@ -355,8 +355,10 @@ fn record_debug_event(
     decision: TransformDecision,
 ) {
     let timestamp_ms = debug_log::now_millis();
+    let monotonic_us = debug_log::now_monotonic_micros();
     let identity = decision.original.identity.as_deref();
     let hardware = identity.map(|value| value.hardware);
+    let continuous = decision.original.continuous;
 
     // Two rows (vertical/horizontal) whenever the event carries a nonzero
     // delta on that axis - mirrors the handoff's per-axis rows exactly.
@@ -395,11 +397,13 @@ fn record_debug_event(
 
         debug_log::push(debug_log::DebugEvent {
             timestamp_ms,
+            monotonic_us,
             device_kind,
             device_name: device_name.clone(),
             hardware,
             source_pid: decision.original.source_pid,
             synthetic: decision.original.synthetic,
+            continuous,
             axis,
             raw_delta: raw,
             output_delta: out,
@@ -435,7 +439,14 @@ fn decision_reason(
         return debug_log::DecisionReason::RawInputGuard;
     }
     if axis_reversed {
-        return debug_log::DecisionReason::Reversed;
+        let has_reverse_rule = identity
+            .and_then(|value| config.matching_device_rule(value))
+            .is_some_and(|rule| rule.reverse);
+        return if has_reverse_rule {
+            debug_log::DecisionReason::DeviceRuleReversed
+        } else {
+            debug_log::DecisionReason::Reversed
+        };
     }
 
     if !config.should_reverse(device_kind, identity) {
@@ -544,6 +555,34 @@ mod debug_log_decision_tests {
         );
 
         assert_eq!(reason, debug_log::DecisionReason::DeviceRuleDisabled);
+    }
+
+    #[test]
+    fn explicit_reverse_rule_marks_identity_context_for_trace_replay() {
+        use crate::config::DeviceRule;
+        use crate::device::HardwareId;
+
+        let identity = DeviceIdentity::hardware_only(HardwareId {
+            vendor_id: 0x1234,
+            product_id: 0x5678,
+        });
+        let config = config_with(|c| {
+            c.reverse_mouse = false;
+            c.device_rules
+                .push(DeviceRule::for_hardware(identity.hardware, None, true));
+        });
+
+        let reason = decision_reason(
+            &config,
+            DeviceKind::Mouse,
+            Some(&identity),
+            false,
+            0,
+            false,
+            true,
+        );
+
+        assert_eq!(reason, debug_log::DecisionReason::DeviceRuleReversed);
     }
 
     #[test]

@@ -46,6 +46,9 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Hide window, launch app again: one icon and focused existing window |  |  |  |  |
 |  |  | Menu, device submenu, Option-click console |  |  |  |  |
 |  |  | Debug filter/clear; Save Panel cancel/save/overwrite; Reveal in Finder |  |  |  |  |
+|  |  | Debug Export menu: privacy trace and detailed CSV remain distinct |  |  |  |  |
+|  |  | Privacy trace contains no wall time, PID, HID identity, app or window data | N/A | N/A |  |  |
+|  |  | `trace-lab` replay, constant baseline and clutch threshold on exported trace | N/A | N/A |  |  |
 |  |  | Finder and System Settings app icon |  |  |  |  |
 |  |  | Developer ID authority, hardened runtime, and secure timestamp | N/A | N/A |  |  |
 |  |  | Notary result is Accepted and JSON audit log is reviewed | N/A | N/A |  |  |

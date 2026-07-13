@@ -1,7 +1,11 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use auto_reverse::device::{DeviceIdentity, DeviceKind, HardwareId};
 use auto_reverse::error::{AppError, AppResult};
+use auto_reverse::scroll_lab::{
+    DEFAULT_BASELINE_GAIN, DEFAULT_CLUTCH_GAP_US, LabOptions, MAX_BASELINE_GAIN, MAX_CLUTCH_GAP_US,
+};
 
 pub const BOOL_HELP_VALUES: &str = "true|false|yes|no|1|0";
 
@@ -26,6 +30,7 @@ pub enum Command {
     ConfigPath,
     ShowConfig,
     Simulate(SimulateOptions),
+    TraceLab(TraceLabOptions),
     Devices,
     Ui,
     Help,
@@ -68,6 +73,12 @@ pub struct SimulateOptions {
     pub identity: Option<DeviceIdentity>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceLabOptions {
+    pub trace_path: PathBuf,
+    pub lab: LabOptions,
+}
+
 impl Default for SimulateOptions {
     fn default() -> Self {
         Self {
@@ -100,6 +111,7 @@ pub fn parse_args(args: &[String]) -> AppResult<Command> {
         Some("config-path") => Ok(Command::ConfigPath),
         Some("show-config") => Ok(Command::ShowConfig),
         Some("simulate") => parse_simulate(&args[1..]).map(Command::Simulate),
+        Some("trace-lab") => parse_trace_lab(&args[1..]),
         Some("devices") => Ok(Command::Devices),
         Some("ui") => Ok(Command::Ui),
         Some("help" | "--help" | "-h") => Ok(Command::Help),
@@ -107,6 +119,64 @@ pub fn parse_args(args: &[String]) -> AppResult<Command> {
             "unknown command `{command}`; run `auto-reverse help`"
         ))),
     }
+}
+
+fn parse_trace_lab(args: &[String]) -> AppResult<Command> {
+    let mut trace_path = None;
+    let mut baseline_gain = DEFAULT_BASELINE_GAIN;
+    let mut clutch_gap_us = DEFAULT_CLUTCH_GAP_US;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--baseline-gain" => {
+                index += 1;
+                baseline_gain = parse_u32(args.get(index), "--baseline-gain")?;
+                if !(1..=MAX_BASELINE_GAIN).contains(&baseline_gain) {
+                    return Err(AppError::Usage(format!(
+                        "--baseline-gain must be between 1 and {MAX_BASELINE_GAIN}"
+                    )));
+                }
+            }
+            "--clutch-gap-ms" => {
+                index += 1;
+                let milliseconds = parse_u64(args.get(index), "--clutch-gap-ms")?;
+                clutch_gap_us = milliseconds
+                    .checked_mul(1_000)
+                    .ok_or_else(|| AppError::Usage("--clutch-gap-ms is too large".to_string()))?;
+                if !(1..=MAX_CLUTCH_GAP_US).contains(&clutch_gap_us) {
+                    return Err(AppError::Usage(format!(
+                        "--clutch-gap-ms must be between 1 and {}",
+                        MAX_CLUTCH_GAP_US / 1_000
+                    )));
+                }
+            }
+            "--help" | "-h" => return Ok(Command::Help),
+            flag if flag.starts_with('-') => {
+                return Err(AppError::Usage(format!(
+                    "unknown trace-lab flag `{flag}`; run `auto-reverse help`"
+                )));
+            }
+            path if trace_path.is_none() => trace_path = Some(PathBuf::from(path)),
+            path => {
+                return Err(AppError::Usage(format!(
+                    "trace-lab accepts one trace path; unexpected `{path}`"
+                )));
+            }
+        }
+        index += 1;
+    }
+
+    let trace_path = trace_path.ok_or_else(|| {
+        AppError::Usage("trace-lab needs a path to a privacy trace TOML file".to_string())
+    })?;
+    Ok(Command::TraceLab(TraceLabOptions {
+        trace_path,
+        lab: LabOptions {
+            baseline_gain,
+            clutch_gap_us,
+        },
+    }))
 }
 
 fn parse_doctor(args: &[String]) -> AppResult<Command> {
@@ -248,6 +318,13 @@ fn parse_i64(value: Option<&String>, flag: &str) -> AppResult<i64> {
         .ok_or_else(|| AppError::Usage(format!("{flag} needs a value")))?
         .parse()
         .map_err(|_| AppError::Usage(format!("{flag} must be an integer")))
+}
+
+fn parse_u64(value: Option<&String>, flag: &str) -> AppResult<u64> {
+    value
+        .ok_or_else(|| AppError::Usage(format!("{flag} needs a value")))?
+        .parse()
+        .map_err(|_| AppError::Usage(format!("{flag} must be a non-negative integer")))
 }
 
 /// Accepts both decimal and 0x-prefixed hex, since `devices` prints IDs in
@@ -421,6 +498,53 @@ mod tests {
         assert!(parse_args(&strings(&["simulate", "--vendor-id", "0x046d"])).is_err());
         assert!(parse_args(&strings(&["simulate", "--product-id", "0xc52b"])).is_err());
         assert!(parse_args(&strings(&["simulate", "--serial-number", "mouse-a"])).is_err());
+    }
+
+    #[test]
+    fn trace_lab_parses_path_baseline_and_clutch_gap() {
+        let command = parse_args(&strings(&[
+            "trace-lab",
+            "/tmp/scroll-trace.toml",
+            "--baseline-gain",
+            "2",
+            "--clutch-gap-ms",
+            "250",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            command,
+            Command::TraceLab(TraceLabOptions {
+                trace_path: PathBuf::from("/tmp/scroll-trace.toml"),
+                lab: LabOptions {
+                    baseline_gain: 2,
+                    clutch_gap_us: 250_000,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn trace_lab_rejects_missing_path_and_unbounded_options() {
+        assert!(parse_args(&strings(&["trace-lab"])).is_err());
+        assert!(
+            parse_args(&strings(&[
+                "trace-lab",
+                "trace.toml",
+                "--baseline-gain",
+                "0",
+            ]))
+            .is_err()
+        );
+        assert!(
+            parse_args(&strings(&[
+                "trace-lab",
+                "trace.toml",
+                "--clutch-gap-ms",
+                "0",
+            ]))
+            .is_err()
+        );
     }
 
     #[test]

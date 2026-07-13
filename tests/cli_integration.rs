@@ -6,6 +6,9 @@ use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use auto_reverse::config::AppConfig;
+use auto_reverse::device::DeviceKind;
+use auto_reverse::diagnostics::{Axis, DecisionReason};
+use auto_reverse::scroll_trace::{ScrollTrace, TraceSample};
 
 struct CliSandbox {
     home: PathBuf,
@@ -160,6 +163,62 @@ fn concurrent_cli_mutations_preserve_config_and_stay_in_home() {
     assert!(status.contains("\"configured_for_current_exe\": true"));
     assert!(status.contains("\"config_start_at_login\": true"));
     assert!(status.contains("\"in_sync\": true"));
+}
+
+#[test]
+fn trace_lab_replays_a_bounded_trace_without_creating_config() {
+    let sandbox = CliSandbox::new("trace-lab");
+    let trace_path = sandbox.home.join("scroll-trace.toml");
+    let trace = ScrollTrace::new(vec![
+        TraceSample {
+            timestamp_us: 0,
+            device_kind: DeviceKind::Mouse,
+            continuous: false,
+            axis: Axis::Vertical,
+            input_delta: 1,
+            observed_output_delta: -3,
+            decision_reason: DecisionReason::Reversed,
+        },
+        TraceSample {
+            timestamp_us: 10_000,
+            device_kind: DeviceKind::Mouse,
+            continuous: false,
+            axis: Axis::Vertical,
+            input_delta: -4,
+            observed_output_delta: 4,
+            decision_reason: DecisionReason::Reversed,
+        },
+        TraceSample {
+            timestamp_us: 300_000,
+            device_kind: DeviceKind::Mouse,
+            continuous: false,
+            axis: Axis::Vertical,
+            input_delta: -1,
+            observed_output_delta: 3,
+            decision_reason: DecisionReason::Reversed,
+        },
+    ])
+    .unwrap();
+    fs::write(&trace_path, trace.to_toml().unwrap()).unwrap();
+    let trace_path = trace_path.to_string_lossy().to_string();
+
+    let output = sandbox.run(&[
+        "trace-lab",
+        &trace_path,
+        "--baseline-gain",
+        "2",
+        "--clutch-gap-ms",
+        "150",
+    ]);
+    let stdout = stdout(&output);
+
+    assert!(stdout.contains("samples: 3 (discrete=3, continuous=0)"));
+    assert!(stdout.contains("duration: 300000 us"));
+    assert!(stdout.contains("clutch sessions: 2"));
+    assert!(stdout.contains("direction changes: 1"));
+    assert!(stdout.contains("replay matches observed: 3/3 (100.0%)"));
+    assert!(stdout.contains("constant-gain baseline: 2x"));
+    assert!(!sandbox.default_config_path().exists());
 }
 
 static NEXT_SANDBOX_ID: AtomicU64 = AtomicU64::new(0);

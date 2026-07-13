@@ -2,6 +2,8 @@ use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::scroll_trace::TraceError;
+
 pub type AppResult<T> = Result<T, AppError>;
 
 #[derive(Debug)]
@@ -18,6 +20,10 @@ pub enum AppError {
     ConfigSerialize(toml::ser::Error),
     ConfigChanged {
         path: PathBuf,
+    },
+    Trace {
+        path: PathBuf,
+        source: Box<TraceError>,
     },
     InvalidConfig(String),
     Platform(String),
@@ -55,6 +61,9 @@ impl fmt::Display for AppError {
                 "config `{}` changed in another process; reload it before saving again",
                 path.display()
             ),
+            Self::Trace { path, source } => {
+                write!(f, "invalid scroll trace `{}`: {source}", path.display())
+            }
             Self::InvalidConfig(message) => write!(f, "invalid config: {message}"),
             Self::Platform(message) => write!(f, "platform error: {message}"),
             Self::Usage(message) => write!(f, "{message}"),
@@ -68,6 +77,7 @@ impl Error for AppError {
             Self::Io { source, .. } => Some(source),
             Self::ConfigParse { source, .. } => Some(source),
             Self::ConfigSerialize(source) => Some(source),
+            Self::Trace { source, .. } => Some(source.as_ref()),
             Self::ConfigChanged { .. }
             | Self::InvalidConfig(_)
             | Self::Platform(_)

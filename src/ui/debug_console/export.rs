@@ -1,4 +1,4 @@
-//! Debug-event CSV export workflow.
+//! Debug-event detailed CSV and privacy trace export workflows.
 //!
 //! Presentation stays in the parent module. This module owns destination
 //! selection, CSV serialization, atomic replacement, the structured success
@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::config::ConfigStore;
 use crate::platform::macos::{debug_log, save_panel};
+use crate::scroll_trace::{ScrollTrace, TraceSample};
 
 #[derive(Clone)]
 pub(super) struct Receipt {
@@ -47,7 +48,7 @@ impl Receipt {
     }
 }
 
-pub(super) fn run(
+pub(super) fn run_csv(
     events: &[debug_log::DebugEvent],
     previous: Option<&Receipt>,
 ) -> Result<Option<Receipt>, String> {
@@ -62,6 +63,29 @@ pub(super) fn run(
     };
     let csv = events_to_csv(events);
     write_export(&file_path, &csv)?;
+
+    Ok(Some(Receipt {
+        path: file_path,
+        event_count: events.len(),
+    }))
+}
+
+pub(super) fn run_trace(
+    events: &[debug_log::DebugEvent],
+    previous: Option<&Receipt>,
+) -> Result<Option<Receipt>, String> {
+    let trace = events_to_trace(events)?;
+    let toml = trace.to_toml().map_err(|error| error.to_string())?;
+    let initial_directory = export_directory(previous);
+    let now_ms = debug_log::now_millis();
+    let Some(file_path) = save_panel::choose_toml_path(
+        &format!("scroll-trace-{now_ms}.toml"),
+        initial_directory.as_deref(),
+    )?
+    else {
+        return Ok(None);
+    };
+    write_export(&file_path, &toml)?;
 
     Ok(Some(Receipt {
         path: file_path,
@@ -152,6 +176,26 @@ fn events_to_csv(events: &[debug_log::DebugEvent]) -> String {
     csv
 }
 
+fn events_to_trace(events: &[debug_log::DebugEvent]) -> Result<ScrollTrace, String> {
+    let origin_us = events
+        .first()
+        .map(|event| event.monotonic_us)
+        .ok_or_else(|| "there are no events to export as a trace".to_string())?;
+    let samples = events
+        .iter()
+        .map(|event| TraceSample {
+            timestamp_us: event.monotonic_us.saturating_sub(origin_us),
+            device_kind: event.device_kind,
+            continuous: event.continuous,
+            axis: event.axis,
+            input_delta: event.raw_delta,
+            observed_output_delta: event.output_delta,
+            decision_reason: event.reason,
+        })
+        .collect();
+    ScrollTrace::new(samples).map_err(|error| error.to_string())
+}
+
 fn csv_escape(value: &str) -> String {
     if value.contains(',') || value.contains('"') || value.contains(['\n', '\r']) {
         format!("\"{}\"", value.replace('"', "\"\""))
@@ -185,6 +229,7 @@ mod tests {
     fn csv_export_contains_raw_structured_source_and_reason_fields() {
         let event = debug_log::DebugEvent {
             timestamp_ms: 42,
+            monotonic_us: 42_000,
             device_kind: DeviceKind::Mouse,
             device_name: Some(Arc::from("MX, Master\n3S")),
             hardware: Some(HardwareId {
@@ -193,6 +238,7 @@ mod tests {
             }),
             source_pid: 123,
             synthetic: true,
+            continuous: false,
             axis: debug_log::Axis::Vertical,
             raw_delta: 1,
             output_delta: -1,
@@ -207,6 +253,66 @@ mod tests {
         assert!(csv.contains("Mouse wheel · MX, Master 3S"));
         assert!(csv.contains("\"MX, Master\n3S\""));
         assert!(csv.contains("0x046d,0xb034,123,true,vertical,1,-1,ignored,synthetic_event"));
+    }
+
+    #[test]
+    fn privacy_trace_uses_relative_time_and_strips_source_identity() {
+        let events = [
+            debug_log::DebugEvent {
+                timestamp_ms: 1_000_000,
+                monotonic_us: 80_000,
+                device_kind: DeviceKind::Mouse,
+                device_name: Some(Arc::from("Private Mouse Name")),
+                hardware: Some(HardwareId {
+                    vendor_id: 0x046d,
+                    product_id: 0xb034,
+                }),
+                source_pid: 123,
+                synthetic: false,
+                continuous: false,
+                axis: debug_log::Axis::Vertical,
+                raw_delta: 1,
+                output_delta: -3,
+                reason: debug_log::DecisionReason::Reversed,
+            },
+            debug_log::DebugEvent {
+                timestamp_ms: 1_000_008,
+                monotonic_us: 88_000,
+                axis: debug_log::Axis::Horizontal,
+                ..debug_log::DebugEvent {
+                    timestamp_ms: 1_000_000,
+                    monotonic_us: 80_000,
+                    device_kind: DeviceKind::Mouse,
+                    device_name: Some(Arc::from("Private Mouse Name")),
+                    hardware: Some(HardwareId {
+                        vendor_id: 0x046d,
+                        product_id: 0xb034,
+                    }),
+                    source_pid: 123,
+                    synthetic: false,
+                    continuous: false,
+                    axis: debug_log::Axis::Vertical,
+                    raw_delta: 1,
+                    output_delta: -3,
+                    reason: debug_log::DecisionReason::Reversed,
+                }
+            },
+        ];
+
+        let trace = events_to_trace(&events).unwrap();
+        let serialized = trace.to_toml().unwrap();
+
+        assert_eq!(trace.samples()[0].timestamp_us, 0);
+        assert_eq!(trace.samples()[1].timestamp_us, 8_000);
+        for private_value in [
+            "Private Mouse Name",
+            "source_pid",
+            "vendor_id",
+            "product_id",
+            "1000000",
+        ] {
+            assert!(!serialized.contains(private_value));
+        }
     }
 
     #[test]

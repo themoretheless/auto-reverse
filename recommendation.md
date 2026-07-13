@@ -1287,11 +1287,11 @@ N400. [Done] Native Save Panel, structured receipt, atomic export и Reveal in F
 
 ### Measurement and evidence
 
-R01. [Problem] Нет воспроизводимого scroll trace, поэтому спор о "плавности" пока опирается на субъективное ощущение.
-R02. [Improve] Добавить bounded local trace только из timestamp, axis deltas, device class и decision reason, без текста и app title.
-R03. [Improve] Добавить pure trace replay, чтобы один hardware session можно было прогнать через разные policies детерминированно.
-R04. [Research] Построить transfer-function lab с изменением magnitude, interval, direction, duration и clutch gap.
-R05. [Improve] Всегда сравнивать новый алгоритм с constant-gain baseline, а не только с предыдущей experimental curve.
+R01. [Implemented] Debug Console экспортирует воспроизводимый privacy trace из существующего bounded ring buffer; ручной Save Panel QA остается.
+R02. [Done] Schema v1 хранит relative monotonic timestamp, axis input/output, device class, continuous flag и stable decision reason; PID, app/title и device identity запрещены exact parser contract.
+R03. [Done] `scroll_trace` детерминированно прогоняет один trace через pure policy и маркирует решения, требующие намеренно удаленного context.
+R04. [Done] `scroll_lab` и CLI `trace-lab` измеряют magnitude, interval, direction changes, duration, clutch sessions и per-axis distances.
+R05. [Done] Каждый lab report всегда содержит configurable constant-gain baseline рядом с replayed и observed output.
 R06. [Research] Добавить ScrollTest-style harness с movement time, switchbacks и maximum overshoot.
 R07. [Research] Разделить benchmark на известную и неизвестную позицию цели: у этих задач разная стратегия пользователя.
 R08. [Research] Прогонять несколько scroll distances, viewport heights и target tolerances вместо одного demo case.

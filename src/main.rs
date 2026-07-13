@@ -12,6 +12,8 @@ mod cli;
 use std::env;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 use std::process;
 use std::sync::{Arc, RwLock};
@@ -24,7 +26,11 @@ use auto_reverse::platform::macos::{event_tap, hid, permissions, startup};
 #[cfg(feature = "gui")]
 use auto_reverse::platform::macos::{login_item, login_item::LoginItemStatus};
 use auto_reverse::scroll;
-use cli::{Command, DoctorOptions, OutputFormat, SimulateOptions, StartupStatusOptions};
+use auto_reverse::scroll_lab::{self, AxisMetrics, Distribution};
+use auto_reverse::scroll_trace::{MAX_TRACE_BYTES, ScrollTrace, TraceError};
+use cli::{
+    Command, DoctorOptions, OutputFormat, SimulateOptions, StartupStatusOptions, TraceLabOptions,
+};
 
 fn main() {
     if let Err(error) = run() {
@@ -57,6 +63,7 @@ fn run() -> AppResult<()> {
         }
         Command::ShowConfig => show_config(),
         Command::Simulate(options) => simulate(options),
+        Command::TraceLab(options) => trace_lab(options),
         Command::Devices => list_devices(),
         Command::Ui => launch_ui(),
         Command::Help => {
@@ -605,6 +612,95 @@ fn simulate(options: SimulateOptions) -> AppResult<()> {
     Ok(())
 }
 
+fn trace_lab(options: TraceLabOptions) -> AppResult<()> {
+    let trace = load_trace(&options.trace_path)?;
+    let store = ConfigStore::default();
+    let (config, config_state) = load_config_for_diagnostics(&store, false)?;
+    let report = scroll_lab::analyze(&trace, &config, options.lab)
+        .map_err(|error| AppError::Usage(format!("trace-lab: {error}")))?;
+
+    println!("Auto Reverse trace lab");
+    println!("trace: {}", options.trace_path.display());
+    println!("schema version: {}", report.schema_version);
+    println!("config: {}", config_state.summary(store.path()));
+    println!(
+        "samples: {} (discrete={}, continuous={})",
+        report.sample_count, report.discrete_sample_count, report.continuous_sample_count
+    );
+    println!("duration: {} us", report.duration_us);
+    println!(
+        "clutch sessions: {} (gap > {} us)",
+        report.session_count, report.clutch_gap_us
+    );
+    println!("direction changes: {}", report.direction_change_count);
+    print_distribution("input magnitude", Some(report.magnitude));
+    print_distribution("event interval", report.intervals);
+    println!(
+        "replay matches observed: {}/{} ({:.1}%)",
+        report.replay_match_count,
+        report.sample_count,
+        report.replay_match_percent()
+    );
+    println!(
+        "samples requiring omitted identity/runtime context: {}",
+        report.omitted_context_count
+    );
+    println!(
+        "constant-gain baseline: {}x (discrete reversed axes only)",
+        report.baseline_gain
+    );
+    print_axis_metrics("vertical", &report.vertical);
+    print_axis_metrics("horizontal", &report.horizontal);
+    Ok(())
+}
+
+fn load_trace(path: &Path) -> AppResult<ScrollTrace> {
+    let file = File::open(path).map_err(|error| AppError::io("open trace", path, error))?;
+    let mut contents = String::new();
+    file.take((MAX_TRACE_BYTES + 1) as u64)
+        .read_to_string(&mut contents)
+        .map_err(|error| AppError::io("read trace", path, error))?;
+    if contents.len() > MAX_TRACE_BYTES {
+        return Err(AppError::Trace {
+            path: path.to_path_buf(),
+            source: Box::new(TraceError::TooManyBytes {
+                actual: contents.len(),
+                maximum: MAX_TRACE_BYTES,
+            }),
+        });
+    }
+    ScrollTrace::from_toml(&contents).map_err(|source| AppError::Trace {
+        path: path.to_path_buf(),
+        source: Box::new(source),
+    })
+}
+
+fn print_distribution(label: &str, distribution: Option<Distribution>) {
+    match distribution {
+        Some(distribution) => println!(
+            "{label}: min={} p50={} p95={} max={}",
+            distribution.min, distribution.p50, distribution.p95, distribution.max
+        ),
+        None => println!("{label}: unavailable (one event timestamp)"),
+    }
+}
+
+fn print_axis_metrics(label: &str, metrics: &AxisMetrics) {
+    println!(
+        "{label}: samples={} input[signed={}, abs={}] observed[signed={}, abs={}] \
+         replay[signed={}, abs={}] baseline[signed={}, abs={}]",
+        metrics.sample_count,
+        metrics.input_signed_distance,
+        metrics.input_absolute_distance,
+        metrics.observed_signed_distance,
+        metrics.observed_absolute_distance,
+        metrics.replayed_signed_distance,
+        metrics.replayed_absolute_distance,
+        metrics.baseline_signed_distance,
+        metrics.baseline_absolute_distance,
+    );
+}
+
 fn config_summary(config: &AppConfig) -> String {
     // Field labels intentionally match AppConfig's real field names exactly
     // (not shortened) so this line can be grepped/cross-referenced against
@@ -656,6 +752,8 @@ fn print_help() {
            show-config                 Print the current config as TOML\n\
            simulate [flags]            Debugging tool: run one synthetic scroll event\n\
                                        through the rules without touching real hardware\n\
+           trace-lab <trace.toml>       Replay a privacy trace and compare transfer metrics\n\
+             [--baseline-gain 1..100] [--clutch-gap-ms 1..60000]\n\
          \n\
          Simulate flags:\n\
            --device mouse|trackpad|magic-mouse|unknown\n\

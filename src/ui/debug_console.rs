@@ -2,7 +2,7 @@
 //!
 //! Keeping this surface separate from `SettingsApp` makes the main UI
 //! coordinator responsible only for opening/closing the viewport. Filtering
-//! and table rendering stay here; `export` owns CSV/file workflow.
+//! and table rendering stay here; `export` owns CSV/trace file workflows.
 
 use eframe::egui::{self, Color32, RichText};
 
@@ -68,22 +68,7 @@ fn contents(ui: &mut egui::Ui, state: &mut State) {
             if styled_button(ui, "Clear", egui::vec2(10.0, 5.0)).clicked() {
                 debug_log::clear();
             }
-            if styled_button(ui, "Export…", egui::vec2(10.0, 5.0)).clicked() {
-                match export::run(
-                    &filtered_events(&all_events, state),
-                    state.last_export.as_ref(),
-                ) {
-                    Ok(Some(receipt)) => {
-                        state.last_export = Some(receipt);
-                        state.export_error = None;
-                        state.reveal_error = None;
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        state.export_error = Some(error);
-                    }
-                }
-            }
+            export_menu(ui, &filtered_events(&all_events, state), state);
             ui.add_space(6.0);
             status_dot(ui, Color32::from_rgb(0x34, 0xA8, 0x53), 3.0, 8.0);
             ui.label(
@@ -163,6 +148,39 @@ fn contents(ui: &mut egui::Ui, state: &mut State) {
         .small()
         .weak(),
     );
+}
+
+fn export_menu(ui: &mut egui::Ui, events: &[debug_log::DebugEvent], state: &mut State) {
+    ui.menu_button("Export…", |ui| {
+        if ui
+            .button("Privacy trace…")
+            .on_hover_text("Replayable TOML without device identity, process IDs, or wall time")
+            .clicked()
+        {
+            ui.close();
+            apply_export_result(export::run_trace(events, state.last_export.as_ref()), state);
+        }
+        if ui
+            .button("Detailed CSV…")
+            .on_hover_text("Support export with the visible diagnostic source fields")
+            .clicked()
+        {
+            ui.close();
+            apply_export_result(export::run_csv(events, state.last_export.as_ref()), state);
+        }
+    });
+}
+
+fn apply_export_result(result: Result<Option<export::Receipt>, String>, state: &mut State) {
+    match result {
+        Ok(Some(receipt)) => {
+            state.last_export = Some(receipt);
+            state.export_error = None;
+            state.reveal_error = None;
+        }
+        Ok(None) => {}
+        Err(error) => state.export_error = Some(error),
+    }
 }
 
 fn filter_strip(ui: &mut egui::Ui, selected: &mut Filter) {
