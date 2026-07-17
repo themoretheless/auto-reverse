@@ -25,6 +25,7 @@ pub enum Command {
     Toggle,
     EnableStartup,
     DisableStartup,
+    RollbackDynamics,
     PrepareUninstall,
     StartupStatus(StartupStatusOptions),
     ConfigPath,
@@ -104,6 +105,10 @@ pub fn parse_args(args: &[String]) -> AppResult<Command> {
         Some("toggle") => Ok(Command::Toggle),
         Some("enable-startup") => Ok(Command::EnableStartup),
         Some("disable-startup") => Ok(Command::DisableStartup),
+        Some("rollback-dynamics") if args.len() == 1 => Ok(Command::RollbackDynamics),
+        Some("rollback-dynamics") => Err(AppError::Usage(
+            "rollback-dynamics does not accept flags".to_string(),
+        )),
         Some("prepare-uninstall") if args.len() == 1 => Ok(Command::PrepareUninstall),
         Some("prepare-uninstall") => Err(AppError::Usage(
             "prepare-uninstall does not accept flags".to_string(),
@@ -569,6 +574,15 @@ mod tests {
             Command::PrepareUninstall
         );
         assert!(parse_args(&strings(&["prepare-uninstall", "--force"])).is_err());
+    }
+
+    #[test]
+    fn dynamics_rollback_is_an_explicit_command() {
+        assert_eq!(
+            parse_args(&strings(&["rollback-dynamics"])).unwrap(),
+            Command::RollbackDynamics
+        );
+        assert!(parse_args(&strings(&["rollback-dynamics", "--all"])).is_err());
     }
 
     #[test]

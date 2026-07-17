@@ -1355,8 +1355,8 @@ R53. [Done] Config загружается до TCC preparation: disabled utility
 
 R54. [Done] `AppEventObserver`, NSWorkspace wake и IOHID match/removal generation ведут cached permission/device state; pure `RefreshPolicy` coalesce-ит notifications и использует один tolerant 30-second backstop без catch-up loop. Tray читает тот же cached atomic state, а не опрашивает TCC каждый UI tick.
 R55. [Done] `CGEventTapIsEnabled` читается под lifetime-guard зарегистрированного CFMachPort; pure `TapWatchdog` проверяет раз в секунду, требует два unhealthy samples, различает rearm/restart, ограничивает episode тремя attempts и сбрасывает бюджет только после трёх healthy samples или явного user retry. Exhausted state виден в UI/diagnostics и не создаёт restart loop.
-R56. [Improve] Записывать recovery reason и attempt count для wake, timeout-disable и permission loss отдельно.
-R57. [Improve] Добавить migration fixtures на каждый старый/ошибочный config key и проверять сохранение unknown fields.
-R58. [Improve] Добавить property/fuzz tests для trace parser, config migration и dynamics invariants.
-R59. [Improve] Вести regression matrix для Safari zoom, Launchpad, Catalyst/iOS apps, Universal Control, iPhone Mirroring и remote desktop.
-R60. [Improve] Experimental dynamics требует runtime kill switch, config rollback и release acceptance threshold до включения по умолчанию.
+R56. [Done] Pure 64-record `RecoveryAudit` и process-local macOS adapter отдельно считают wake, exact tap timeout, tap-disabled-by-input, watchdog и permission-loss attempts; Debug Console/summary показывают только typed reason/action/count без PID, identity или wall time.
+R57. [Done] Historical v0 fixtures совокупно покрывают каждый поддерживаемый root/device-rule key, minimal legacy shape и каталог ошибочных keys; unknown fields перечисляются и отклоняются до preview/save, поэтому импорт не уничтожает исходный документ молча.
+R58. [Done] Пять deterministic property suites по 512 seeds проверяют произвольный trace/config input без panic, successful round-trip, v0/current migration и signed two-axis distance/idle invariants для всех presets.
+R59. [Done] `QA.md` содержит стабильные PR-01..PR-06 для Safari zoom, Launchpad, Catalyst/iOS apps, Universal Control, iPhone Mirroring и remote desktop; smoke проверяет ID/scenario пары, а production требует build, `Pass` и evidence/tester во всех строках.
+R60. [Done] Dynamics остаётся default-off за fail-closed `AUTO_REVERSE_DISABLE_DYNAMICS`, source/manifest parity и thresholds 6 classes/30 sessions/5% p95/8 ms tail/0 fail-open; `rollback-dynamics` атомарно удаляет только global/per-device smooth presets.

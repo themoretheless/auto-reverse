@@ -103,6 +103,9 @@ Implemented:
 - GUI sleep/wake recovery plus a public `CGEventTapIsEnabled` watchdog: two
   unhealthy one-second samples are required before rearm/restart, automatic
   recovery is capped at three attempts, and exhaustion is visible;
+- a 64-record process-local recovery audit keeps wake, exact tap timeout,
+  tap-disabled-by-input, watchdog, and permission-loss attempts independent;
+  Debug Console and aggregate diagnostics expose only typed reason/action/counts;
 - separate confirmed `Reset this device`, `Reset dynamics`, and `Restore all
   defaults` scopes; full restore unregisters the GUI login item only after the
   default config saves successfully;
@@ -115,6 +118,15 @@ Implemented:
 - separated CLI parser in `src/cli.rs`;
 - black-box CLI integration tests with isolated `HOME`, explicit config paths,
   no-create diagnostics, startup plist paths, and concurrent mutations;
+- historical config fixtures cover every supported v0 root/device-rule key and
+  a catalog of rejected typo keys; five deterministic 512-seed property suites
+  exercise trace/config parsers, migration round-trips, and dynamics invariants;
+- an enforced PR-01..PR-06 release matrix covers Safari zoom, Launchpad,
+  Catalyst/iOS apps, Universal Control, iPhone Mirroring, and remote desktop;
+  production release requires build, `Pass`, and evidence in every row;
+- dynamics stays fail-closed behind a runtime kill switch, source/manifest
+  parity and measurable release thresholds; `rollback-dynamics` atomically
+  clears only smooth presets without changing directions, aliases, or step size;
 - macOS CI plus roadmap, design, QA, privacy, security, and contribution docs.
 
 Still missing:
@@ -127,9 +139,10 @@ Still missing:
   latency snapshot;
 - platform timer/posting adapter, runtime opt-in, cancellation hooks, and
   physical acceptance for the experimental dynamics model;
-- automatic on-load config migrations with unknown-field preservation fixtures,
-  typed recovery-reason audit, property/fuzz suites, the platform regression
-  matrix, and a release-gated dynamics kill switch from R56-R60.
+- automatic in-place config migration remains intentionally separate from the
+  reviewed importer;
+- recorded manual results for the six platform regression rows on the exact
+  stapled release candidate.
 
 ## Commands
 
@@ -157,6 +170,7 @@ cargo run -- enable-startup
 cargo run -- disable-startup
 cargo run -- startup-status
 cargo run -- startup-status --json
+cargo run -- rollback-dynamics
 cargo run -- run
 cargo test
 cargo test --test cli_integration
@@ -489,6 +503,8 @@ src/settings_search.rs               fuzzy settings/diagnostics navigation
 src/preset_preview.rs                temporary preset confirm/expiry policy
 src/refresh_policy.rs                notification coalescing + timer backstop
 src/tap_watchdog.rs                  bounded event-tap health/recovery policy
+src/recovery_audit.rs                bounded typed recovery reasons/attempts
+src/dynamics_gate.rs                 fail-closed runtime/release dynamics gate
 src/input.rs                         normalized ScrollEvent with optional shared identity
 src/runtime.rs                       lock-free process-local pause control
 src/scroll.rs                        pure reversal policy (no CoreGraphics)
@@ -522,6 +538,7 @@ src/platform/macos/activation.rs     second GUI launch -> existing-window focus 
 src/platform/macos/save_panel.rs     native config/diagnostic open-save panels + Finder reveal
 src/platform/macos/tap_metrics.rs    on-demand CGGetEventTapList interval snapshot
 src/platform/macos/debug_log.rs      structured decisions + local Debug Console ring buffer
+src/platform/macos/recovery_log.rs   process-local adapter to pure recovery audit
 src/platform/macos/quit_handler.rs   AppleEvent quit interception so only tray Quit exits
 src/platform/macos/login_item.rs     SMAppService.mainAppService() wrapper (gui feature only)
 src/platform/macos/tray.rs           rich native menu-bar tray icon/menu (gui feature only)
@@ -537,12 +554,17 @@ src/ui/debug_console.rs              Debug Console viewport/filter/table
 src/ui/debug_console/export.rs       detailed CSV/privacy trace + atomic receipt
 src/ui/scroll_benchmark.rs           interactive benchmark viewport + result CSV
 tests/cli_integration.rs             real binary in isolated HOME/config sandboxes
+tests/property_invariants.rs         five deterministic 512-seed property suites
+tests/fixtures/config/               historical and invalid-key config fixtures
 scripts/lib/app-bundle.sh            shared bundle identity + exact-process helpers
 scripts/build-app-bundle.sh          debug/release bundle construction
 scripts/check-app-bundle.sh          strict or identity-only bundle validation
 scripts/install-app-bundle.sh        staged atomic install/update with rollback
 scripts/uninstall-app-bundle.sh      startup cleanup + identity-checked removal
 scripts/check-install-workflow.sh    isolated install/update/uninstall smoke
+scripts/check-dynamics-release-gate.sh source/manifest/threshold parity gate
+scripts/check-regression-matrix.sh   stable PR-01..PR-06 QA structure gate
+packaging/dynamics-release-gate.toml exact-candidate acceptance manifest
 ```
 
 The macOS framework crates are target-specific dependencies. The lean build
@@ -562,7 +584,7 @@ behavior grows enough to justify that boundary.
 
 Keep CLI and pure logic solid:
 
-- extend reviewed import migration into automatic on-load fixtures;
+- keep reviewed v0/bad-key migration fixtures exhaustive and non-destructive;
 - add more simulation flags;
 - separate platform helpers from pure transform;
 - keep tests fast and deterministic.
@@ -635,9 +657,11 @@ The implementation order is intentionally conservative:
    outside the pure modules.
 5. Preset preview and reset scopes are pure and explicit. Permission/device
    refresh is notification-led, while a public-state watchdog adds hysteresis
-   and a finite recovery budget. The remaining R56-R60 work is audit/fixtures,
-   platform regression coverage, and release gating rather than another hidden
-   runtime retry path.
+   and a finite recovery budget.
+6. R56-R60 close the review loop with typed recovery audit, exhaustive config
+   fixtures, deterministic property suites, a stable platform regression
+   matrix, and a fail-closed dynamics release/rollback boundary. Physical rows
+   and live scheduler integration remain explicit release evidence, not claims.
 
 Trackpad and Magic Mouse continuous events are not smoothed again. Any future
 scheduler must still write only `DeltaAxis1/2`; private touch APIs, HID seizure,

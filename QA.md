@@ -89,10 +89,37 @@ Also verify high contrast, larger text, remote desktop with raw-input guard,
 Notification Center, shake-to-locate and other system gestures remain intact,
 and two simultaneously connected mice.
 
+## Platform interaction regression matrix
+
+These rows are release evidence, not assumptions. Run them on the exact
+stapled bundle and record the OS/app build plus a result; a blank result means
+untested. The stable ID/scenario pairs are checked by
+`scripts/check-regression-matrix.sh` so future edits cannot silently remove or
+swap one environment. Production additionally uses `--require-results`, which
+requires a build, `Pass`, and evidence/tester in every row.
+
+| ID | Scenario | Required observation | macOS / app build | Result | Evidence / tester |
+| --- | --- | --- | --- | --- | --- |
+| PR-01 | Safari zoom | Wheel scrolling follows the selected device/axis rule; pinch and page zoom complete without stuck momentum, duplicate deltas, or tap disable. |  |  |  |
+| PR-02 | Launchpad | Page navigation and open/close gestures remain usable; returning to an app leaves reversal and device classification unchanged. |  |  |  |
+| PR-03 | Catalyst / iOS app | A Catalyst or iOS-on-Mac scroll view follows the same explicit input policy as native apps; pinch, drag, and momentum do not gain a synthetic second pass. |  |  |  |
+| PR-04 | Universal Control | Local hardware remains attributable on this Mac; remote/unknown provenance fails open and never inherits the last local wheel identity. |  |  |  |
+| PR-05 | iPhone Mirroring | Mirrored gestures do not inherit a local per-device rule, do not re-enter through the `AUTORVRS` marker, and leave local scrolling healthy after disconnect. |  |  |  |
+| PR-06 | Remote desktop | With raw-input guard enabled, posted remote scroll passes through; disabling the guard is explicit, reversible, and does not create an event loop. |  |  |  |
+
 ## Experimental dynamics gate
 
 `scroll_dynamics` is not connected to live input yet. Before that changes, the
-pure suite now proves:
+pure suite and release gate now prove:
+
+- `AUTO_REVERSE_DISABLE_DYNAMICS` is a fail-closed runtime kill switch;
+- the current build resolves every non-Off saved preset to effective Off;
+- emergency config rollback clears only global/per-device smooth presets and
+  preserves direction, aliases, wheel step size, startup, and unrelated fields;
+- `scripts/check-dynamics-release-gate.sh` blocks default enablement unless the
+  manifest records all 6 physical classes, at least 30 completed sessions per
+  class, p95 movement-time regression no greater than 5%, scheduler tail no
+  greater than 8 ms, and zero fail-open violations;
 
 - Off is exact same-call pass-through;
 - every active preset produces immediate same-sign output;
@@ -125,3 +152,7 @@ Still required before live integration and then on all six physical classes:
 - the future platform timer/poster honors wake/sample validation and only
   writes marked `DeltaAxis1/2` events;
 - physical fail-open and TTL behavior pass under induced stalls.
+
+Record accepted evidence in `packaging/dynamics-release-gate.toml` only from
+the exact release candidate. Changing `enabled_by_default` alone is an
+intentional release failure.

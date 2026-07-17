@@ -1,0 +1,25 @@
+enabled = false
+reverse_vertical = false
+reverse_horizontal = true
+reverse_mouse = false
+reverse_trackpad = true
+reverse_magic_mouse = false
+reverse_unknown = true
+discrete_scroll_step_size = 7
+smooth_preset = "balanced"
+show_discrete_scroll_options = true
+start_at_login = true
+show_menu_bar_icon = false
+check_for_updates = true
+include_beta_updates = true
+reverse_only_raw_input = true
+
+[[device_rules]]
+vendor_id = 0x046d
+product_id = 0xc52b
+serial_number = "legacy-serial"
+name = "Legacy Mouse"
+alias = "Desk"
+reverse = true
+step_size = 5
+smooth_preset = "fast"

@@ -13,10 +13,11 @@ use crate::device_attribution::assess_wheel_attribution;
 use crate::device_classifier::ContinuousSourceHint;
 use crate::device_source::HidSourceClass;
 use crate::error::{AppError, AppResult};
+use crate::recovery_audit::{RecoveryAction, RecoveryReason};
 use crate::runtime::RuntimeControl;
 use crate::scroll::TransformDecision;
 
-use super::{daemon_lock, gesture, hid, scroll_events};
+use super::{daemon_lock, gesture, hid, recovery_log, scroll_events};
 
 #[cfg(feature = "gui")]
 use super::debug_log;
@@ -296,11 +297,11 @@ fn handle_event(
     event: &CGEvent,
 ) -> CallbackResult {
     match event_type {
-        CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
-            // CGEventTapEnable takes the CFMachPortRef returned by
-            // CGEventTapCreate. The callback proxy is a different opaque
-            // token and crashes here on pointer-authenticated macOS.
-            rearm_if_installed();
+        CGEventType::TapDisabledByTimeout => {
+            recover_disabled_tap(RecoveryReason::TapTimeout);
+        }
+        CGEventType::TapDisabledByUserInput => {
+            recover_disabled_tap(RecoveryReason::TapUserInput);
         }
         CGEventType::ScrollWheel => {
             let Some(config_lock) = CONFIG.get() else {
@@ -389,6 +390,18 @@ fn handle_event(
         _ => {}
     }
     CallbackResult::Keep
+}
+
+fn recover_disabled_tap(reason: RecoveryReason) {
+    // CGEventTapEnable takes the CFMachPortRef returned by CGEventTapCreate.
+    // The callback proxy is a different opaque token and crashes here on
+    // pointer-authenticated macOS.
+    let action = if rearm_if_installed() {
+        RecoveryAction::Rearmed
+    } else {
+        RecoveryAction::Failed
+    };
+    recovery_log::record_attempt(reason, action);
 }
 
 /// Builds a `debug_log::DebugEvent` from the same context

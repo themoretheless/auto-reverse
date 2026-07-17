@@ -1,0 +1,12 @@
+schema_version = 1
+enabled_by_default = false
+kill_switch_env = "AUTO_REVERSE_DISABLE_DYNAMICS"
+config_rollback = "smooth_only"
+
+# These are evidence values, not target values. Keep them at zero until the
+# exact release artifact completes the physical acceptance matrix.
+physical_classes = 0
+min_completed_sessions_per_class = 0
+p95_movement_regression_bps = 0
+worst_scheduler_tail_us = 0
+fail_open_violations = 0

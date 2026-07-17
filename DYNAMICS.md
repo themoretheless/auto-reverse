@@ -44,6 +44,13 @@ threshold, and physical-action cancellation are implemented in the pure model.
 Pure scheduler tagging, idle lifecycle, and fail-open behavior are implemented.
 Runtime opt-in and physical acceptance remain required before release enablement.
 
+The separate `dynamics_gate` owner makes that boundary executable. Current
+builds are default-off and resolve a saved non-Off preset to effective Off.
+`AUTO_REVERSE_DISABLE_DYNAMICS` is the one-way runtime kill switch; any value
+other than an explicit `0`/`false`/`off`/`no` engages it. Emergency config
+rollback clears only global and per-device smooth presets, preserving wheel
+step size and every unrelated profile field.
+
 ## Axis State
 
 Each scalar engine exposes a diagnostic snapshot:
@@ -142,6 +149,21 @@ The selected transfer is stored in `TrialResult` and CSV. No runtime config,
 settings control, event-tap path, or dynamics preset imports this hypothesis.
 Promoting it beyond the benchmark requires comparative physical evidence.
 
+## Release Acceptance
+
+`packaging/dynamics-release-gate.toml` cannot set `enabled_by_default = true`
+until all of these values are recorded from the exact release candidate:
+
+- all 6 physical classes represented;
+- at least 30 completed sessions per class;
+- p95 movement-time regression versus exact pass-through at or below 5%;
+- worst scheduler tail at or below 8 ms;
+- zero fail-open violations.
+
+`scripts/check-dynamics-release-gate.sh` validates the manifest, and the
+production release script calls it before building. The pure Rust gate repeats
+the same thresholds and remains fail-closed when evidence is missing.
+
 ## Latency Budget
 
 The pure `latency_budget` module defines separate engineering budgets:
@@ -189,6 +211,8 @@ overshoot, and event count.
 - `src/scroll_scheduler.rs`: fail-open orchestration and caller-driven polling.
 - `src/scroll_scheduler/schedule.rs`: wake ids, generation pairs, sample TTL,
   synthetic provenance, and stale-sample disposition.
+- `src/dynamics_gate.rs`: kill switch, release thresholds, effective preset,
+  and rollback-required decision.
 - `src/scroll_benchmark.rs`: physical class vocabulary and trial results.
 - `src/ui/debug_console.rs`: manual callback samples and status presentation.
 - `src/ui/scroll_benchmark.rs`: physical-class picker and CSV export.

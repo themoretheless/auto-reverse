@@ -90,6 +90,11 @@ if [[ "$dist_dir" != /* ]]; then
   dist_dir="$repo_root/$dist_dir"
 fi
 
+dynamics_gate_status="$("$script_dir/check-dynamics-release-gate.sh")"
+"$script_dir/check-regression-matrix.sh" >/dev/null
+dynamics_default="${dynamics_gate_status##*enabled_by_default=}"
+dynamics_default="${dynamics_default%)}"
+
 version="$(sed -nE 's/^version = "([^"]+)"/\1/p' "$repo_root/Cargo.toml" | head -n 1)"
 if [[ -z "$version" ]]; then
   echo "could not read package version from Cargo.toml" >&2
@@ -113,14 +118,17 @@ Auto Reverse production release plan
   Signing identity: $sign_identity
   Notary Keychain profile: $notary_profile
   Output: $final_archive
+  Dynamics gate: enabled_by_default=$dynamics_default
 
-1. Build release Mach-O and sign the app with Developer ID, hardened runtime,
+1. Verify the dynamics kill switch, rollback contract, acceptance thresholds,
+   and the required platform regression matrix.
+2. Build release Mach-O and sign the app with Developer ID, hardened runtime,
    least-privilege entitlements, and a secure timestamp.
-2. Strictly verify the signature before upload.
-3. Create a ditto ZIP and run notarytool submit --wait.
-4. Require Accepted status and download the notarization log.
-5. Run stapler staple + validate and Gatekeeper assessment.
-6. Rebuild the final ZIP from the stapled app and write its SHA-256.
+3. Strictly verify the signature before upload.
+4. Create a ditto ZIP and run notarytool submit --wait.
+5. Require Accepted status and download the notarization log.
+6. Run stapler staple + validate and Gatekeeper assessment.
+7. Rebuild the final ZIP from the stapled app and write its SHA-256.
 
 Plan only: no files changed and no Apple service was contacted.
 PLAN
@@ -130,6 +138,8 @@ if [[ "$plan_only" == true ]]; then
   print_plan
   exit 0
 fi
+
+"$script_dir/check-regression-matrix.sh" --require-results >/dev/null
 
 for tool in codesign ditto plutil shasum spctl xcrun; do
   if ! command -v "$tool" >/dev/null 2>&1; then

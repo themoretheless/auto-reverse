@@ -18,7 +18,7 @@ use std::path::Path;
 use std::process;
 use std::sync::{Arc, RwLock};
 
-use auto_reverse::config::{AppConfig, ConfigStore};
+use auto_reverse::config::{AppConfig, ConfigStore, with_dynamics_rollback};
 use auto_reverse::device_catalog::{DeviceState, build_device_catalog};
 use auto_reverse::device_classifier;
 use auto_reverse::error::{AppError, AppResult};
@@ -57,6 +57,7 @@ fn run() -> AppResult<()> {
         Command::Toggle => toggle_enabled(),
         Command::EnableStartup => set_startup_enabled(true),
         Command::DisableStartup => set_startup_enabled(false),
+        Command::RollbackDynamics => rollback_dynamics(),
         Command::PrepareUninstall => prepare_uninstall(),
         Command::StartupStatus(options) => startup_status(options),
         Command::ConfigPath => {
@@ -276,6 +277,16 @@ fn toggle_enabled() -> AppResult<()> {
     println!(
         "auto-reverse is now {}",
         if enabled { "enabled" } else { "disabled" }
+    );
+    Ok(())
+}
+
+fn rollback_dynamics() -> AppResult<()> {
+    let store = ConfigStore::default();
+    let snapshot = store.update(|config| *config = with_dynamics_rollback(config))?;
+    println!(
+        "experimental dynamics rolled back to {}; wheel step and unrelated settings preserved",
+        snapshot.config.smooth_preset.as_str()
     );
     Ok(())
 }
@@ -810,6 +821,7 @@ fn print_help() {
          \n\
          Advanced commands:\n\
            prepare-uninstall           Remove startup registrations before app deletion\n\
+           rollback-dynamics           Emergency rollback of global/per-device smooth presets\n\
            devices                     List connected pointing devices and per-device rules\n\
            benchmark                   Open the interactive scroll benchmark\n\
            init                        Create the default config if it does not exist\n\

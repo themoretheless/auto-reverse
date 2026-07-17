@@ -19,7 +19,8 @@ use crate::event_rate::{
 use crate::latency_budget::{
     CALLBACK_BUDGET, LatencyHistory, LatencyReading, LatencyStatus, MIN_READINGS_FOR_ASSESSMENT,
 };
-use crate::platform::macos::{debug_log, tap_metrics};
+use crate::platform::macos::{debug_log, recovery_log, tap_metrics};
+use crate::recovery_audit::RecoveryRecord;
 
 use super::theme::{status_dot, styled_button};
 
@@ -91,6 +92,7 @@ fn contents(
     accessibility_granted: bool,
 ) {
     let all_events = debug_log::snapshot();
+    let recoveries = recovery_log::snapshot();
 
     ui.horizontal(|ui| {
         ui.add(
@@ -115,6 +117,7 @@ fn contents(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if styled_button(ui, "Clear", egui::vec2(10.0, 5.0)).clicked() {
                 debug_log::clear();
+                recovery_log::clear();
             }
             export_menu(ui, &filtered_events(&all_events, state), state);
             if styled_button(ui, "Copy summary", egui::vec2(10.0, 5.0)).clicked() {
@@ -132,6 +135,7 @@ fn contents(
                         accessibility_granted,
                         events: &events,
                         event_capacity: debug_log::CAPACITY,
+                        recoveries: &recoveries,
                     }));
                 state.summary_copied_at = Some(Instant::now());
             }
@@ -185,7 +189,7 @@ fn contents(
         });
     }
 
-    diagnostic_metrics(ui, &all_events, state);
+    diagnostic_metrics(ui, &all_events, &recoveries, state);
 
     ui.separator();
 
@@ -227,7 +231,14 @@ fn contents(
     );
 }
 
-fn diagnostic_metrics(ui: &mut egui::Ui, events: &[debug_log::DebugEvent], state: &mut State) {
+fn diagnostic_metrics(
+    ui: &mut egui::Ui,
+    events: &[debug_log::DebugEvent],
+    recoveries: &[RecoveryRecord],
+    state: &mut State,
+) {
+    recovery_metrics(ui, recoveries);
+
     egui::CollapsingHeader::new("Observed input metrics")
         .default_open(false)
         .show(ui, |ui| {
@@ -325,6 +336,55 @@ fn diagnostic_metrics(ui: &mut egui::Ui, events: &[debug_log::DebugEvent], state
                     }
                 }
             }
+        });
+}
+
+fn recovery_metrics(ui: &mut egui::Ui, recoveries: &[RecoveryRecord]) {
+    egui::CollapsingHeader::new("Runtime recovery")
+        .default_open(false)
+        .show(ui, |ui| {
+            if recoveries.is_empty() {
+                ui.label(
+                    RichText::new("No recovery attempts in this process")
+                        .small()
+                        .weak(),
+                );
+                return;
+            }
+
+            ui.horizontal(|ui| {
+                cell(ui, 120.0, RichText::new("Reason").small().strong().weak());
+                cell(ui, 72.0, RichText::new("Attempt").small().strong().weak());
+                cell(
+                    ui,
+                    ui.available_width(),
+                    RichText::new("Action").small().strong().weak(),
+                );
+            });
+            for record in recoveries.iter().rev().take(12) {
+                ui.horizontal(|ui| {
+                    cell(ui, 120.0, record.reason.label());
+                    cell(
+                        ui,
+                        72.0,
+                        if record.attempt == 0 {
+                            "-".to_string()
+                        } else {
+                            record.attempt.to_string()
+                        },
+                    );
+                    cell(ui, ui.available_width(), record.action.label());
+                });
+            }
+            ui.label(
+                RichText::new(format!(
+                    "Showing the latest {} of {} typed recovery records",
+                    recoveries.len().min(12),
+                    recoveries.len()
+                ))
+                .small()
+                .weak(),
+            );
         });
 }
 

@@ -15,7 +15,7 @@ pub use device_rules::{
     matching_device_rule, preferred_device_rule, with_device_alias, with_device_rule_selection,
 };
 pub use profiles::{ProfileSource, ResolvedDeviceProfile, ResolvedProfileValue};
-pub use reset::{with_dynamics_defaults, without_device_profile};
+pub use reset::{with_dynamics_defaults, with_dynamics_rollback, without_device_profile};
 pub use schema::{AppConfig, CONFIG_VERSION, DeviceRule};
 pub use store::{ConfigRevision, ConfigSnapshot, ConfigStore};
 pub use transfer::{

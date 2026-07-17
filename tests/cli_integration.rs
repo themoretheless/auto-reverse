@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use auto_reverse::config::AppConfig;
-use auto_reverse::device::DeviceKind;
+use auto_reverse::config::{AppConfig, DeviceRule};
+use auto_reverse::device::{DeviceKind, HardwareId};
 use auto_reverse::diagnostics::{Axis, DecisionReason};
+use auto_reverse::scroll_dynamics::SmoothPreset;
 use auto_reverse::scroll_trace::{ScrollTrace, TraceSample};
 
 struct CliSandbox {
@@ -163,6 +164,46 @@ fn concurrent_cli_mutations_preserve_config_and_stay_in_home() {
     assert!(status.contains("\"configured_for_current_exe\": true"));
     assert!(status.contains("\"config_start_at_login\": true"));
     assert!(status.contains("\"in_sync\": true"));
+}
+
+#[test]
+fn dynamics_rollback_is_atomic_and_preserves_unrelated_settings() {
+    let sandbox = CliSandbox::new("dynamics-rollback");
+    let config_path = sandbox.default_config_path();
+    let config = AppConfig {
+        enabled: false,
+        reverse_horizontal: true,
+        discrete_scroll_step_size: 9,
+        smooth_preset: SmoothPreset::Fast,
+        device_rules: vec![DeviceRule {
+            alias: Some("Desk".to_string()),
+            step_size: Some(8),
+            smooth_preset: Some(SmoothPreset::Balanced),
+            ..DeviceRule::for_hardware(
+                HardwareId {
+                    vendor_id: 1,
+                    product_id: 2,
+                },
+                None,
+                false,
+            )
+        }],
+        ..AppConfig::default()
+    };
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
+
+    let output = sandbox.run(&["rollback-dynamics"]);
+    assert!(stdout(&output).contains("rolled back to off"));
+
+    let rolled_back = read_config(&config_path);
+    assert!(!rolled_back.enabled);
+    assert!(rolled_back.reverse_horizontal);
+    assert_eq!(rolled_back.discrete_scroll_step_size, 9);
+    assert_eq!(rolled_back.smooth_preset, SmoothPreset::Off);
+    assert_eq!(rolled_back.device_rules[0].alias.as_deref(), Some("Desk"));
+    assert_eq!(rolled_back.device_rules[0].step_size, Some(8));
+    assert_eq!(rolled_back.device_rules[0].smooth_preset, None);
 }
 
 #[test]

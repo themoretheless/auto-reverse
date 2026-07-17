@@ -102,6 +102,12 @@ target/dist/Auto-Reverse-<version>-macOS.notary.json
 - The worktree is clean and the release commit is pushed.
 - `Cargo.toml` version and release notes are final.
 - `scripts/check-release-workflow.sh` and the complete gate in `QA.md` pass.
+- `scripts/check-dynamics-release-gate.sh` passes; if dynamics is default-on,
+  its manifest contains accepted evidence for every threshold and all six
+  physical classes.
+- Every PR-01..PR-06 row in the platform interaction matrix has a build,
+  `Pass`, and evidence/tester recorded on the exact candidate; the production
+  script enforces this after `--plan` and before build or Apple service access.
 - `security find-identity` shows the intended Developer ID certificate.
 - The `notarytool` Keychain profile validates.
 - The production release script finishes without a skipped step.
@@ -111,6 +117,16 @@ target/dist/Auto-Reverse-<version>-macOS.notary.json
 - Accessibility, login item, scrolling, and uninstall rows in
   `QA.md` pass on the exact stapled artifact.
 - The final ZIP and SHA-256 are published together.
+
+## Experimental Dynamics Release Gate
+
+`packaging/dynamics-release-gate.toml` is release evidence, not a feature
+preference. The production script validates it before build or `--plan`.
+Default enablement requires 6 physical classes, 30 completed sessions per
+class, at most 500 basis points p95 movement-time regression, at most 8,000 us
+scheduler tail, and zero fail-open violations. The runtime environment switch
+`AUTO_REVERSE_DISABLE_DYNAMICS` always wins, and malformed values fail closed.
+The rollback operation removes only smooth-preset selections.
 
 ## Current Verification Boundary
 

@@ -32,6 +32,8 @@ Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
 - pure temporary preset, scoped reset, notification refresh, and bounded tap
   watchdog policies in `src/preset_preview.rs`, `src/config/reset.rs`,
   `src/refresh_policy.rs`, and `src/tap_watchdog.rs`;
+- a pure bounded recovery audit in `src/recovery_audit.rs` with the process-local
+  macOS adapter in `src/platform/macos/recovery_log.rs`;
 - on-demand public event-tap interval latency snapshots in
   `src/platform/macos/tap_metrics.rs`;
 - pure repeated-stall budgets in `src/latency_budget.rs` and a non-live
@@ -48,6 +50,8 @@ Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
   under `scripts/`.
 - a strict Developer ID/hardened-runtime/notarization/stapling release pipeline
   under `scripts/`, with its checklist in `RELEASE.md`.
+- deterministic config/trace/dynamics property suites and fail-closed dynamics
+  release evidence under `tests/` and `packaging/`.
 
 The pure domain layer should stay free of CoreGraphics/AppKit imports. Keep OS
 framework code inside `platform/macos`.
@@ -97,8 +101,19 @@ framework code inside `platform/macos`.
 - Event-tap health checks use public `CGEventTapIsEnabled` under the registered
   port lifetime guard. Keep two-sample hysteresis, the three-attempt episode
   budget, and sustained-healthy reset; never introduce an unbounded retry loop.
+- Recovery audit reasons must stay exact and independent. Only the callback may
+  claim `TapDisabledByTimeout`; watchdog failure is not timeout evidence. Keep
+  the ring at 64 privacy-bounded records without PID, device identity, or wall
+  time, and audit permission loss only while the utility is enabled.
 - Experimental dynamics remains discrete-wheel-only and outside the live event
   tap until cancellation, scheduler, and fail-open gates pass.
+- Dynamics default enablement is fail-closed: the runtime kill switch wins,
+  source and manifest defaults must match, and all release thresholds require
+  exact-candidate evidence. Rollback clears only smooth presets and must
+  preserve direction, alias, step size, startup, and unrelated config.
+- Keep PR-01..PR-06 ID/scenario pairs stable. Structure smoke may accept blank
+  manual rows, but a production release must require build, `Pass`, and
+  evidence/tester for every row before build or Apple service access.
 - Continuous input must use exact dynamics bypass. Vertical and horizontal
   velocity, residual, momentum, rate window, and deadline remain independent.
 - Direction/gap/external cancellation must record signed canceled distance;
@@ -135,6 +150,7 @@ framework code inside `platform/macos`.
 - Run headless tap: `cargo run -- run`
 - Diagnostics: `cargo run -- doctor --no-create`
 - Devices: `cargo run -- devices`
+- Roll back dynamics presets: `cargo run -- rollback-dynamics`
 - Check: `cargo check`
 - Lean check: `cargo check --no-default-features`
 - Test: `cargo test`

@@ -1,0 +1,8 @@
+enabled = true
+
+[[device_rules]]
+vendor_id = 0x1234
+product_id = 0x5678
+location_id = 42
+name = "Old rule"
+reverse = false

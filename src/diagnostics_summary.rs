@@ -10,6 +10,8 @@ use std::fmt::Write as _;
 use crate::config::AppConfig;
 use crate::device::DeviceKind;
 use crate::diagnostics::{DecisionCategory, DecisionReason};
+use crate::dynamics_gate::runtime_dynamics_decision;
+use crate::recovery_audit::{RecoveryReason, RecoveryRecord};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeStatus {
@@ -52,6 +54,7 @@ pub struct DiagnosticsSummaryInput<'a> {
     pub accessibility_granted: bool,
     pub events: &'a [SummaryEvent],
     pub event_capacity: usize,
+    pub recoveries: &'a [RecoveryRecord],
 }
 
 pub fn build_diagnostics_summary(input: DiagnosticsSummaryInput<'_>) -> String {
@@ -81,6 +84,14 @@ pub fn build_diagnostics_summary(input: DiagnosticsSummaryInput<'_>) -> String {
         input.config.discrete_scroll_step_size,
         input.config.smooth_preset.as_str(),
         on_off(input.config.reverse_only_raw_input),
+    )
+    .unwrap();
+    let dynamics = runtime_dynamics_decision(input.config.smooth_preset);
+    writeln!(
+        text,
+        "Live dynamics: {}; gate: {}",
+        dynamics.effective.as_str(),
+        dynamics.reason.code(),
     )
     .unwrap();
     writeln!(
@@ -147,6 +158,26 @@ pub fn build_diagnostics_summary(input: DiagnosticsSummaryInput<'_>) -> String {
         writeln!(text, "Decision reasons: {summary}").unwrap();
     }
 
+    let recovery_attempts = RecoveryReason::ALL
+        .iter()
+        .copied()
+        .filter_map(|reason| {
+            input
+                .recoveries
+                .iter()
+                .filter(|record| record.reason == reason)
+                .map(|record| record.attempt)
+                .max()
+                .filter(|attempt| *attempt > 0)
+                .map(|attempt| format!("{} {attempt}", reason.code()))
+        })
+        .collect::<Vec<_>>();
+    if recovery_attempts.is_empty() {
+        writeln!(text, "Recovery attempts: none observed").unwrap();
+    } else {
+        writeln!(text, "Recovery attempts: {}", recovery_attempts.join(", ")).unwrap();
+    }
+
     text.push_str(
         "Privacy: aggregate only; no raw deltas, timestamps, device identifiers, process IDs, app names, window titles, or event trace.\n",
     );
@@ -191,6 +222,7 @@ const ALL_REASONS: &[DecisionReason] = &[
 mod tests {
     use super::*;
     use crate::device::HardwareId;
+    use crate::recovery_audit::{RecoveryAction, RecoveryAudit};
 
     #[test]
     fn summary_is_deterministic_and_contains_only_aggregates() {
@@ -215,6 +247,11 @@ mod tests {
                 reason: DecisionReason::TrackpadNatural,
             },
         ];
+        let mut recovery_audit = RecoveryAudit::default();
+        recovery_audit.record_attempt(RecoveryReason::Wake, RecoveryAction::Rearmed);
+        recovery_audit.record_attempt(RecoveryReason::TapTimeout, RecoveryAction::Rearmed);
+        recovery_audit.record_attempt(RecoveryReason::Wake, RecoveryAction::RestartRequested);
+        let recoveries = recovery_audit.snapshot();
 
         let summary = build_diagnostics_summary(DiagnosticsSummaryInput {
             config: &config,
@@ -222,12 +259,14 @@ mod tests {
             accessibility_granted: true,
             events: &events,
             event_capacity: 500,
+            recoveries: &recoveries,
         });
 
         assert!(summary.contains("Outcomes: reversed 1, passed 1, ignored 0"));
         assert!(summary.contains("Device types: mouse 1, trackpad 1"));
         assert!(summary.contains("Per-device rules: 1"));
         assert!(summary.contains("device_rule_reversed 1, trackpad_natural 1"));
+        assert!(summary.contains("Recovery attempts: wake 2, tap_timeout 1"));
         for private_value in [
             "Private Mouse Name",
             "046d",
@@ -248,10 +287,12 @@ mod tests {
             accessibility_granted: false,
             events: &[],
             event_capacity: 500,
+            recoveries: &[],
         });
 
         assert!(summary.contains("Accessibility: required"));
         assert!(summary.contains("Buffered decisions: 0 / 500"));
         assert!(summary.contains("Decision reasons: none observed"));
+        assert!(summary.contains("Recovery attempts: none observed"));
     }
 }

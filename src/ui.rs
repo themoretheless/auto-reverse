@@ -66,8 +66,9 @@ use crate::device_catalog::ObservedDevice;
 use crate::device_test::DeviceTestSession;
 use crate::platform::macos::{
     activation, app_events, daemon_lock, hid, login_item, permissions, power_events, quit_handler,
-    tray,
+    recovery_log, tray,
 };
+use crate::recovery_audit::{RecoveryAction, RecoveryReason};
 use crate::refresh_policy::RefreshPolicy;
 use crate::runtime::{DEFAULT_PAUSE_DURATION, RuntimeControl};
 use crate::settings_search::{SettingsDestination, search_settings};
@@ -606,7 +607,17 @@ impl SettingsApp {
     }
 
     fn refresh_permission_state(&mut self) {
+        let was_ready = self.permissions_ready;
         self.set_permissions_ready(permissions::has_scroll_control_access());
+        if self.config.enabled && was_ready && !self.permissions_ready {
+            recovery_log::record_attempt(RecoveryReason::PermissionLoss, RecoveryAction::Suspended);
+        } else if self.config.enabled
+            && !was_ready
+            && self.permissions_ready
+            && recovery_log::attempts(RecoveryReason::PermissionLoss) > 0
+        {
+            recovery_log::record_status(RecoveryReason::PermissionLoss, RecoveryAction::Restored);
+        }
         if !self.config.enabled {
             return;
         }

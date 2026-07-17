@@ -1,0 +1,22 @@
+config_version = 1
+reverse_scroll = true
+reverse_horizonal = true
+mouse_reverse = true
+track_pad = true
+magicmouse = true
+scroll_step = 3
+launch_at_login = true
+menubar_icon = true
+raw_input_only = true
+
+[[device_rules]]
+vendor_id = 1
+product_id = 2
+vendor = 1
+product = 2
+serial = "x"
+location = 3
+nickname = "x"
+revers = true
+steps = 4
+preset = "fast"

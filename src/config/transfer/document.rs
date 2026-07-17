@@ -161,6 +161,12 @@ fn unknown_field_paths(root: &toml::Table) -> Vec<String> {
 mod tests {
     use super::*;
 
+    const V0_ALL_FIELDS: &str = include_str!("../../../tests/fixtures/config/v0-all-fields.toml");
+    const V0_MINIMAL_DEVICE_RULE: &str =
+        include_str!("../../../tests/fixtures/config/v0-minimal-device-rule.toml");
+    const INVALID_KEY_CATALOG: &str =
+        include_str!("../../../tests/fixtures/config/invalid-key-catalog.toml");
+
     #[test]
     fn current_export_round_trips_without_migration_or_changes() {
         let config = AppConfig {
@@ -186,6 +192,101 @@ mod tests {
             assert!(preview.migration.migrated());
             assert_eq!(preview.candidate.config_version, CONFIG_VERSION);
             assert!(!preview.candidate.enabled);
+        }
+    }
+
+    #[test]
+    fn historical_fixtures_cover_full_and_minimal_v0_shapes() {
+        for document in [V0_ALL_FIELDS, V0_MINIMAL_DEVICE_RULE] {
+            let preview = preview_import_document(document, &AppConfig::default()).unwrap();
+            assert_eq!(preview.migration.source_version, 0);
+            assert_eq!(preview.candidate.config_version, CONFIG_VERSION);
+            assert!(preview.migration.migrated());
+
+            let exported = export_document(&preview.candidate).unwrap();
+            let round_trip = preview_import_document(&exported, &preview.candidate).unwrap();
+            assert_eq!(round_trip.candidate, preview.candidate);
+            assert!(!round_trip.has_changes());
+        }
+
+        let full = preview_import_document(V0_ALL_FIELDS, &AppConfig::default()).unwrap();
+        assert!(!full.candidate.enabled);
+        assert_eq!(full.candidate.discrete_scroll_step_size, 7);
+        assert_eq!(full.candidate.device_rules.len(), 1);
+        assert_eq!(
+            full.candidate.device_rules[0].alias.as_deref(),
+            Some("Desk")
+        );
+        assert_eq!(full.candidate.device_rules[0].reverse, Some(true));
+
+        let minimal =
+            preview_import_document(V0_MINIMAL_DEVICE_RULE, &AppConfig::default()).unwrap();
+        assert_eq!(minimal.candidate.device_rules[0].reverse, Some(false));
+        assert_eq!(minimal.candidate.device_rules[0].alias, None);
+
+        let full_value: toml::Value = toml::from_str(V0_ALL_FIELDS).unwrap();
+        let full_root = full_value.as_table().unwrap();
+        let mut covered_root = full_root.keys().cloned().collect::<Vec<_>>();
+        covered_root.sort_unstable();
+        let mut expected_root = ROOT_FIELDS
+            .iter()
+            .map(|field| (*field).to_string())
+            .filter(|field| *field != "config_version")
+            .collect::<Vec<_>>();
+        expected_root.sort_unstable();
+        assert_eq!(covered_root, expected_root);
+
+        let minimal_value: toml::Value = toml::from_str(V0_MINIMAL_DEVICE_RULE).unwrap();
+        let fixture_values = [full_value, minimal_value];
+        let mut covered_rule_fields = fixture_values
+            .iter()
+            .flat_map(|value| {
+                value
+                    .get("device_rules")
+                    .and_then(toml::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(toml::Value::as_table)
+                    .flat_map(|rule| rule.keys().cloned())
+            })
+            .collect::<Vec<_>>();
+        covered_rule_fields.sort_unstable();
+        covered_rule_fields.dedup();
+        let mut expected_rule_fields = DEVICE_RULE_FIELDS.to_vec();
+        expected_rule_fields.sort_unstable();
+        assert_eq!(covered_rule_fields, expected_rule_fields);
+    }
+
+    #[test]
+    fn every_cataloged_bad_key_is_reported_without_destructive_migration() {
+        let expected = vec![
+            "device_rules[0].location".to_string(),
+            "device_rules[0].nickname".to_string(),
+            "device_rules[0].preset".to_string(),
+            "device_rules[0].product".to_string(),
+            "device_rules[0].revers".to_string(),
+            "device_rules[0].serial".to_string(),
+            "device_rules[0].steps".to_string(),
+            "device_rules[0].vendor".to_string(),
+            "launch_at_login".to_string(),
+            "magicmouse".to_string(),
+            "menubar_icon".to_string(),
+            "mouse_reverse".to_string(),
+            "raw_input_only".to_string(),
+            "reverse_horizonal".to_string(),
+            "reverse_scroll".to_string(),
+            "scroll_step".to_string(),
+            "track_pad".to_string(),
+        ];
+
+        let error =
+            preview_import_document(INVALID_KEY_CATALOG, &AppConfig::default()).unwrap_err();
+        assert!(matches!(error, TransferError::UnknownFields(fields) if fields == expected));
+
+        // Import is preview-only and returns before constructing a candidate;
+        // the source remains the authoritative copy of every unknown value.
+        for literal in ["reverse_scroll", "vendor = 1", "preset = \"fast\""] {
+            assert!(INVALID_KEY_CATALOG.contains(literal));
         }
     }
 

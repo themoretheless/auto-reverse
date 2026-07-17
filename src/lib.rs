@@ -11,8 +11,9 @@
 //! - [`device_source`]: pure public-HID transport trust classification.
 //! - [`app_session`]: non-live target-PID pinning for future app rules.
 //! - [`settings_search`]: pure settings and diagnostics lookup.
-//! - [`preset_preview`], [`refresh_policy`], and [`tap_watchdog`]: temporary
-//!   UX state plus notification/recovery policies with no OS imports.
+//! - [`preset_preview`], [`refresh_policy`], [`recovery_audit`], and
+//!   [`tap_watchdog`]: temporary UX state plus notification/recovery policies
+//!   with no OS imports.
 //! - [`config`]: schema, pure physical-device rule resolution, and storage.
 //! - [`runtime`]: process-local controls such as temporary pause.
 //! - [`scroll`]: the pure reversal policy - config + event in, decision
@@ -39,6 +40,7 @@ pub mod device_source;
 pub mod device_test;
 pub mod diagnostics;
 pub mod diagnostics_summary;
+pub mod dynamics_gate;
 pub mod error;
 pub mod event_rate;
 pub mod input;
@@ -46,6 +48,7 @@ pub mod input_policy;
 pub mod latency_budget;
 pub mod platform;
 pub mod preset_preview;
+pub mod recovery_audit;
 pub mod refresh_policy;
 pub mod runtime;
 pub mod scroll;

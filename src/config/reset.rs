@@ -29,6 +29,21 @@ pub fn with_dynamics_defaults(config: &AppConfig) -> AppConfig {
     reset
 }
 
+/// Emergency rollback for a release/runtime dynamics gate. Unlike the user
+/// facing dynamics reset, this clears only smooth-preset selection and leaves
+/// wheel step size plus its per-device overrides untouched.
+pub fn with_dynamics_rollback(config: &AppConfig) -> AppConfig {
+    let mut rollback = config.clone();
+    rollback.smooth_preset = crate::scroll_dynamics::SmoothPreset::Off;
+    for rule in &mut rollback.device_rules {
+        rule.smooth_preset = None;
+    }
+    rollback
+        .device_rules
+        .retain(super::schema::DeviceRule::has_profile_overrides);
+    rollback
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -111,5 +126,30 @@ mod tests {
         };
 
         assert!(with_dynamics_defaults(&config).device_rules.is_empty());
+    }
+
+    #[test]
+    fn release_rollback_clears_only_smooth_presets() {
+        let target = identity("mouse");
+        let config = AppConfig {
+            discrete_scroll_step_size: 9,
+            smooth_preset: SmoothPreset::Fast,
+            device_rules: vec![DeviceRule {
+                alias: Some("Desk".to_string()),
+                reverse: Some(false),
+                step_size: Some(8),
+                smooth_preset: Some(SmoothPreset::Balanced),
+                ..DeviceRule::inheriting_for_identity(&target, None)
+            }],
+            ..AppConfig::default()
+        };
+
+        let rollback = with_dynamics_rollback(&config);
+        assert_eq!(rollback.smooth_preset, SmoothPreset::Off);
+        assert_eq!(rollback.discrete_scroll_step_size, 9);
+        assert_eq!(rollback.device_rules[0].alias.as_deref(), Some("Desk"));
+        assert_eq!(rollback.device_rules[0].reverse, Some(false));
+        assert_eq!(rollback.device_rules[0].step_size, Some(8));
+        assert_eq!(rollback.device_rules[0].smooth_preset, None);
     }
 }

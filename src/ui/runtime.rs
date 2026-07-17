@@ -9,7 +9,11 @@ use std::time::{Duration, Instant};
 
 use crate::config::AppConfig;
 use crate::diagnostics_summary::RuntimeStatus;
-use crate::platform::macos::event_tap::{self, TapRunOutcome};
+use crate::platform::macos::{
+    event_tap::{self, TapRunOutcome},
+    recovery_log,
+};
+use crate::recovery_audit::{RecoveryAction, RecoveryReason};
 use crate::runtime::RuntimeControl;
 use crate::tap_watchdog::{TapObservation, TapWatchdog, WatchdogAction};
 
@@ -211,6 +215,12 @@ impl TapRuntime {
         shared_config: Arc<RwLock<AppConfig>>,
         runtime_control: Arc<RuntimeControl>,
     ) {
+        if self.watchdog.exhausted() {
+            recovery_log::record_status(
+                RecoveryReason::WatchdogDisabled,
+                RecoveryAction::UserRetry,
+            );
+        }
         if self.watchdog.exhausted() && self.state.is_running() {
             self.watchdog.reset();
             event_tap::rearm_if_installed();
@@ -225,6 +235,7 @@ impl TapRuntime {
 
     pub(super) fn request_wake_recovery(&mut self) {
         self.wake_recovery.request(Instant::now());
+        recovery_log::record_status(RecoveryReason::Wake, RecoveryAction::Detected);
     }
 
     pub(super) fn wake_recovery_pending(&self) -> bool {
@@ -243,11 +254,24 @@ impl TapRuntime {
         {
             WakeRecoveryAction::None => {}
             WakeRecoveryAction::Rearm => {
-                if !event_tap::rearm_if_installed() {
+                let rearmed = event_tap::rearm_if_installed();
+                recovery_log::record_attempt(
+                    RecoveryReason::Wake,
+                    if rearmed {
+                        RecoveryAction::Rearmed
+                    } else {
+                        RecoveryAction::Failed
+                    },
+                );
+                if !rearmed {
                     self.wake_recovery.rearm_failed();
                 }
             }
             WakeRecoveryAction::Restart => {
+                recovery_log::record_attempt(
+                    RecoveryReason::Wake,
+                    RecoveryAction::RestartRequested,
+                );
                 self.spawn(Arc::clone(shared_config), Arc::clone(runtime_control))
             }
         }
@@ -277,17 +301,36 @@ impl TapRuntime {
             event_tap::TapEnabledState::Disabled => TapObservation::Disabled,
             event_tap::TapEnabledState::NotInstalled => TapObservation::NotInstalled,
         };
-        match self
+        let was_exhausted = self.watchdog.exhausted();
+        let action = self
             .watchdog
-            .observe(Instant::now(), observation, restart_allowed)
-        {
+            .observe(Instant::now(), observation, restart_allowed);
+        match action {
             Some(WatchdogAction::Rearm) => {
-                event_tap::rearm_if_installed();
+                let rearmed = event_tap::rearm_if_installed();
+                recovery_log::record_attempt(
+                    RecoveryReason::WatchdogDisabled,
+                    if rearmed {
+                        RecoveryAction::Rearmed
+                    } else {
+                        RecoveryAction::Failed
+                    },
+                );
             }
             Some(WatchdogAction::Restart) => {
+                recovery_log::record_attempt(
+                    RecoveryReason::WatchdogDisabled,
+                    RecoveryAction::RestartRequested,
+                );
                 self.spawn(Arc::clone(shared_config), Arc::clone(runtime_control));
             }
             None => {}
+        }
+        if !was_exhausted && self.watchdog.exhausted() {
+            recovery_log::record_status(
+                RecoveryReason::WatchdogDisabled,
+                RecoveryAction::Exhausted,
+            );
         }
     }
 
