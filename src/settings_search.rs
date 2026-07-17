@@ -75,6 +75,12 @@ const ENTRIES: &[SearchEntry] = &[
         destination: SettingsDestination::Advanced,
     },
     SearchEntry {
+        title: "Import or export configuration",
+        section: "Advanced",
+        keywords: "config backup restore migration toml transfer",
+        destination: SettingsDestination::Advanced,
+    },
+    SearchEntry {
         title: "Debug Console",
         section: "Diagnostics",
         keywords: "events resolution decision filter",
@@ -194,5 +200,15 @@ mod tests {
             search_settings("remote", 1)[0].destination,
             SettingsDestination::Advanced
         );
+    }
+
+    #[test]
+    fn config_transfer_terms_route_to_advanced() {
+        for query in ["import config", "backup", "migration"] {
+            assert_eq!(
+                search_settings(query, 1)[0].destination,
+                SettingsDestination::Advanced
+            );
+        }
     }
 }

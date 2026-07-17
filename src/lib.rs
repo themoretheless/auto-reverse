@@ -6,6 +6,7 @@
 //! - [`error`], [`device`], [`input`]: shared vocabulary types.
 //! - [`input_policy`]: pure source provenance and bypass precedence.
 //! - [`diagnostics`]: pure axis and decision-reason vocabulary.
+//! - [`diagnostics_summary`]: privacy-bounded aggregate support text.
 //! - [`device_classifier`]: pure device-source classification state.
 //! - [`device_source`]: pure public-HID transport trust classification.
 //! - [`app_session`]: non-live target-PID pinning for future app rules.
@@ -33,7 +34,9 @@ pub mod device_attribution;
 pub mod device_catalog;
 pub mod device_classifier;
 pub mod device_source;
+pub mod device_test;
 pub mod diagnostics;
+pub mod diagnostics_summary;
 pub mod error;
 pub mod event_rate;
 pub mod input;

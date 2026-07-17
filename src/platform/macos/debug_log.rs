@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::ResolvedDeviceProfile;
-use crate::device::{DeviceKind, HardwareId};
+use crate::device::{DeviceIdentity, DeviceKind, HardwareId};
 pub use crate::device_attribution::AttributionStatus;
 use crate::device_classifier::ClassificationEvidence;
 use crate::device_source::HidSourceClass;
@@ -43,6 +43,9 @@ pub struct DebugEvent {
     pub device_kind: DeviceKind,
     /// Raw IOHID product name, preserved unchanged for structured export.
     pub device_name: Option<Arc<str>>,
+    /// Exact public HID identity kept only in process memory for the Devices
+    /// tab's local test. Exporters intentionally have no column for it.
+    pub identity: Option<Arc<DeviceIdentity>>,
     pub hardware: Option<HardwareId>,
     pub attribution_status: AttributionStatus,
     pub classification_evidence: ClassificationEvidence,
@@ -281,6 +284,7 @@ mod tests {
             monotonic_us: u64::from(tag),
             device_kind: DeviceKind::Mouse,
             device_name: Some(Arc::from(format!("Test {tag}"))),
+            identity: None,
             hardware: Some(HardwareId {
                 vendor_id: 0x1234,
                 product_id: 0x5678,

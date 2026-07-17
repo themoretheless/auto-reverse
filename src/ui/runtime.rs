@@ -8,6 +8,7 @@ use std::sync::{Arc, RwLock, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::config::AppConfig;
+use crate::diagnostics_summary::RuntimeStatus;
 use crate::platform::macos::event_tap::{self, TapRunOutcome};
 use crate::runtime::RuntimeControl;
 
@@ -144,6 +145,32 @@ pub(super) struct TapRuntime {
 impl TapRuntime {
     pub(super) fn state(&self) -> &State {
         &self.state
+    }
+
+    pub(super) fn diagnostics_status(
+        &self,
+        enabled: bool,
+        paused: bool,
+        permissions_ready: bool,
+    ) -> RuntimeStatus {
+        if !enabled {
+            return RuntimeStatus::Disabled;
+        }
+        if !permissions_ready || matches!(self.state, State::WaitingForPermissions) {
+            return RuntimeStatus::WaitingForPermission;
+        }
+        if paused {
+            return RuntimeStatus::Paused;
+        }
+        match self.state {
+            State::Idle => RuntimeStatus::Idle,
+            State::WaitingForPermissions => RuntimeStatus::WaitingForPermission,
+            State::Starting => RuntimeStatus::Starting,
+            State::Running => RuntimeStatus::Running,
+            State::AlreadyRunning => RuntimeStatus::AlreadyRunning,
+            State::Stopped => RuntimeStatus::Stopped,
+            State::Failed(_) => RuntimeStatus::Failed,
+        }
     }
 
     pub(super) fn start_if_ready(
@@ -298,6 +325,38 @@ mod tests {
         assert_eq!(
             state_after_event(Event::Finished(Err("denied".to_string()))),
             State::Failed("denied".to_string())
+        );
+    }
+
+    #[test]
+    fn diagnostics_status_has_explicit_precedence_and_redacts_failure_text() {
+        let runtime = TapRuntime {
+            state: State::Failed("private platform detail".to_string()),
+            events: None,
+            wake_recovery: WakeRecovery::default(),
+        };
+
+        assert_eq!(
+            runtime.diagnostics_status(true, false, true),
+            RuntimeStatus::Failed
+        );
+        assert_eq!(
+            runtime.diagnostics_status(true, true, true),
+            RuntimeStatus::Paused
+        );
+        assert_eq!(
+            runtime.diagnostics_status(false, true, false),
+            RuntimeStatus::Disabled
+        );
+
+        let waiting = TapRuntime {
+            state: State::Running,
+            events: None,
+            wake_recovery: WakeRecovery::default(),
+        };
+        assert_eq!(
+            waiting.diagnostics_status(true, true, false),
+            RuntimeStatus::WaitingForPermission
         );
     }
 

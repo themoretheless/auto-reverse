@@ -1,4 +1,4 @@
-//! Native save and Finder-reveal adapter for user-selected local exports.
+//! Native open/save and Finder-reveal adapter for user-selected local files.
 //!
 //! The Debug Console owns export generation and file writing. This module owns
 //! only AppKit: presenting `NSSavePanel`, converting its file URL to a Rust
@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 
 use objc2::MainThreadMarker;
 use objc2::rc::autoreleasepool;
-use objc2_app_kit::{NSModalResponseCancel, NSModalResponseOK, NSSavePanel, NSWorkspace};
+use objc2_app_kit::{
+    NSModalResponseCancel, NSModalResponseOK, NSOpenPanel, NSSavePanel, NSWorkspace,
+};
 use objc2_foundation::{NSArray, NSString, NSURL};
 
 pub fn choose_csv_path(
@@ -23,6 +25,45 @@ pub fn choose_toml_path(
     initial_directory: Option<&Path>,
 ) -> Result<Option<PathBuf>, String> {
     choose_export_path(default_filename, "toml", initial_directory)
+}
+
+pub fn choose_toml_import_path(
+    initial_directory: Option<&Path>,
+) -> Result<Option<PathBuf>, String> {
+    let mtm = MainThreadMarker::new()
+        .ok_or_else(|| "the open panel must be opened on the main thread".to_string())?;
+    let panel = NSOpenPanel::openPanel(mtm);
+    panel.setCanChooseFiles(true);
+    panel.setCanChooseDirectories(false);
+    panel.setAllowsMultipleSelection(false);
+    // Keep the selected path intact. The transfer layer deliberately rejects
+    // indirection rather than reviewing one file and later reading another.
+    panel.setResolvesAliases(false);
+    panel.setAllowsOtherFileTypes(false);
+    panel.setPrompt(Some(&NSString::from_str("Review")));
+
+    let file_types = NSArray::from_retained_slice(&[NSString::from_str("toml")]);
+    #[allow(deprecated)]
+    panel.setAllowedFileTypes(Some(&file_types));
+
+    if let Some(directory) = initial_directory.filter(|path| path.is_dir()) {
+        let directory = NSString::from_str(&directory.to_string_lossy());
+        let url = NSURL::fileURLWithPath_isDirectory(&directory, true);
+        panel.setDirectoryURL(Some(&url));
+    }
+
+    let response = panel.runModal();
+    if response == NSModalResponseCancel {
+        return Ok(None);
+    }
+    if response != NSModalResponseOK {
+        return Err("the open panel could not complete".to_string());
+    }
+
+    let url = panel
+        .URL()
+        .ok_or_else(|| "the open panel returned no file URL".to_string())?;
+    Ok(Some(file_url_path(&url)?))
 }
 
 fn choose_export_path(

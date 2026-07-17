@@ -9,6 +9,9 @@ Implemented:
 - macOS `CGEventTap` for scroll events;
 - TOML config with `config_version`, a persistent cross-process lock, atomic
   CLI transactions, and exact-revision conflict detection for GUI/tray saves;
+  Advanced can export versioned TOML or securely review/import a <=256 KiB
+  regular non-symlink, non-world-writable file with v0->v1 migration reporting
+  and a field-level diff limited to changed sections;
 - global enable/disable;
 - vertical and horizontal reverse flags;
 - mouse, trackpad, Magic Mouse and unknown-device config flags;
@@ -34,6 +37,9 @@ Implemented:
   database is maintained;
 - a pure device catalog separates Connected, Remembered, and Unavailable HID
   services; aliases are bounded and duplicate names get stable identity suffixes;
+  connected serial/location identities can run a five-second local "Test this
+  device" check that shows the effective direction/rule source and cannot be
+  satisfied by another identical model;
 - last-active HID wheel attribution is confidence-scored and expires after 50
   ms, so stale or missing observations cannot lend their identity to a later event;
 - one pure input-provenance resolver owns hardware, posted/injected,
@@ -57,7 +63,9 @@ Implemented:
   serial/location qualifiers stay out of automatic exports; a native Save Panel
   chooses the destination and the receipt can reveal it in Finder; the same
   Export menu creates a versioned privacy trace with relative monotonic time and
-  no process/device identity;
+  no process/device identity; Copy summary emits only aggregate runtime,
+  permission, configuration, outcome, device-kind, and reason counts, with no
+  raw trace, PID, timestamp, delta, hardware identifier, or target app/window data;
 - deterministic pure trace replay and `trace-lab`, which reports magnitude,
   interval, direction, duration, clutch sessions, per-axis distance and an
   always-present constant-gain baseline without changing live scrolling;
@@ -92,7 +100,7 @@ Implemented:
   and confirmation before Restore defaults removes per-device rules;
 - fuzzy settings search routes directly to General, Devices, Permissions,
   Advanced, or Diagnostics; common direction/device controls stay on the main
-  tabs while input policy and diagnostic tools remain separated;
+  tabs while input policy, config transfer, and diagnostic tools remain separated;
 - branded opposing-arrows app icon and generated Retina `.icns` in the bundle;
 - GUI Start at Login toggle via `SMAppService.mainAppService()`;
 - CLI diagnostics, JSON startup status and simulation;
@@ -110,7 +118,10 @@ Still missing:
 - physical-device/manual visual validation of the new benchmark and live tap
   latency snapshot;
 - platform timer/posting adapter, runtime opt-in, cancellation hooks, and
-  physical acceptance for the experimental dynamics model.
+  physical acceptance for the experimental dynamics model;
+- automatic on-load config migrations with unknown-field preservation fixtures,
+  distinct reset scopes, notification-led permission refresh, and a bounded
+  public-state event-tap watchdog from R51-R60.
 
 ## Commands
 
@@ -275,6 +286,13 @@ a destination, uses atomic replacement, and offers Reveal in Finder after
 success. Cancel does not create a file or erase the previous receipt. Debug data
 remains local to this Mac.
 
+**Copy summary** is a separate privacy-bounded path, not a shortened CSV. Its
+typed formatter receives no names, serial/location values, hardware IDs,
+process IDs, timestamps, deltas, target applications, or windows; it can only
+copy aggregate state and decision counts. Exact identity retained in memory for
+the Devices test is therefore unavailable to this formatter and both trace
+exports.
+
 The bundle uses the real Mach-O binary as `CFBundleExecutable`
 (`Contents/MacOS/auto-reverse`) rather than a shell launcher. With no
 arguments, that binary detects it is running inside `.app` and opens `ui`;
@@ -316,6 +334,17 @@ long-lived GUI and tray additionally compare the exact TOML revision they
 loaded before replacing the file. The lock file is intentionally not deleted,
 because replacing its inode would allow two processes to believe they both own
 the lock.
+
+The Advanced tab can export the validated current schema and import it through
+a review rather than writing immediately. Import accepts at most 256 KiB of
+UTF-8 from a regular file, rejects symlinks and world-writable sources, and
+opens with `O_NOFOLLOW` before checking file identity, length, mode, and
+modification time across the read. A missing
+or zero version migrates to v1 with an explicit report; a future version or an
+unknown current-schema key is rejected instead of silently discarded. The
+dry-run lists only changed General, Devices, Startup, and Advanced fields, is
+rebased if local settings move while open, and applies only those reviewed
+sections through the normal exact-revision save path.
 
 Important fields:
 
@@ -368,6 +397,12 @@ The Devices tab and `auto-reverse devices` use the same pure catalog. Connected
 devices have a stable identity and can be edited, Remembered profiles remain
 visible while unplugged, and Unavailable services are shown without unsafe
 profile controls. Repeated HID services for one identity collapse into one row.
+For a connected serial- or location-qualified wheel, **Test this device** waits
+five seconds for a later physical discrete event with that exact identity and
+shows the active Reverse/Don't reverse source beside the result. Posted input,
+continuous gestures, old buffered events, and another serial do not satisfy the
+test. If only model-wide VID/PID is known, exact testing is disabled rather than
+claiming which identical unit moved.
 
 For attributed discrete wheels, Auto Reverse reads the public IOHID
 `Transport` from the same snapshot as identity. Exact `Virtual`, an unknown
@@ -435,7 +470,11 @@ src/error.rs                         shared AppError / AppResult
 src/device.rs                        DeviceKind + HardwareId/DeviceIdentity vocabulary
 src/device_classifier.rs             pure inventory/gesture/timing policy + fallback
 src/device_source.rs                 pure public HID transport/fail-open policy
+src/device_attribution.rs            bounded last-active confidence policy
+src/device_catalog.rs                connected/remembered/unavailable projection
+src/device_test.rs                   exact-identity recent-event state machine
 src/diagnostics.rs                   pure axis and stable decision-reason vocabulary
+src/diagnostics_summary.rs           aggregate privacy-bounded clipboard text
 src/app_session.rs                   future app-target session pin, non-live
 src/input_policy.rs                  shared input provenance and bypass
 src/settings_search.rs               fuzzy settings/diagnostics navigation
@@ -452,6 +491,10 @@ src/config/schema.rs                 fields, defaults and validation
 src/config/device_rules.rs           pure selector priority, matching and mutation
 src/config/profiles.rs               field inheritance and fixed selector precedence
 src/config/store.rs                  paths, TOML I/O, atomic save, lock, snapshots/CAS
+src/config/transfer/mod.rs           transfer facade and typed errors
+src/config/transfer/document.rs      version/schema migration + TOML
+src/config/transfer/diff.rs          pure section review/application
+src/config/transfer/secure_file.rs   bounded O_NOFOLLOW file trust boundary
 src/platform/mod.rs                  cfg-gated platform adapters
 src/platform/macos/mod.rs            macOS integration overview
 src/platform/macos/scroll_events.rs  CGEvent field mapping (read event, write decision)
@@ -463,7 +506,7 @@ src/platform/macos/event_tap.rs      CGEventTap runtime loop, config shared via 
 src/platform/macos/power_events.rs   NSWorkspace sleep/wake observer and atomic signal
 src/platform/macos/daemon_lock.rs    flock: only one live CGEventTap at a time, any launch path
 src/platform/macos/activation.rs     second GUI launch -> existing-window focus mailbox
-src/platform/macos/save_panel.rs     native export destination picker + Finder reveal
+src/platform/macos/save_panel.rs     native config/diagnostic open-save panels + Finder reveal
 src/platform/macos/tap_metrics.rs    on-demand CGGetEventTapList interval snapshot
 src/platform/macos/debug_log.rs      structured decisions + local Debug Console ring buffer
 src/platform/macos/quit_handler.rs   AppleEvent quit interception so only tray Quit exits
@@ -474,6 +517,7 @@ src/ui.rs                            settings app coordinator and tab contents
 src/ui/runtime.rs                    typed tap lifecycle and explicit event channel
 src/ui/theme.rs                      handoff tokens and custom egui controls
 src/ui/local_export.rs               shared CSV escaping + atomic local replacement
+src/ui/config_transfer.rs            config panels and pending section review
 src/ui/debug_console.rs              Debug Console viewport/filter/table
 src/ui/debug_console/export.rs       detailed CSV/privacy trace + atomic receipt
 src/ui/scroll_benchmark.rs           interactive benchmark viewport + result CSV
@@ -501,7 +545,7 @@ tabs only when their behavior grows enough to justify another boundary.
 
 Keep CLI and pure logic solid:
 
-- finish config validation and migration plan;
+- extend reviewed import migration into automatic on-load fixtures;
 - add more simulation flags;
 - separate platform helpers from pure transform;
 - keep tests fast and deterministic.
@@ -562,9 +606,16 @@ The implementation order is intentionally conservative:
    fail-open without creating a timer.
 3. Per-device field inheritance, public HID source compatibility,
    confidence-scored attribution, visible device states, aliases, and tri-state
-   direction are implemented. App rules remain research-only until target
-   session pinning and versioned schema migration are defined; live dynamics
-   still waits for measurements and the physical matrix.
+   direction are implemented. App-target session pinning and versioned config
+   transfer now have pure contracts, but app rules remain research-only until a
+   public adapter can identify the target under the cursor without changing it
+   during momentum. Live dynamics still waits for measurements and the physical
+   matrix.
+4. Settings now has fuzzy navigation and reviewed config transfer; Diagnostics
+   exposes the full policy resolution chain plus an aggregate-only clipboard
+   summary; Devices can verify a serial/location-qualified wheel locally. These
+   paths share domain projections but keep native panels and egui presentation
+   outside the pure modules.
 
 Trackpad and Magic Mouse continuous events are not smoothed again. Any future
 scheduler must still write only `DeltaAxis1/2`; private touch APIs, HID seizure,

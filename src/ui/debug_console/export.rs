@@ -192,7 +192,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::config::AppConfig;
-    use crate::device::{DeviceKind, HardwareId};
+    use crate::device::{DeviceIdentity, DeviceKind, HardwareId};
     use crate::device_classifier::ClassificationEvidence;
     use crate::device_source::HidSourceClass;
     use crate::input_policy::InputProvenance;
@@ -206,6 +206,14 @@ mod tests {
             monotonic_us: 42_000,
             device_kind: DeviceKind::Mouse,
             device_name: Some(Arc::from("MX, Master\n3S")),
+            identity: Some(Arc::new(DeviceIdentity::new(
+                HardwareId {
+                    vendor_id: 0x046d,
+                    product_id: 0xb034,
+                },
+                Some(Arc::from("PRIVATE-SERIAL-123")),
+                None,
+            ))),
             hardware: Some(HardwareId {
                 vendor_id: 0x046d,
                 product_id: 0xb034,
@@ -234,6 +242,7 @@ mod tests {
         assert!(
             csv.contains("0x046d,0xb034,medium,self_synthetic,discrete_wheel,physical,true,mouse_kind,3,global_default,off,global_default,123,true,vertical,1,-1,ignored,synthetic_event")
         );
+        assert!(!csv.contains("PRIVATE-SERIAL-123"));
     }
 
     #[test]
@@ -244,6 +253,14 @@ mod tests {
                 monotonic_us: 80_000,
                 device_kind: DeviceKind::Mouse,
                 device_name: Some(Arc::from("Private Mouse Name")),
+                identity: Some(Arc::new(DeviceIdentity::new(
+                    HardwareId {
+                        vendor_id: 0x046d,
+                        product_id: 0xb034,
+                    },
+                    Some(Arc::from("PRIVATE-SERIAL-456")),
+                    None,
+                ))),
                 hardware: Some(HardwareId {
                     vendor_id: 0x046d,
                     product_id: 0xb034,
@@ -270,6 +287,14 @@ mod tests {
                     monotonic_us: 80_000,
                     device_kind: DeviceKind::Mouse,
                     device_name: Some(Arc::from("Private Mouse Name")),
+                    identity: Some(Arc::new(DeviceIdentity::new(
+                        HardwareId {
+                            vendor_id: 0x046d,
+                            product_id: 0xb034,
+                        },
+                        Some(Arc::from("PRIVATE-SERIAL-456")),
+                        None,
+                    ))),
                     hardware: Some(HardwareId {
                         vendor_id: 0x046d,
                         product_id: 0xb034,
@@ -308,6 +333,7 @@ mod tests {
             "step_source",
             "smooth_source",
             "1000000",
+            "PRIVATE-SERIAL-456",
         ] {
             assert!(!serialized.contains(private_value));
         }

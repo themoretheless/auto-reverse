@@ -31,6 +31,7 @@ gui = [
     "objc2-app-kit/NSGraphicsContext",
     "objc2-app-kit/NSApplication",
     "objc2-app-kit/NSPanel",
+    "objc2-app-kit/NSOpenPanel",
     "objc2-app-kit/NSSavePanel",
     "objc2-app-kit/NSWindow",
     "objc2-app-kit/NSWorkspace",
@@ -41,6 +42,9 @@ gui = [
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # Only platform/macos touches these; the pure core (config, device, input,
 # scroll) compiles without any OS framework.

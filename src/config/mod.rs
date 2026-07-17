@@ -8,6 +8,7 @@ mod device_rules;
 mod profiles;
 mod schema;
 mod store;
+mod transfer;
 
 pub use device_rules::{
     matching_device_rule, preferred_device_rule, with_device_alias, with_device_rule_selection,
@@ -15,3 +16,7 @@ pub use device_rules::{
 pub use profiles::{ProfileSource, ResolvedDeviceProfile, ResolvedProfileValue};
 pub use schema::{AppConfig, CONFIG_VERSION, DeviceRule};
 pub use store::{ConfigRevision, ConfigSnapshot, ConfigStore};
+pub use transfer::{
+    ConfigImportPreview, ConfigSection, MAX_IMPORT_BYTES, MigrationReport, SectionChange,
+    TransferError, export_document, preview_import_document, preview_import_file,
+};

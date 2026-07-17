@@ -5,9 +5,14 @@
 //! and table rendering stay here; `export` owns CSV/trace file workflows.
 
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, RichText};
 
+use crate::config::AppConfig;
+use crate::diagnostics_summary::{
+    DiagnosticsSummaryInput, RuntimeStatus, SummaryEvent, build_diagnostics_summary,
+};
 use crate::event_rate::{
     DeviceEventRate, EventRateSample, analyze_event_rates, millihertz_to_hertz,
 };
@@ -31,6 +36,7 @@ pub(super) struct State {
     tap_latency: Option<tap_metrics::TapLatencySnapshot>,
     tap_latency_error: Option<String>,
     tap_latency_history: BTreeMap<u32, LatencyHistory>,
+    summary_copied_at: Option<Instant>,
 }
 
 impl State {
@@ -50,7 +56,13 @@ enum Filter {
 
 /// Renders the Debug Console as a second native viewport. Returns `true`
 /// when that viewport asked to close so the caller can update app state.
-pub(super) fn show_viewport(ctx: &egui::Context, state: &mut State) -> bool {
+pub(super) fn show_viewport(
+    ctx: &egui::Context,
+    state: &mut State,
+    config: &AppConfig,
+    runtime_status: RuntimeStatus,
+    accessibility_granted: bool,
+) -> bool {
     let viewport_id = egui::ViewportId::from_hash_of("auto-reverse-debug-console");
     let builder = egui::ViewportBuilder::default()
         .with_title("Debug Console — Auto Reverse")
@@ -63,13 +75,21 @@ pub(super) fn show_viewport(ctx: &egui::Context, state: &mut State) -> bool {
             close_requested = true;
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| contents(ui, state));
+        egui::CentralPanel::default().show(ctx, |ui| {
+            contents(ui, state, config, runtime_status, accessibility_granted)
+        });
     });
 
     close_requested
 }
 
-fn contents(ui: &mut egui::Ui, state: &mut State) {
+fn contents(
+    ui: &mut egui::Ui,
+    state: &mut State,
+    config: &AppConfig,
+    runtime_status: RuntimeStatus,
+    accessibility_granted: bool,
+) {
     let all_events = debug_log::snapshot();
 
     ui.horizontal(|ui| {
@@ -97,11 +117,42 @@ fn contents(ui: &mut egui::Ui, state: &mut State) {
                 debug_log::clear();
             }
             export_menu(ui, &filtered_events(&all_events, state), state);
+            if styled_button(ui, "Copy summary", egui::vec2(10.0, 5.0)).clicked() {
+                let events = all_events
+                    .iter()
+                    .map(|event| SummaryEvent {
+                        device_kind: event.device_kind,
+                        reason: event.reason,
+                    })
+                    .collect::<Vec<_>>();
+                ui.ctx()
+                    .copy_text(build_diagnostics_summary(DiagnosticsSummaryInput {
+                        config,
+                        runtime_status,
+                        accessibility_granted,
+                        events: &events,
+                        event_capacity: debug_log::CAPACITY,
+                    }));
+                state.summary_copied_at = Some(Instant::now());
+            }
             if styled_button(ui, "Benchmark...", egui::vec2(10.0, 5.0)).clicked() {
                 state.benchmark_requested = true;
             }
         });
     });
+
+    if state
+        .summary_copied_at
+        .is_some_and(|copied_at| copied_at.elapsed() < Duration::from_secs(2))
+    {
+        ui.label(
+            RichText::new("Diagnostics summary copied")
+                .small()
+                .color(Color32::from_rgb(0x34, 0xA8, 0x53)),
+        );
+    } else {
+        state.summary_copied_at = None;
+    }
 
     if let Some(error) = &state.export_error {
         ui.label(

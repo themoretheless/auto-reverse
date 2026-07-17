@@ -66,12 +66,17 @@ use crate::device::{DeviceIdentity, DeviceKind};
 use crate::device_catalog::{
     DeviceCatalogEntry, DeviceState, ObservedDevice, build_device_catalog,
 };
+use crate::device_source::HidSourceClass;
+use crate::device_test::{DeviceActivity, DeviceTestSession, DeviceTestStatus};
+use crate::input_policy::InputProvenance;
 use crate::platform::macos::{
-    activation, daemon_lock, hid, login_item, permissions, power_events, quit_handler, tray,
+    activation, daemon_lock, debug_log, hid, login_item, permissions, power_events, quit_handler,
+    tray,
 };
 use crate::runtime::{DEFAULT_PAUSE_DURATION, RuntimeControl};
 use crate::settings_search::{SettingsDestination, search_settings};
 
+mod config_transfer;
 mod debug_console;
 mod local_export;
 mod runtime;
@@ -79,8 +84,8 @@ mod scroll_benchmark;
 mod theme;
 
 use theme::{
-    device_rule_chip, section, status_header, styled_button, styled_checkbox, styled_step_slider,
-    tab_strip,
+    device_rule_chip, section, status_dot, status_header, styled_button, styled_checkbox,
+    styled_step_slider, tab_strip,
 };
 
 const WINDOW_WIDTH: f32 = 400.0;
@@ -238,6 +243,7 @@ struct SettingsApp {
     runtime_control: Arc<RuntimeControl>,
     devices: Vec<ObservedDevice>,
     device_alias_edits: HashMap<DeviceIdentity, String>,
+    device_tests: HashMap<DeviceIdentity, DeviceTestSession>,
     /// Why the device list is empty, when it failed rather than genuinely
     /// finding nothing - shown inline instead of silently swallowed.
     devices_error: Option<String>,
@@ -269,6 +275,7 @@ struct SettingsApp {
     /// Which compact segmented settings tab is showing.
     selected_tab: SettingsTab,
     settings_search: String,
+    config_transfer: config_transfer::State,
     /// Two-step guard for the destructive Restore defaults action.
     confirm_restore_defaults: bool,
     /// Set by the tray's "Open Debug Console…" item (`TrayAction::OpenDebugConsole`)
@@ -386,6 +393,7 @@ impl SettingsApp {
             runtime_control,
             devices: Vec::new(),
             device_alias_edits: HashMap::new(),
+            device_tests: HashMap::new(),
             devices_error: None,
             save_error: None,
             load_error,
@@ -404,6 +412,7 @@ impl SettingsApp {
                 SettingsTab::Permissions
             },
             settings_search: String::new(),
+            config_transfer: config_transfer::State::default(),
             confirm_restore_defaults: false,
             show_debug_console: false,
             debug_console: debug_console::State::default(),
@@ -779,7 +788,20 @@ impl eframe::App for SettingsApp {
             None => {}
         }
 
-        if self.show_debug_console && debug_console::show_viewport(ctx, &mut self.debug_console) {
+        let diagnostics_runtime = self.tap_runtime.diagnostics_status(
+            self.config.enabled,
+            self.runtime_control.is_paused(),
+            permissions_ready(),
+        );
+        if self.show_debug_console
+            && debug_console::show_viewport(
+                ctx,
+                &mut self.debug_console,
+                &self.config,
+                diagnostics_runtime,
+                permissions_ready(),
+            )
+        {
             self.show_debug_console = false;
         }
         if self.debug_console.take_benchmark_request() {
@@ -823,6 +845,7 @@ impl SettingsApp {
         ui.spacing_mut().item_spacing.y = 8.0;
         let mut changed = false;
         let mut clear_temporary_pause = false;
+        let mut imported_sections = None;
         let permissions_ready = permissions_ready();
 
         status_header(
@@ -1035,6 +1058,7 @@ impl SettingsApp {
                     ui,
                     &self.devices,
                     &mut self.device_alias_edits,
+                    &mut self.device_tests,
                     &mut self.config,
                 );
                 changed |= rules_changed;
@@ -1074,6 +1098,18 @@ impl SettingsApp {
                 if styled_button(ui, "Open Debug Console", egui::vec2(12.0, 5.0)).clicked() {
                     self.show_debug_console = true;
                 }
+
+                section(ui, "Configuration");
+                if let Some(request) = config_transfer::controls(
+                    ui,
+                    &mut self.config_transfer,
+                    &self.config,
+                    self.store.path(),
+                ) {
+                    self.config = request.config;
+                    imported_sections = Some(request.section_labels);
+                    changed = true;
+                }
             }
         }
 
@@ -1108,6 +1144,13 @@ impl SettingsApp {
         if changed {
             let enabled_changed = enabled_before != self.config.enabled;
             self.save();
+            if let Some(sections) = imported_sections {
+                let result = self
+                    .save_error
+                    .as_ref()
+                    .map_or(Ok(()), |error| Err(error.clone()));
+                self.config_transfer.finish_apply(sections, result);
+            }
             // Note: there is no in-process "stop the tap thread" action
             // for the disable-only branch - the background thread reads
             // the shared config on every event and simply passes events
@@ -1170,11 +1213,29 @@ fn device_rules(
     ui: &mut egui::Ui,
     devices: &[ObservedDevice],
     alias_edits: &mut HashMap<DeviceIdentity, String>,
+    device_tests: &mut HashMap<DeviceIdentity, DeviceTestSession>,
     config: &mut AppConfig,
 ) -> (bool, bool) {
     let mut changed = false;
     let mut wants_refresh = false;
     let catalog = build_device_catalog(devices, &config.device_rules);
+    let debug_events = debug_log::snapshot();
+    let activities = debug_events
+        .iter()
+        .filter(|event| {
+            !event.continuous
+                && event.device_kind == DeviceKind::Mouse
+                && event.input_provenance == InputProvenance::Hardware
+                && event.hid_source == HidSourceClass::Physical
+        })
+        .filter_map(|event| {
+            event.identity.as_deref().map(|identity| DeviceActivity {
+                identity,
+                timestamp_us: event.monotonic_us,
+            })
+        })
+        .collect::<Vec<_>>();
+    let now_us = debug_log::now_monotonic_micros();
 
     if catalog.is_empty() {
         ui.label(RichText::new("No pointing devices detected.").weak());
@@ -1196,7 +1257,15 @@ fn device_rules(
         ui.add_space(4.0);
         ui.label(RichText::new(device_state_label(state)).small().strong());
         for entry in entries {
-            changed |= device_rule_row(ui, entry, alias_edits, config);
+            changed |= device_rule_row(
+                ui,
+                entry,
+                alias_edits,
+                device_tests,
+                &activities,
+                now_us,
+                config,
+            );
             ui.separator();
         }
     }
@@ -1228,6 +1297,9 @@ fn device_rule_row(
     ui: &mut egui::Ui,
     entry: &DeviceCatalogEntry,
     alias_edits: &mut HashMap<DeviceIdentity, String>,
+    device_tests: &mut HashMap<DeviceIdentity, DeviceTestSession>,
+    activities: &[DeviceActivity<'_>],
+    now_us: u64,
     config: &mut AppConfig,
 ) -> bool {
     let Some(identity) = entry.identity.as_ref() else {
@@ -1338,6 +1410,70 @@ fn device_rule_row(
         );
         changed = true;
     }
+
+    if entry.state == DeviceState::Connected {
+        let active_profile = config.resolve_device_profile(DeviceKind::Mouse, Some(identity));
+        let active_rule = format!(
+            "Active: {} · {}",
+            if active_profile.reverse.value {
+                "Reverse"
+            } else {
+                "Don't reverse"
+            },
+            active_profile.reverse.source.label(),
+        );
+        ui.horizontal_wrapped(|ui| {
+            if identity.serial_number.is_none() && identity.location_id.is_none() {
+                ui.label(
+                    RichText::new(format!(
+                        "Exact test unavailable · model-wide identity · {active_rule}"
+                    ))
+                    .small()
+                    .weak(),
+                );
+                return;
+            }
+
+            if styled_button(ui, "Test this device", egui::vec2(10.0, 4.0)).clicked() {
+                device_tests.insert(identity.clone(), DeviceTestSession::start(now_us));
+            }
+
+            let Some(session) = device_tests.get_mut(identity) else {
+                ui.label(RichText::new(active_rule).small().weak());
+                return;
+            };
+            match session.observe(identity, now_us, activities) {
+                DeviceTestStatus::Listening { .. } => {
+                    status_dot(ui, Color32::from_rgb(0xE5, 0x9E, 0x2F), 3.0, 8.0);
+                    ui.label(
+                        RichText::new(format!("Listening... · {active_rule}"))
+                            .small()
+                            .weak(),
+                    );
+                }
+                DeviceTestStatus::Detected { age_us } => {
+                    status_dot(ui, Color32::from_rgb(0x34, 0xA8, 0x53), 3.0, 8.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Detected {:.1}s ago · {active_rule}",
+                            age_us as f64 / 1_000_000.0
+                        ))
+                        .small()
+                        .color(Color32::from_rgb(0x34, 0xA8, 0x53)),
+                    );
+                }
+                DeviceTestStatus::TimedOut => {
+                    status_dot(ui, Color32::from_rgb(0xE5, 0x9E, 0x2F), 3.0, 8.0);
+                    ui.label(
+                        RichText::new(format!("No event in 5s · {active_rule}"))
+                            .small()
+                            .weak(),
+                    );
+                }
+            }
+        });
+    }
+
     if commit_alias {
         if finish_alias_edit {
             alias_edits.remove(identity);

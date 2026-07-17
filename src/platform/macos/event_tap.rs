@@ -438,6 +438,7 @@ fn record_debug_event(
             monotonic_us,
             device_kind,
             device_name: device_name.clone(),
+            identity: decision.original.identity.clone(),
             hardware,
             attribution_status,
             classification_evidence,

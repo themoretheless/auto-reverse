@@ -1342,11 +1342,11 @@ R43. [Done] Каждая Debug Console row хранит attribution, HID provena
 
 R44. [Done] Pure fuzzy settings index ищет по title/section/keywords, терпит пропущенную букву, ограничивает suggestions и ведет в General/Devices/Permissions/Advanced или Debug Console; Enter открывает первый result, Escape очищает поиск.
 R45. [Done] General и Devices сохраняют master/direction/device controls; uncommon posted-input policy вынесена в Advanced, а trace, CSV, benchmark, event-rate и latency остаются в отдельной Diagnostics window. Non-live smooth curve не показывается как рабочая настройка.
-R46. [Improve] Сделать versioned config export/import с schema validation и migration report.
-R47. [Improve] Перед импортом показывать dry-run diff и требовать подтверждение только изменяемых sections.
-R48. [Improve] Ограничить import size и отклонять небезопасные symlink/world-writable source cases.
-R49. [Improve] Добавить Copy diagnostics summary без raw trace и личных app/window данных.
-R50. [Improve] В Devices добавить "Test this device" с локальным recent-event indicator и active rule.
+R46. [Done] `config::transfer::{document,diff,secure_file}` разделяет versioned TOML/schema migration, section review и filesystem boundary; unversioned/explicit-v0 документ мигрирует в v1 с typed `MigrationReport`, а future versions и неизвестные current-schema keys не теряются молча.
+R47. [Done] Advanced показывает dry-run только реально отличающихся General/Devices/Startup/Advanced sections и их field-level changes; preview rebases на текущий config, а подтверждение применяет только показанные sections через существующий revision-CAS save.
+R48. [Done] Import ограничен 256 KiB и принимает только неизменившийся regular UTF-8 file: `O_NOFOLLOW`, symlink/world-writable rejection, type/size gates и dev/inode/mtime/length recheck закрывают path replacement до TOML parsing.
+R49. [Done] Debug Console копирует aggregate diagnostics summary с version/runtime/permission/config/counts/reasons. Typed builder не принимает timestamps, deltas, names, PID или hardware identity; row trace и target app/window data в clipboard не попадают.
+R50. [Done] Connected exact-identity device имеет локальный `Test this device`: только последующее physical discrete hardware event с тем же serial/location подтверждает тест в 5-second window, рядом всегда показан effective direction/source. Model-wide identity честно отключает exact test; serial/location не экспортируются.
 R51. [Improve] Preset preview должен быть временным и автоматически откатываться, если пользователь не подтвердил его.
 R52. [Improve] Разделить Reset this device, Reset dynamics и Restore all defaults.
 R53. [Improve] Permission callout показывать только когда включенная функция реально заблокирована; disabled utility не должна nag.
