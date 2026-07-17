@@ -13,6 +13,8 @@
 //!   CGEventTaps at once, regardless of which process/thread installs them.
 //! - `activation` (gui only): PID-addressed file mailbox that lets a second
 //!   GUI launch reveal and focus the existing settings window.
+//! - `app_events` (gui only): coalesced app-activation notification used to
+//!   refresh cached permission/device state after returning from Settings.
 //! - `debug_log` (gui only): bounded ring buffer of structured scroll
 //!   decisions. `event_tap` records raw fields plus a stable reason enum; the
 //!   Debug Console formats them only while presenting or exporting.
@@ -33,6 +35,8 @@
 
 #[cfg(feature = "gui")]
 pub mod activation;
+#[cfg(feature = "gui")]
+pub mod app_events;
 pub mod daemon_lock;
 #[cfg(feature = "gui")]
 pub mod debug_log;

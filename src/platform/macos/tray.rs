@@ -59,7 +59,7 @@
 //! while keeping "Open Debug Console..." in the rich menu as a discoverable
 //! fallback.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use block2::RcBlock;
@@ -75,7 +75,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 use crate::config::AppConfig;
-use crate::platform::macos::{hid, permissions};
+use crate::platform::macos::hid;
 use crate::runtime::{DEFAULT_PAUSE_DURATION, RuntimeControl};
 
 mod device_rules;
@@ -133,12 +133,12 @@ pub enum TrayStatus {
 }
 
 impl TrayStatus {
-    pub fn from_config(config: &AppConfig, temporarily_paused: bool) -> Self {
-        Self::from_state(
-            config.enabled,
-            permissions::has_scroll_control_access(),
-            temporarily_paused,
-        )
+    pub fn from_config(
+        config: &AppConfig,
+        permissions_ready: bool,
+        temporarily_paused: bool,
+    ) -> Self {
+        Self::from_state(config.enabled, permissions_ready, temporarily_paused)
     }
 
     fn from_state(enabled: bool, permissions_ready: bool, temporarily_paused: bool) -> Self {
@@ -278,6 +278,7 @@ impl TrayHandle {
 struct MenuActionTargetIvars {
     shared_config: Arc<RwLock<AppConfig>>,
     runtime_control: Arc<RuntimeControl>,
+    permissions_ready: Arc<AtomicBool>,
     on_change: Arc<SaveCallback>,
     device_snapshot: Mutex<Vec<hid::DeviceInfo>>,
 }
@@ -426,6 +427,7 @@ define_class!(
                 &config,
                 &devices,
                 &ivars.runtime_control,
+                ivars.permissions_ready.load(Ordering::Acquire),
                 mtm,
             );
         }
@@ -443,6 +445,7 @@ define_class!(
 pub fn build(
     shared_config: Arc<RwLock<AppConfig>>,
     runtime_control: Arc<RuntimeControl>,
+    permissions_ready: Arc<AtomicBool>,
     on_disk_save: impl Fn(&AppConfig) -> Result<(), String> + Send + Sync + 'static,
 ) -> Result<TrayHandle, String> {
     let mtm = MainThreadMarker::new()
@@ -460,6 +463,7 @@ pub fn build(
     let target_alloc = mtm.alloc().set_ivars(MenuActionTargetIvars {
         shared_config,
         runtime_control: Arc::clone(&runtime_control),
+        permissions_ready: Arc::clone(&permissions_ready),
         on_change: Arc::new(on_disk_save),
         device_snapshot: Mutex::new(devices.clone()),
     });
@@ -473,10 +477,15 @@ pub fn build(
         &config_snapshot,
         &devices,
         &runtime_control,
+        permissions_ready.load(Ordering::Acquire),
         mtm,
     );
 
-    let status = TrayStatus::from_config(&config_snapshot, runtime_control.is_paused());
+    let status = TrayStatus::from_config(
+        &config_snapshot,
+        permissions_ready.load(Ordering::Acquire),
+        runtime_control.is_paused(),
+    );
     let icon = arrows_icon()?;
     let status_item = NSStatusBar::systemStatusBar().statusItemWithLength(NSSquareStatusItemLength);
     #[allow(deprecated)]
@@ -531,12 +540,13 @@ fn rebuild_menu(
     config: &AppConfig,
     devices: &[hid::DeviceInfo],
     runtime_control: &RuntimeControl,
+    permissions_ready: bool,
     mtm: MainThreadMarker,
 ) {
     menu.removeAllItems();
 
     let temporarily_paused = runtime_control.is_paused();
-    let status = TrayStatus::from_config(config, temporarily_paused);
+    let status = TrayStatus::from_config(config, permissions_ready, temporarily_paused);
     let status_item = NSMenuItem::new(mtm);
     status_item.setTitle(&NSString::from_str(&format!(
         "Auto Reverse — {}",

@@ -87,6 +87,9 @@ Implemented:
   and explicit click/action cancellation are tested, while canceled distance
   remains visible in the ledger; the model has no CoreGraphics, timer, thread,
   or config I/O dependency;
+- a 15-second local Off/Precise/Balanced/Fast preset preview with immediate/tail
+  model bars; selection is never saved or shared with the tap until `Use preset`,
+  and expiry, Revert, or an external config change restores the committed value;
 - a non-live pure scheduler safety contract with unique wake ids, two-axis
   session generations, due-anchored 8 ms sample TTL, mandatory synthetic
   provenance, idle teardown, and latched fail-open; macOS normalization
@@ -94,10 +97,15 @@ Implemented:
 - process-local 15-minute pause that leaves persisted settings untouched;
 - typed event-tap lifecycle with explicit started/already-running/stopped/failed
   events rather than timeout-inferred booleans;
-- GUI sleep/wake recovery through `NSWorkspace`: after wake it rechecks
-  permissions, safely re-arms a live tap, or restarts one stopped tap;
-- permission-first initial tab with one targeted Accessibility action,
-  and confirmation before Restore defaults removes per-device rules;
+- notification-led permission/device refresh through app activation, workspace
+  wake, and IOHID match/removal generations, with one coalescing 30-second timer
+  only as a backstop; disabled launch performs no TCC prompt or permission nag;
+- GUI sleep/wake recovery plus a public `CGEventTapIsEnabled` watchdog: two
+  unhealthy one-second samples are required before rearm/restart, automatic
+  recovery is capped at three attempts, and exhaustion is visible;
+- separate confirmed `Reset this device`, `Reset dynamics`, and `Restore all
+  defaults` scopes; full restore unregisters the GUI login item only after the
+  default config saves successfully;
 - fuzzy settings search routes directly to General, Devices, Permissions,
   Advanced, or Diagnostics; common direction/device controls stay on the main
   tabs while input policy, config transfer, and diagnostic tools remain separated;
@@ -120,8 +128,8 @@ Still missing:
 - platform timer/posting adapter, runtime opt-in, cancellation hooks, and
   physical acceptance for the experimental dynamics model;
 - automatic on-load config migrations with unknown-field preservation fixtures,
-  distinct reset scopes, notification-led permission refresh, and a bounded
-  public-state event-tap watchdog from R51-R60.
+  typed recovery-reason audit, property/fuzz suites, the platform regression
+  matrix, and a release-gated dynamics kill switch from R56-R60.
 
 ## Commands
 
@@ -478,6 +486,9 @@ src/diagnostics_summary.rs           aggregate privacy-bounded clipboard text
 src/app_session.rs                   future app-target session pin, non-live
 src/input_policy.rs                  shared input provenance and bypass
 src/settings_search.rs               fuzzy settings/diagnostics navigation
+src/preset_preview.rs                temporary preset confirm/expiry policy
+src/refresh_policy.rs                notification coalescing + timer backstop
+src/tap_watchdog.rs                  bounded event-tap health/recovery policy
 src/input.rs                         normalized ScrollEvent with optional shared identity
 src/runtime.rs                       lock-free process-local pause control
 src/scroll.rs                        pure reversal policy (no CoreGraphics)
@@ -490,6 +501,7 @@ src/config/mod.rs                    facade re-exporting AppConfig/ConfigStore
 src/config/schema.rs                 fields, defaults and validation
 src/config/device_rules.rs           pure selector priority, matching and mutation
 src/config/profiles.rs               field inheritance and fixed selector precedence
+src/config/reset.rs                  exact-device and dynamics reset scopes
 src/config/store.rs                  paths, TOML I/O, atomic save, lock, snapshots/CAS
 src/config/transfer/mod.rs           transfer facade and typed errors
 src/config/transfer/document.rs      version/schema migration + TOML
@@ -503,6 +515,7 @@ src/platform/macos/hid.rs            IOHID inventory + wheel identity/attributio
 src/platform/macos/gesture.rs        passive AppKit gesture tap + classifier adapter
 src/platform/macos/startup.rs        LaunchAgent start-at-login support (headless `run`)
 src/platform/macos/event_tap.rs      CGEventTap runtime loop, config shared via Arc<RwLock<_>>
+src/platform/macos/app_events.rs     app-activation refresh notification bridge
 src/platform/macos/power_events.rs   NSWorkspace sleep/wake observer and atomic signal
 src/platform/macos/daemon_lock.rs    flock: only one live CGEventTap at a time, any launch path
 src/platform/macos/activation.rs     second GUI launch -> existing-window focus mailbox
@@ -515,6 +528,8 @@ src/platform/macos/tray.rs           rich native menu-bar tray icon/menu (gui fe
 src/platform/macos/tray/device_rules.rs pure tray quick-pick rule mutation
 src/ui.rs                            settings app coordinator and tab contents
 src/ui/runtime.rs                    typed tap lifecycle and explicit event channel
+src/ui/device_rules.rs               catalog/profile/test/reset device rows
+src/ui/preset_preview.rs             temporary dynamics model controls
 src/ui/theme.rs                      handoff tokens and custom egui controls
 src/ui/local_export.rs               shared CSV escaping + atomic local replacement
 src/ui/config_transfer.rs            config panels and pending section review
@@ -535,9 +550,11 @@ keeps only the small AppKit event/touch surface required by the classifier and
 does not include eframe, windows, menus, images, or login-item integration; the
 pure domain modules themselves still import no OS framework.
 
-The remaining useful split is narrower: keep the AppKit icon/menu adapter in
-`tray.rs`, move structured diagnostics behind a small sink, and split settings
-tabs only when their behavior grows enough to justify another boundary.
+The remaining useful split is narrower: device rows, preset preview, config
+transfer, benchmark, diagnostics and runtime lifecycle already have separate
+owners. Keep the AppKit icon/menu adapter in `tray.rs`, move structured
+diagnostics behind a small sink, and split another settings tab only when its
+behavior grows enough to justify that boundary.
 
 ## Three Iterations
 
@@ -616,6 +633,11 @@ The implementation order is intentionally conservative:
    summary; Devices can verify a serial/location-qualified wheel locally. These
    paths share domain projections but keep native panels and egui presentation
    outside the pure modules.
+5. Preset preview and reset scopes are pure and explicit. Permission/device
+   refresh is notification-led, while a public-state watchdog adds hysteresis
+   and a finite recovery budget. The remaining R56-R60 work is audit/fixtures,
+   platform regression coverage, and release gating rather than another hidden
+   runtime retry path.
 
 Trackpad and Magic Mouse continuous events are not smoothed again. Any future
 scheduler must still write only `DeltaAxis1/2`; private touch APIs, HID seizure,

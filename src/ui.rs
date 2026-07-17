@@ -54,38 +54,35 @@
 //! done there and not via `NSApplicationDelegate`.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Instant;
 
 use eframe::egui::{self, Color32, RichText, ViewportCommand};
 
-use crate::config::{
-    AppConfig, ConfigRevision, ConfigStore, ProfileSource, with_device_alias,
-    with_device_rule_selection,
-};
-use crate::device::{DeviceIdentity, DeviceKind};
-use crate::device_catalog::{
-    DeviceCatalogEntry, DeviceState, ObservedDevice, build_device_catalog,
-};
-use crate::device_source::HidSourceClass;
-use crate::device_test::{DeviceActivity, DeviceTestSession, DeviceTestStatus};
-use crate::input_policy::InputProvenance;
+use crate::config::{AppConfig, ConfigRevision, ConfigStore, with_dynamics_defaults};
+use crate::device::DeviceIdentity;
+use crate::device_catalog::ObservedDevice;
+use crate::device_test::DeviceTestSession;
 use crate::platform::macos::{
-    activation, daemon_lock, debug_log, hid, login_item, permissions, power_events, quit_handler,
+    activation, app_events, daemon_lock, hid, login_item, permissions, power_events, quit_handler,
     tray,
 };
+use crate::refresh_policy::RefreshPolicy;
 use crate::runtime::{DEFAULT_PAUSE_DURATION, RuntimeControl};
 use crate::settings_search::{SettingsDestination, search_settings};
 
 mod config_transfer;
 mod debug_console;
+mod device_rules;
 mod local_export;
+mod preset_preview;
 mod runtime;
 mod scroll_benchmark;
 mod theme;
 
 use theme::{
-    device_rule_chip, section, status_dot, status_header, styled_button, styled_checkbox,
-    styled_step_slider, tab_strip,
+    section, status_header, styled_button, styled_checkbox, styled_step_slider, tab_strip,
 };
 
 const WINDOW_WIDTH: f32 = 400.0;
@@ -252,6 +249,12 @@ struct SettingsApp {
     load_error: Option<String>,
     /// Typed lifecycle state and event channel for the in-process tap.
     tap_runtime: runtime::TapRuntime,
+    /// Cached TCC state, refreshed from public notifications and a rare timer.
+    permissions_ready: bool,
+    permissions_ready_shared: Arc<AtomicBool>,
+    refresh_policy: RefreshPolicy,
+    app_events: Option<app_events::AppEventObserver>,
+    app_events_error: Option<String>,
     /// Main-thread NSWorkspace sleep/wake observer. Installed lazily on the
     /// first eframe logic tick, alongside the other AppKit integrations.
     power_events: Option<power_events::PowerEventObserver>,
@@ -276,7 +279,10 @@ struct SettingsApp {
     selected_tab: SettingsTab,
     settings_search: String,
     config_transfer: config_transfer::State,
-    /// Two-step guard for the destructive Restore defaults action.
+    preset_preview: preset_preview::State,
+    confirm_reset_dynamics: bool,
+    confirm_reset_device: Option<DeviceIdentity>,
+    /// Two-step guard for the destructive Restore all defaults action.
     confirm_restore_defaults: bool,
     /// Set by the tray's "Open Debug Console…" item (`TrayAction::OpenDebugConsole`)
     /// and cleared when the console viewport's own close button is used.
@@ -365,23 +371,25 @@ fn settings_search(ui: &mut egui::Ui, query: &mut String) -> Option<SettingsDest
 
 impl SettingsApp {
     fn load(activation_inbox: activation::ActivationInbox, show_scroll_benchmark: bool) -> Self {
-        // One-shot, mirrors the old run_event_tap(): the request_* calls are
-        // what actually register this binary with TCC (and pop the native
-        // consent dialogs) - the has_* checks the permissions panel uses
-        // are read-only and never do this. Without it, an install whose
-        // only entry point is this window never appears in System
-        // Settings > Privacy & Security for the user to grant.
-        let permissions_ready = permissions::request_scroll_control_access();
-
         let store = ConfigStore::default();
         let (config, config_revision, load_error) = match store.load_or_create_snapshot() {
             Ok(snapshot) => (snapshot.config, Some(snapshot.revision), None),
             Err(error) => (AppConfig::default(), None, Some(error.to_string())),
         };
+        // Loading config must precede prompting. A deliberately disabled
+        // utility remains quiet; an enabled one requests the one TCC grant
+        // needed to install its active event tap.
+        let permissions_ready = permissions::prepare_scroll_control_access(config.enabled);
+        let selected_tab = if config.enabled && !permissions_ready {
+            SettingsTab::Permissions
+        } else {
+            SettingsTab::General
+        };
 
         let shared_config = Arc::new(RwLock::new(config.clone()));
         let config_revision = Arc::new(Mutex::new(config_revision));
         let runtime_control = Arc::new(RuntimeControl::default());
+        let permissions_ready_shared = Arc::new(AtomicBool::new(permissions_ready));
 
         let login_item_error = None;
 
@@ -398,6 +406,11 @@ impl SettingsApp {
             save_error: None,
             load_error,
             tap_runtime: runtime::TapRuntime::default(),
+            permissions_ready,
+            permissions_ready_shared,
+            refresh_policy: RefreshPolicy::new(Instant::now(), hid::inventory_generation()),
+            app_events: None,
+            app_events_error: None,
             power_events: None,
             power_events_error: None,
             tray_error: None,
@@ -406,13 +419,12 @@ impl SettingsApp {
             login_item_error,
             tray: None,
             quit_handler_installed: false,
-            selected_tab: if permissions_ready {
-                SettingsTab::General
-            } else {
-                SettingsTab::Permissions
-            },
+            selected_tab,
             settings_search: String::new(),
             config_transfer: config_transfer::State::default(),
+            preset_preview: preset_preview::State::default(),
+            confirm_reset_dynamics: false,
+            confirm_reset_device: None,
             confirm_restore_defaults: false,
             show_debug_console: false,
             debug_console: debug_console::State::default(),
@@ -445,6 +457,8 @@ impl SettingsApp {
                 self.devices_error = Some(error.to_string());
             }
         }
+        self.refresh_policy
+            .acknowledge_device_generation(hid::inventory_generation());
     }
 
     /// Persists to disk AND publishes to the shared config the background
@@ -563,14 +577,14 @@ impl SettingsApp {
         self.load_error = None;
 
         if enabled_before != self.config.enabled {
-            self.handle_enabled_changed(permissions_ready());
+            self.handle_enabled_changed();
         }
         Ok(true)
     }
 
     fn start_tap_thread(&mut self) {
         self.tap_runtime.start_if_ready(
-            permissions_ready(),
+            self.permissions_ready,
             Arc::clone(&self.shared_config),
             Arc::clone(&self.runtime_control),
         );
@@ -591,9 +605,24 @@ impl SettingsApp {
         self.config = guard.clone();
     }
 
-    fn handle_enabled_changed(&mut self, permissions_ready: bool) {
+    fn refresh_permission_state(&mut self) {
+        self.set_permissions_ready(permissions::has_scroll_control_access());
+        if !self.config.enabled {
+            return;
+        }
+        if self.permissions_ready {
+            self.start_tap_thread();
+        } else {
+            self.tap_runtime.wait_for_permissions();
+        }
+    }
+
+    fn handle_enabled_changed(&mut self) {
         if self.config.enabled {
-            if permissions_ready {
+            // Enabling is explicit user intent, so this is the one transition
+            // allowed to prompt. Passive refreshes remain read-only.
+            self.set_permissions_ready(permissions::prepare_scroll_control_access(true));
+            if self.permissions_ready {
                 self.start_tap_thread();
             } else {
                 self.tap_runtime.wait_for_permissions();
@@ -602,6 +631,12 @@ impl SettingsApp {
             self.runtime_control.resume();
             self.tap_runtime.disabled();
         }
+    }
+
+    fn set_permissions_ready(&mut self, ready: bool) {
+        self.permissions_ready = ready;
+        self.permissions_ready_shared
+            .store(ready, Ordering::Release);
     }
 }
 
@@ -615,6 +650,18 @@ impl eframe::App for SettingsApp {
     // calls for a visible viewport.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.tap_runtime.poll();
+        self.preset_preview.tick(self.config.smooth_preset);
+
+        if self.app_events.is_none() && self.app_events_error.is_none() {
+            match app_events::AppEventObserver::install() {
+                Ok(observer) => self.app_events = Some(observer),
+                Err(error) => self.app_events_error = Some(error),
+            }
+        }
+        let app_became_active = self
+            .app_events
+            .as_ref()
+            .is_some_and(app_events::AppEventObserver::poll_became_active);
 
         if self.power_events.is_none() && self.power_events_error.is_none() {
             match power_events::PowerEventObserver::install() {
@@ -626,26 +673,37 @@ impl eframe::App for SettingsApp {
             .power_events
             .as_ref()
             .and_then(power_events::PowerEventObserver::poll);
-        match power_event {
-            Some(power_events::PowerEvent::WillSleep) | None => {}
-            Some(power_events::PowerEvent::DidWake) => {
-                // Devices can be connected or removed while asleep. Refresh
-                // their UI snapshot once, and open a bounded tap-recovery
-                // window even while the settings viewport is hidden.
-                self.refresh_devices();
-                if self.config.enabled {
-                    self.tap_runtime.request_wake_recovery();
-                }
-            }
+        let did_wake = matches!(power_event, Some(power_events::PowerEvent::DidWake));
+        let refresh = self.refresh_policy.poll(
+            Instant::now(),
+            app_became_active,
+            did_wake,
+            hid::inventory_generation(),
+        );
+        if refresh.permissions {
+            self.refresh_permission_state();
+        }
+        if refresh.devices {
+            self.refresh_devices();
+        }
+        if did_wake && self.config.enabled {
+            self.tap_runtime.request_wake_recovery();
         }
 
         if self.config.enabled && self.tap_runtime.wake_recovery_pending() {
             self.tap_runtime.recover_after_wake(
-                permissions_ready(),
+                self.permissions_ready,
                 &self.shared_config,
                 &self.runtime_control,
             );
-        } else if !self.config.enabled {
+        }
+        if self.config.enabled {
+            self.tap_runtime.poll_watchdog(
+                self.permissions_ready,
+                &self.shared_config,
+                &self.runtime_control,
+            );
+        } else {
             self.tap_runtime.disabled();
         }
 
@@ -660,6 +718,7 @@ impl eframe::App for SettingsApp {
             match tray::build(
                 Arc::clone(&self.shared_config),
                 Arc::clone(&self.runtime_control),
+                Arc::clone(&self.permissions_ready_shared),
                 move |config| {
                     let expected = {
                         let current = revision_for_tray
@@ -690,6 +749,7 @@ impl eframe::App for SettingsApp {
         if let Some(tray) = &mut self.tray {
             tray.set_status(tray::TrayStatus::from_config(
                 &self.config,
+                self.permissions_ready,
                 self.runtime_control.is_paused(),
             ));
         }
@@ -758,7 +818,7 @@ impl eframe::App for SettingsApp {
                 let enabled_before = self.config.enabled;
                 self.sync_config_from_shared();
                 if enabled_before != self.config.enabled {
-                    self.handle_enabled_changed(permissions_ready());
+                    self.handle_enabled_changed();
                 }
             }
             Some(tray::TrayAction::ToggleDevice(_)) => {
@@ -791,7 +851,7 @@ impl eframe::App for SettingsApp {
         let diagnostics_runtime = self.tap_runtime.diagnostics_status(
             self.config.enabled,
             self.runtime_control.is_paused(),
-            permissions_ready(),
+            self.permissions_ready,
         );
         if self.show_debug_console
             && debug_console::show_viewport(
@@ -799,7 +859,7 @@ impl eframe::App for SettingsApp {
                 &mut self.debug_console,
                 &self.config,
                 diagnostics_runtime,
-                permissions_ready(),
+                self.permissions_ready,
             )
         {
             self.show_debug_console = false;
@@ -845,8 +905,9 @@ impl SettingsApp {
         ui.spacing_mut().item_spacing.y = 8.0;
         let mut changed = false;
         let mut clear_temporary_pause = false;
+        let mut disable_login_item = false;
         let mut imported_sections = None;
-        let permissions_ready = permissions_ready();
+        let permissions_ready = self.permissions_ready;
 
         status_header(
             ui,
@@ -903,7 +964,7 @@ impl SettingsApp {
         // looking at General or Devices - the exact kind of error this
         // project's honesty rules (see module doc comment) require staying
         // visible, not buried behind a tab click.
-        let tap_error = self.tap_runtime.state().error_message().map(str::to_owned);
+        let tap_error = self.tap_runtime.error_message().map(str::to_owned);
         if let Some(error) = tap_error {
             ui.label(
                 RichText::new(format!("Scroll reversal could not start: {error}"))
@@ -915,7 +976,7 @@ impl SettingsApp {
             // off" (padding:5px 12px), the closest handoff analog.
             if permissions_ready
                 && self.config.enabled
-                && self.tap_runtime.state().can_retry()
+                && self.tap_runtime.can_retry()
                 && styled_button(ui, "Retry starting scroll reversal", egui::vec2(12.0, 5.0))
                     .clicked()
             {
@@ -932,6 +993,20 @@ impl SettingsApp {
         if let Some(error) = &self.activation_error {
             ui.label(
                 RichText::new(format!("Window activation unavailable: {error}"))
+                    .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
+                    .small(),
+            );
+        }
+        if let Some(error) = &self.app_events_error {
+            ui.label(
+                RichText::new(format!("Automatic status refresh unavailable: {error}"))
+                    .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
+                    .small(),
+            );
+        }
+        if let Some(error) = &self.login_item_error {
+            ui.label(
+                RichText::new(format!("Start at login failed: {error}"))
                     .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
                     .small(),
             );
@@ -1054,11 +1129,12 @@ impl SettingsApp {
             }
             SettingsTab::Devices => {
                 section(ui, "Per-device rules");
-                let (rules_changed, wants_refresh) = device_rules(
+                let (rules_changed, wants_refresh) = device_rules::controls(
                     ui,
                     &self.devices,
                     &mut self.device_alias_edits,
                     &mut self.device_tests,
+                    &mut self.confirm_reset_device,
                     &mut self.config,
                 );
                 changed |= rules_changed;
@@ -1075,7 +1151,7 @@ impl SettingsApp {
             }
             SettingsTab::Permissions => {
                 section(ui, "Permissions");
-                permissions_panel(ui);
+                permissions_panel(ui, self.config.enabled, permissions_ready);
                 // Scroll-reversal error/waiting notices are pinned above
                 // the tabs now (see panel_contents), not repeated here.
                 ui.add_space(8.0);
@@ -1084,6 +1160,41 @@ impl SettingsApp {
                 self.login_item_row(ui);
             }
             SettingsTab::Advanced => {
+                section(ui, "Experimental dynamics");
+                if let Some(preset) = preset_preview::controls(
+                    ui,
+                    &mut self.preset_preview,
+                    self.config.smooth_preset,
+                ) {
+                    self.config.smooth_preset = preset;
+                    changed = true;
+                }
+                if self.confirm_reset_dynamics {
+                    ui.label(
+                        RichText::new(
+                            "Reset wheel step size, saved preset, and per-device dynamics?",
+                        )
+                        .small()
+                        .strong(),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        if styled_button(ui, "Cancel", egui::vec2(10.0, 4.0)).clicked() {
+                            self.confirm_reset_dynamics = false;
+                        }
+                        if styled_button(ui, "Reset dynamics", egui::vec2(10.0, 4.0)).clicked() {
+                            let reset = with_dynamics_defaults(&self.config);
+                            if reset != self.config {
+                                self.config = reset;
+                                changed = true;
+                            }
+                            self.preset_preview.cancel();
+                            self.confirm_reset_dynamics = false;
+                        }
+                    });
+                } else if styled_button(ui, "Reset dynamics", egui::vec2(12.0, 5.0)).clicked() {
+                    self.confirm_reset_dynamics = true;
+                }
+
                 section(ui, "Input policy");
                 changed |= styled_checkbox(
                     ui,
@@ -1120,7 +1231,7 @@ impl SettingsApp {
         if self.confirm_restore_defaults {
             ui.label(
                 RichText::new(format!(
-                    "Restore every setting and remove {} per-device rule(s)?",
+                    "Restore all settings, remove {} per-device rule(s), and turn off the app login item?",
                     self.config.device_rules.len()
                 ))
                 .small()
@@ -1130,14 +1241,18 @@ impl SettingsApp {
                 if styled_button(ui, "Cancel", egui::vec2(14.0, 6.0)).clicked() {
                     self.confirm_restore_defaults = false;
                 }
-                if styled_button(ui, "Restore", egui::vec2(14.0, 6.0)).clicked() {
+                if styled_button(ui, "Restore all", egui::vec2(14.0, 6.0)).clicked() {
                     self.config = AppConfig::default();
+                    self.preset_preview.cancel();
+                    self.confirm_reset_dynamics = false;
+                    self.confirm_reset_device = None;
                     clear_temporary_pause = true;
+                    disable_login_item = true;
                     self.confirm_restore_defaults = false;
                     changed = true;
                 }
             });
-        } else if styled_button(ui, "Restore defaults", egui::vec2(14.0, 6.0)).clicked() {
+        } else if styled_button(ui, "Restore all defaults", egui::vec2(14.0, 6.0)).clicked() {
             self.confirm_restore_defaults = true;
         }
 
@@ -1162,8 +1277,19 @@ impl SettingsApp {
                 if clear_temporary_pause {
                     self.runtime_control.resume();
                 }
+                if disable_login_item {
+                    self.login_item_error = if matches!(
+                        login_item::status(),
+                        login_item::LoginItemStatus::Enabled
+                            | login_item::LoginItemStatus::RequiresApproval
+                    ) {
+                        login_item::unregister().err()
+                    } else {
+                        None
+                    };
+                }
                 if enabled_changed {
-                    self.handle_enabled_changed(permissions_ready);
+                    self.handle_enabled_changed();
                 }
             }
         }
@@ -1189,13 +1315,6 @@ impl SettingsApp {
                 }
             }
         });
-        if let Some(error) = &self.login_item_error {
-            ui.label(
-                RichText::new(format!("Start at login failed: {error}"))
-                    .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
-                    .small(),
-            );
-        }
         ui.label(
             RichText::new(
                 "Separate from the CLI's enable-startup command - this registers the app \
@@ -1207,316 +1326,7 @@ impl SettingsApp {
     }
 }
 
-/// Connected, remembered, and unattributable pointing-device rows.
-/// Returns (config changed, user asked to refresh the device list).
-fn device_rules(
-    ui: &mut egui::Ui,
-    devices: &[ObservedDevice],
-    alias_edits: &mut HashMap<DeviceIdentity, String>,
-    device_tests: &mut HashMap<DeviceIdentity, DeviceTestSession>,
-    config: &mut AppConfig,
-) -> (bool, bool) {
-    let mut changed = false;
-    let mut wants_refresh = false;
-    let catalog = build_device_catalog(devices, &config.device_rules);
-    let debug_events = debug_log::snapshot();
-    let activities = debug_events
-        .iter()
-        .filter(|event| {
-            !event.continuous
-                && event.device_kind == DeviceKind::Mouse
-                && event.input_provenance == InputProvenance::Hardware
-                && event.hid_source == HidSourceClass::Physical
-        })
-        .filter_map(|event| {
-            event.identity.as_deref().map(|identity| DeviceActivity {
-                identity,
-                timestamp_us: event.monotonic_us,
-            })
-        })
-        .collect::<Vec<_>>();
-    let now_us = debug_log::now_monotonic_micros();
-
-    if catalog.is_empty() {
-        ui.label(RichText::new("No pointing devices detected.").weak());
-    }
-
-    for state in [
-        DeviceState::Connected,
-        DeviceState::Remembered,
-        DeviceState::Unavailable,
-    ] {
-        let entries: Vec<_> = catalog
-            .iter()
-            .filter(|entry| entry.state == state)
-            .collect();
-        if entries.is_empty() {
-            continue;
-        }
-
-        ui.add_space(4.0);
-        ui.label(RichText::new(device_state_label(state)).small().strong());
-        for entry in entries {
-            changed |= device_rule_row(
-                ui,
-                entry,
-                alias_edits,
-                device_tests,
-                &activities,
-                now_us,
-                config,
-            );
-            ui.separator();
-        }
-    }
-
-    ui.horizontal(|ui| {
-        // Handoff "1b" Devices tab: "padding:5px 12px".
-        if styled_button(ui, "Refresh devices", egui::vec2(12.0, 5.0)).clicked() {
-            wants_refresh = true;
-        }
-        ui.label(
-            RichText::new("Rules apply to clicky wheels only, not trackpad-style scrolling.")
-                .small()
-                .weak(),
-        );
-    });
-
-    (changed, wants_refresh)
-}
-
-fn device_state_label(state: DeviceState) -> &'static str {
-    match state {
-        DeviceState::Connected => "CONNECTED",
-        DeviceState::Remembered => "REMEMBERED",
-        DeviceState::Unavailable => "UNAVAILABLE",
-    }
-}
-
-fn device_rule_row(
-    ui: &mut egui::Ui,
-    entry: &DeviceCatalogEntry,
-    alias_edits: &mut HashMap<DeviceIdentity, String>,
-    device_tests: &mut HashMap<DeviceIdentity, DeviceTestSession>,
-    activities: &[DeviceActivity<'_>],
-    now_us: u64,
-    config: &mut AppConfig,
-) -> bool {
-    let Some(identity) = entry.identity.as_ref() else {
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.label(&entry.display_name);
-                ui.label(
-                    RichText::new(
-                        entry
-                            .transport
-                            .as_deref()
-                            .map(|transport| format!("{transport} · stable identity unavailable"))
-                            .unwrap_or_else(|| "Stable identity unavailable".to_string()),
-                    )
-                    .small()
-                    .weak(),
-                );
-            });
-        });
-        return false;
-    };
-
-    let current = config
-        .preferred_device_rule(identity)
-        .and_then(|rule| rule.reverse);
-    let resolved = config.resolve_device_profile(DeviceKind::Mouse, Some(identity));
-    let inherited_note = if current.is_none() && resolved.reverse.source.is_device_rule() {
-        let scope = match resolved.reverse.source {
-            ProfileSource::ExactSerial => "Serial rule",
-            ProfileSource::ExactLocation => "Port rule",
-            ProfileSource::Hardware => "Shared model rule",
-            ProfileSource::DeviceKind(_) | ProfileSource::GlobalDefault => "Inherited rule",
-        };
-        Some(format!(
-            "{scope}: {}",
-            if resolved.reverse.value {
-                "Reverse"
-            } else {
-                "Don't reverse"
-            }
-        ))
-    } else {
-        None
-    };
-    let configured_alias = config
-        .preferred_device_rule(identity)
-        .and_then(|rule| rule.alias.as_deref())
-        .unwrap_or_default()
-        .to_string();
-    let mut selection = current;
-    let mut commit_alias = false;
-    let mut finish_alias_edit = false;
-    let mut alias_value = String::new();
-
-    ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            ui.label(&entry.display_name);
-            if entry.alias.is_some()
-                && let Some(product_name) = &entry.product_name
-            {
-                ui.label(RichText::new(product_name).small().weak());
-            }
-            ui.label(
-                RichText::new(compact_device_identity(identity))
-                    .small()
-                    .monospace()
-                    .weak(),
-            );
-            if let Some(note) = &inherited_note {
-                ui.label(RichText::new(note).small().weak());
-            }
-        });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.vertical(|ui| {
-                device_rule_chip(ui, ("device-rule", identity), &mut selection);
-                let edit = alias_edits
-                    .entry(identity.clone())
-                    .or_insert_with(|| configured_alias.clone());
-                let response = ui.add(
-                    egui::TextEdit::singleline(edit)
-                        .hint_text("Alias")
-                        .char_limit(64)
-                        .desired_width(150.0),
-                );
-                let enter_pressed =
-                    response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                finish_alias_edit = response.lost_focus() || enter_pressed;
-                let valid_live_edit =
-                    response.changed() && (edit.is_empty() || edit.trim() == edit.as_str());
-                commit_alias = finish_alias_edit || valid_live_edit;
-                if commit_alias {
-                    alias_value = edit.trim().to_string();
-                }
-                if enter_pressed {
-                    response.surrender_focus();
-                }
-            });
-        });
-    });
-
-    let mut changed = false;
-    if selection != current {
-        config.device_rules = with_device_rule_selection(
-            &config.device_rules,
-            identity,
-            entry.product_name.as_deref(),
-            selection,
-        );
-        changed = true;
-    }
-
-    if entry.state == DeviceState::Connected {
-        let active_profile = config.resolve_device_profile(DeviceKind::Mouse, Some(identity));
-        let active_rule = format!(
-            "Active: {} · {}",
-            if active_profile.reverse.value {
-                "Reverse"
-            } else {
-                "Don't reverse"
-            },
-            active_profile.reverse.source.label(),
-        );
-        ui.horizontal_wrapped(|ui| {
-            if identity.serial_number.is_none() && identity.location_id.is_none() {
-                ui.label(
-                    RichText::new(format!(
-                        "Exact test unavailable · model-wide identity · {active_rule}"
-                    ))
-                    .small()
-                    .weak(),
-                );
-                return;
-            }
-
-            if styled_button(ui, "Test this device", egui::vec2(10.0, 4.0)).clicked() {
-                device_tests.insert(identity.clone(), DeviceTestSession::start(now_us));
-            }
-
-            let Some(session) = device_tests.get_mut(identity) else {
-                ui.label(RichText::new(active_rule).small().weak());
-                return;
-            };
-            match session.observe(identity, now_us, activities) {
-                DeviceTestStatus::Listening { .. } => {
-                    status_dot(ui, Color32::from_rgb(0xE5, 0x9E, 0x2F), 3.0, 8.0);
-                    ui.label(
-                        RichText::new(format!("Listening... · {active_rule}"))
-                            .small()
-                            .weak(),
-                    );
-                }
-                DeviceTestStatus::Detected { age_us } => {
-                    status_dot(ui, Color32::from_rgb(0x34, 0xA8, 0x53), 3.0, 8.0);
-                    ui.label(
-                        RichText::new(format!(
-                            "Detected {:.1}s ago · {active_rule}",
-                            age_us as f64 / 1_000_000.0
-                        ))
-                        .small()
-                        .color(Color32::from_rgb(0x34, 0xA8, 0x53)),
-                    );
-                }
-                DeviceTestStatus::TimedOut => {
-                    status_dot(ui, Color32::from_rgb(0xE5, 0x9E, 0x2F), 3.0, 8.0);
-                    ui.label(
-                        RichText::new(format!("No event in 5s · {active_rule}"))
-                            .small()
-                            .weak(),
-                    );
-                }
-            }
-        });
-    }
-
-    if commit_alias {
-        if finish_alias_edit {
-            alias_edits.remove(identity);
-        }
-        let alias = (!alias_value.is_empty()).then_some(alias_value.as_str());
-        if alias != (!configured_alias.is_empty()).then_some(configured_alias.as_str()) {
-            config.device_rules = with_device_alias(
-                &config.device_rules,
-                identity,
-                entry.product_name.as_deref(),
-                alias,
-            );
-            changed = true;
-        }
-    }
-    changed
-}
-
-fn compact_device_identity(identity: &DeviceIdentity) -> String {
-    let mut label = format!(
-        "{:04x}:{:04x}",
-        identity.hardware.vendor_id, identity.hardware.product_id
-    );
-    if let Some(qualifier) = identity.compact_qualifier() {
-        label.push_str(&format!(" · {qualifier}"));
-    } else {
-        label.push_str(" · model-wide ID");
-    }
-    label
-}
-
-/// Pure check, independent of any widget - Accessibility granted. Used
-/// by `panel_contents` to drive the tap-start/retry logic on every tick
-/// regardless of which tab (if any) is currently rendering the Permissions
-/// section, so granting permissions while on the General or Devices tab
-/// still auto-starts scroll reversal instead of requiring a visit to
-/// Permissions first.
-fn permissions_ready() -> bool {
-    permissions::has_scroll_control_access()
-}
-
-fn permissions_panel(ui: &mut egui::Ui) {
-    let accessibility = permissions::has_accessibility_trust();
+fn permissions_panel(ui: &mut egui::Ui, enabled: bool, accessibility: bool) {
     ui.horizontal(|ui| {
         ui.label("Accessibility");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1526,16 +1336,18 @@ fn permissions_panel(ui: &mut egui::Ui) {
                         .color(Color32::from_rgb(0x34, 0xA8, 0x53))
                         .strong(),
                 );
-            } else {
+            } else if enabled {
                 ui.label(
                     RichText::new("Required")
                         .color(Color32::from_rgb(0xE5, 0x9E, 0x2F))
                         .strong(),
                 );
+            } else {
+                ui.label(RichText::new("Not needed while off").weak());
             }
         });
     });
-    if !accessibility {
+    if !accessibility && enabled {
         ui.label(
             RichText::new(
                 "Add Auto Reverse.app in System Settings to observe and modify scroll events.",
@@ -1585,41 +1397,4 @@ fn footer(
             .monospace()
             .weak(),
     );
-}
-
-#[cfg(test)]
-mod device_identity_label_tests {
-    use std::sync::Arc;
-
-    use crate::device::HardwareId;
-
-    use super::*;
-
-    fn hardware() -> HardwareId {
-        HardwareId {
-            vendor_id: 0x046d,
-            product_id: 0xc52b,
-        }
-    }
-
-    #[test]
-    fn serial_label_keeps_a_bounded_distinguishing_suffix() {
-        let identity =
-            DeviceIdentity::new(hardware(), Some(Arc::from("1234567890abcdef")), Some(42));
-
-        assert_eq!(
-            compact_device_identity(&identity),
-            "046d:c52b · serial …567890abcdef"
-        );
-    }
-
-    #[test]
-    fn location_fallback_is_named_as_a_port() {
-        let identity = DeviceIdentity::new(hardware(), None, Some(42));
-
-        assert_eq!(
-            compact_device_identity(&identity),
-            "046d:c52b · port 0x0000002a"
-        );
-    }
 }

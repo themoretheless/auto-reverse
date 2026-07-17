@@ -38,6 +38,7 @@ const WHEEL_OBSERVATION_WINDOW: Duration = Duration::from_millis(500);
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+    fn CGEventTapIsEnabled(tap: CFMachPortRef) -> bool;
 }
 
 static CONFIG: OnceLock<Arc<RwLock<AppConfig>>> = OnceLock::new();
@@ -93,6 +94,27 @@ fn tap_port_guard() -> MutexGuard<'static, TapPorts> {
     match TAP_PORTS.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TapEnabledState {
+    NotInstalled,
+    Enabled,
+    Disabled,
+}
+
+/// Reads CoreGraphics' public enabled state while holding the same lifetime
+/// guard used by re-arming, so the queried CFMachPort cannot be freed midway.
+pub fn enabled_state() -> TapEnabledState {
+    let registered = tap_port_guard();
+    let Some(active) = registered.active else {
+        return TapEnabledState::NotInstalled;
+    };
+    if unsafe { CGEventTapIsEnabled(active as CFMachPortRef) } {
+        TapEnabledState::Enabled
+    } else {
+        TapEnabledState::Disabled
     }
 }
 

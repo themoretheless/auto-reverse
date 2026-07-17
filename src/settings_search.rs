@@ -57,6 +57,12 @@ const ENTRIES: &[SearchEntry] = &[
         destination: SettingsDestination::Devices,
     },
     SearchEntry {
+        title: "Reset this device",
+        section: "Devices",
+        keywords: "remove clear profile rule",
+        destination: SettingsDestination::Devices,
+    },
+    SearchEntry {
         title: "Accessibility permission",
         section: "Permissions",
         keywords: "privacy security input event tap grant",
@@ -72,6 +78,12 @@ const ENTRIES: &[SearchEntry] = &[
         title: "Ignore posted and remote scroll events",
         section: "Advanced",
         keywords: "injected raw input source pid bypass",
+        destination: SettingsDestination::Advanced,
+    },
+    SearchEntry {
+        title: "Dynamics preset preview and reset",
+        section: "Advanced",
+        keywords: "smooth precise balanced fast temporary wheel feel restore",
         destination: SettingsDestination::Advanced,
     },
     SearchEntry {
@@ -210,5 +222,17 @@ mod tests {
                 SettingsDestination::Advanced
             );
         }
+    }
+
+    #[test]
+    fn scoped_reset_terms_route_to_their_owner() {
+        assert_eq!(
+            search_settings("reset device", 1)[0].destination,
+            SettingsDestination::Devices
+        );
+        assert_eq!(
+            search_settings("dynamics preset", 1)[0].destination,
+            SettingsDestination::Advanced
+        );
     }
 }

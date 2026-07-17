@@ -29,6 +29,9 @@ Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
   `src/scroll_trace.rs`, `src/scroll_lab.rs`, and `src/event_rate.rs`;
 - a pure ScrollTest-style state machine in `src/scroll_benchmark.rs` plus an
   interactive egui benchmark viewport in `src/ui/scroll_benchmark.rs`;
+- pure temporary preset, scoped reset, notification refresh, and bounded tap
+  watchdog policies in `src/preset_preview.rs`, `src/config/reset.rs`,
+  `src/refresh_policy.rs`, and `src/tap_watchdog.rs`;
 - on-demand public event-tap interval latency snapshots in
   `src/platform/macos/tap_metrics.rs`;
 - pure repeated-stall budgets in `src/latency_budget.rs` and a non-live
@@ -36,6 +39,8 @@ Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
   `src/scroll_dynamics/`;
 - split UI helpers under `src/ui/` and pure tray rules under
   `src/platform/macos/tray/`;
+- AppKit activation/wake and IOHID generation signals feeding cached UI/tray
+  permission and device state;
 - CLI LaunchAgent startup support in `src/platform/macos/startup.rs`;
 - GUI login-item support via `SMAppService.mainAppService()` in
   `src/platform/macos/login_item.rs`;
@@ -54,6 +59,9 @@ framework code inside `platform/macos`.
 - The active modifying event tap requires Accessibility only. Accessibility
   grants both posting and listening; never block runtime startup on a separate
   Input Monitoring preflight.
+- A disabled persisted utility must not prompt for Accessibility or show a
+  blocked-feature callout. Passive refreshes are read-only; prompting is
+  reserved for enabled startup or an explicit Enable action.
 - AppKit gesture event type 29 must cross the passive callback as raw `u32`;
   the `core-graphics` crate's Rust enum omits it, so constructing that enum is
   invalid. Do not replace this bridge with private MultitouchSupport APIs.
@@ -86,6 +94,9 @@ framework code inside `platform/macos`.
   poll it from the UI.
 - A latency warning requires repeated readings; use interval maxima for tail
   stalls and never turn one maximum sample into a persistent warning.
+- Event-tap health checks use public `CGEventTapIsEnabled` under the registered
+  port lifetime guard. Keep two-sample hysteresis, the three-attempt episode
+  budget, and sustained-healthy reset; never introduce an unbounded retry loop.
 - Experimental dynamics remains discrete-wheel-only and outside the live event
   tap until cancellation, scheduler, and fail-open gates pass.
 - Continuous input must use exact dynamics bypass. Vertical and horizontal

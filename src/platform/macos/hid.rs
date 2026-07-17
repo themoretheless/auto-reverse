@@ -21,7 +21,7 @@
 
 use std::ffi::c_void;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -133,6 +133,7 @@ const LIVE_HINT_BOTH: u8 = 3;
 const LIVE_HINT_UNKNOWN: u8 = 4;
 static LIVE_CONTINUOUS_HINT: AtomicU8 = AtomicU8::new(0);
 static LIVE_CONTINUOUS_HINT_READY: AtomicBool = AtomicBool::new(false);
+static INVENTORY_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// One consistent view of the last attributed wheel tick. Returning the
 /// identity, display name, and transport together avoids taking `LAST_WHEEL`
@@ -193,6 +194,7 @@ pub fn start_wheel_monitor() -> AppResult<()> {
             )));
         }
         refresh_live_continuous_hint(manager);
+        INVENTORY_GENERATION.fetch_add(1, Ordering::AcqRel);
         // Success: the manager intentionally lives for the rest of the
         // process (a `run` invocation never returns), so it is not released.
     }
@@ -230,6 +232,13 @@ pub fn live_continuous_source_hint() -> Option<ContinuousSourceHint> {
     }
 }
 
+/// Monotonic process-local signal changed by the long-lived IOHIDManager's
+/// public match/removal callbacks. The GUI compares generations and performs
+/// the comparatively expensive full inventory scan only after a change.
+pub fn inventory_generation() -> u64 {
+    INVENTORY_GENERATION.load(Ordering::Acquire)
+}
+
 extern "C" fn pointing_device_inventory_changed(
     context: *mut c_void,
     result: IOReturn,
@@ -239,6 +248,7 @@ extern "C" fn pointing_device_inventory_changed(
     if result != KIO_RETURN_SUCCESS || context.is_null() {
         return;
     }
+    INVENTORY_GENERATION.fetch_add(1, Ordering::AcqRel);
     unsafe { refresh_live_continuous_hint(context as IOHIDManagerRef) };
 }
 

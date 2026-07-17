@@ -56,6 +56,17 @@ pub fn request_scroll_control_access() -> bool {
     scroll_control_access_from(has_accessibility_trust() || request_accessibility_trust())
 }
 
+/// Prepares permission state for a persisted feature state. Disabled features
+/// perform a read-only check and never trigger a TCC consent dialog.
+pub fn prepare_scroll_control_access(feature_enabled: bool) -> bool {
+    let granted = has_accessibility_trust();
+    if should_prompt_for_feature(feature_enabled, granted) {
+        scroll_control_access_from(request_accessibility_trust())
+    } else {
+        scroll_control_access_from(granted)
+    }
+}
+
 const fn scroll_control_access_from(accessibility: bool) -> bool {
     accessibility
 }
@@ -101,6 +112,10 @@ pub fn permission_status(granted: bool) -> &'static str {
     if granted { "granted" } else { "required" }
 }
 
+const fn should_prompt_for_feature(feature_enabled: bool, already_granted: bool) -> bool {
+    feature_enabled && !already_granted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +141,13 @@ mod tests {
     fn accessibility_alone_is_enough_for_the_active_scroll_tap() {
         assert!(scroll_control_access_from(true));
         assert!(!scroll_control_access_from(false));
+    }
+
+    #[test]
+    fn disabled_feature_does_not_select_the_prompting_path() {
+        assert!(!should_prompt_for_feature(false, false));
+        assert!(!should_prompt_for_feature(false, true));
+        assert!(should_prompt_for_feature(true, false));
+        assert!(!should_prompt_for_feature(true, true));
     }
 }

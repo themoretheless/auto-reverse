@@ -1347,14 +1347,14 @@ R47. [Done] Advanced показывает dry-run только реально о
 R48. [Done] Import ограничен 256 KiB и принимает только неизменившийся regular UTF-8 file: `O_NOFOLLOW`, symlink/world-writable rejection, type/size gates и dev/inode/mtime/length recheck закрывают path replacement до TOML parsing.
 R49. [Done] Debug Console копирует aggregate diagnostics summary с version/runtime/permission/config/counts/reasons. Typed builder не принимает timestamps, deltas, names, PID или hardware identity; row trace и target app/window data в clipboard не попадают.
 R50. [Done] Connected exact-identity device имеет локальный `Test this device`: только последующее physical discrete hardware event с тем же serial/location подтверждает тест в 5-second window, рядом всегда показан effective direction/source. Model-wide identity честно отключает exact test; serial/location не экспортируются.
-R51. [Improve] Preset preview должен быть временным и автоматически откатываться, если пользователь не подтвердил его.
-R52. [Improve] Разделить Reset this device, Reset dynamics и Restore all defaults.
-R53. [Improve] Permission callout показывать только когда включенная функция реально заблокирована; disabled utility не должна nag.
+R51. [Done] Advanced использует process-local 15-second `PresetPreview`: выбор Off/Precise/Balanced/Fast меняет только две model bars, не записывает config и автоматически возвращается к committed preset; запись происходит только через `Use preset`, а external config change supersedes preview.
+R52. [Done] Reset разделён по owner/scope: `Reset this device` удаляет только preferred exact profile, `Reset dynamics` возвращает global/per-device step и preset defaults без потери alias/direction, а `Restore all defaults` после успешного config save также снимает pause, удаляет rules и выключает GUI login item.
+R53. [Done] Config загружается до TCC preparation: disabled utility делает только read-only Accessibility check, остаётся на General и не вызывает consent dialog/callout; prompt разрешён только при persisted-enabled launch или явном Enable, а disabled Permissions row говорит `Not needed while off`.
 
 ### Reliability, tests, and release
 
-R54. [Improve] Permission/device refresh должен использовать notifications плюс редкий tolerant timer только как backstop.
-R55. [Improve] Event-tap watchdog должен читать public enabled state, иметь hysteresis и bounded retries без restart loop.
+R54. [Done] `AppEventObserver`, NSWorkspace wake и IOHID match/removal generation ведут cached permission/device state; pure `RefreshPolicy` coalesce-ит notifications и использует один tolerant 30-second backstop без catch-up loop. Tray читает тот же cached atomic state, а не опрашивает TCC каждый UI tick.
+R55. [Done] `CGEventTapIsEnabled` читается под lifetime-guard зарегистрированного CFMachPort; pure `TapWatchdog` проверяет раз в секунду, требует два unhealthy samples, различает rearm/restart, ограничивает episode тремя attempts и сбрасывает бюджет только после трёх healthy samples или явного user retry. Exhausted state виден в UI/diagnostics и не создаёт restart loop.
 R56. [Improve] Записывать recovery reason и attempt count для wake, timeout-disable и permission loss отдельно.
 R57. [Improve] Добавить migration fixtures на каждый старый/ошибочный config key и проверять сохранение unknown fields.
 R58. [Improve] Добавить property/fuzz tests для trace parser, config migration и dynamics invariants.

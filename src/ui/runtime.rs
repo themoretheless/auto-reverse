@@ -11,6 +11,7 @@ use crate::config::AppConfig;
 use crate::diagnostics_summary::RuntimeStatus;
 use crate::platform::macos::event_tap::{self, TapRunOutcome};
 use crate::runtime::RuntimeControl;
+use crate::tap_watchdog::{TapObservation, TapWatchdog, WatchdogAction};
 
 const WAKE_RECOVERY_WINDOW: Duration = Duration::from_secs(5);
 
@@ -46,7 +47,7 @@ impl State {
         matches!(self, Self::Idle | Self::WaitingForPermissions)
     }
 
-    pub(super) fn can_retry(&self) -> bool {
+    fn can_retry(&self) -> bool {
         matches!(self, Self::AlreadyRunning | Self::Stopped | Self::Failed(_))
     }
 }
@@ -140,11 +141,20 @@ pub(super) struct TapRuntime {
     state: State,
     events: Option<mpsc::Receiver<Event>>,
     wake_recovery: WakeRecovery,
+    watchdog: TapWatchdog,
 }
 
 impl TapRuntime {
-    pub(super) fn state(&self) -> &State {
-        &self.state
+    pub(super) fn error_message(&self) -> Option<&str> {
+        self.state.error_message().or_else(|| {
+            self.watchdog
+                .exhausted()
+                .then_some("event tap stayed disabled after bounded recovery attempts")
+        })
+    }
+
+    pub(super) fn can_retry(&self) -> bool {
+        self.state.can_retry() || self.watchdog.exhausted()
     }
 
     pub(super) fn diagnostics_status(
@@ -161,6 +171,9 @@ impl TapRuntime {
         }
         if paused {
             return RuntimeStatus::Paused;
+        }
+        if self.watchdog.exhausted() {
+            return RuntimeStatus::Failed;
         }
         match self.state {
             State::Idle => RuntimeStatus::Idle,
@@ -189,6 +202,7 @@ impl TapRuntime {
             return;
         }
 
+        self.watchdog.reset();
         self.spawn(shared_config, runtime_control);
     }
 
@@ -197,9 +211,15 @@ impl TapRuntime {
         shared_config: Arc<RwLock<AppConfig>>,
         runtime_control: Arc<RuntimeControl>,
     ) {
+        if self.watchdog.exhausted() && self.state.is_running() {
+            self.watchdog.reset();
+            event_tap::rearm_if_installed();
+            return;
+        }
         if !self.state.can_retry() {
             return;
         }
+        self.watchdog.reset();
         self.spawn(shared_config, runtime_control);
     }
 
@@ -230,6 +250,44 @@ impl TapRuntime {
             WakeRecoveryAction::Restart => {
                 self.spawn(Arc::clone(shared_config), Arc::clone(runtime_control))
             }
+        }
+    }
+
+    pub(super) fn poll_watchdog(
+        &mut self,
+        permissions_ready: bool,
+        shared_config: &Arc<RwLock<AppConfig>>,
+        runtime_control: &Arc<RuntimeControl>,
+    ) {
+        if !permissions_ready {
+            self.watchdog.suspend();
+            return;
+        }
+
+        let restart_allowed = matches!(self.state, State::Stopped | State::Failed(_));
+        if !matches!(
+            self.state,
+            State::Running | State::Stopped | State::Failed(_)
+        ) {
+            self.watchdog.suspend();
+            return;
+        }
+        let observation = match event_tap::enabled_state() {
+            event_tap::TapEnabledState::Enabled => TapObservation::Enabled,
+            event_tap::TapEnabledState::Disabled => TapObservation::Disabled,
+            event_tap::TapEnabledState::NotInstalled => TapObservation::NotInstalled,
+        };
+        match self
+            .watchdog
+            .observe(Instant::now(), observation, restart_allowed)
+        {
+            Some(WatchdogAction::Rearm) => {
+                event_tap::rearm_if_installed();
+            }
+            Some(WatchdogAction::Restart) => {
+                self.spawn(Arc::clone(shared_config), Arc::clone(runtime_control));
+            }
+            None => {}
         }
     }
 
@@ -279,6 +337,7 @@ impl TapRuntime {
     }
 
     pub(super) fn wait_for_permissions(&mut self) {
+        self.watchdog.suspend();
         if !self.state.is_running() && !matches!(self.state, State::Starting) {
             self.state = State::WaitingForPermissions;
         }
@@ -286,6 +345,7 @@ impl TapRuntime {
 
     pub(super) fn disabled(&mut self) {
         self.wake_recovery.cancel();
+        self.watchdog.reset();
         // A thread in Starting can still acquire the lock and report
         // Started after this call. Keep its receiver/state just like a
         // Running pass-through tap; dropping it here would make a later
@@ -334,6 +394,7 @@ mod tests {
             state: State::Failed("private platform detail".to_string()),
             events: None,
             wake_recovery: WakeRecovery::default(),
+            watchdog: TapWatchdog::default(),
         };
 
         assert_eq!(
@@ -353,6 +414,7 @@ mod tests {
             state: State::Running,
             events: None,
             wake_recovery: WakeRecovery::default(),
+            watchdog: TapWatchdog::default(),
         };
         assert_eq!(
             waiting.diagnostics_status(true, true, false),
@@ -361,11 +423,47 @@ mod tests {
     }
 
     #[test]
+    fn exhausted_watchdog_is_visible_and_explicit_retry_resets_its_budget() {
+        let now = Instant::now();
+        let mut watchdog = TapWatchdog::default();
+        for index in 0..10 {
+            watchdog.observe(
+                now + crate::tap_watchdog::WATCHDOG_SAMPLE_INTERVAL * index,
+                TapObservation::NotInstalled,
+                true,
+            );
+        }
+        assert!(watchdog.exhausted());
+
+        let mut runtime = TapRuntime {
+            state: State::Running,
+            events: None,
+            wake_recovery: WakeRecovery::default(),
+            watchdog,
+        };
+        assert_eq!(
+            runtime.error_message(),
+            Some("event tap stayed disabled after bounded recovery attempts")
+        );
+        assert_eq!(
+            runtime.diagnostics_status(true, false, true),
+            RuntimeStatus::Failed
+        );
+
+        runtime.retry(
+            Arc::new(RwLock::new(AppConfig::default())),
+            Arc::new(RuntimeControl::default()),
+        );
+        assert_eq!(runtime.error_message(), None);
+    }
+
+    #[test]
     fn disabling_keeps_a_live_pass_through_tap_but_resets_failed_state() {
         let mut live = TapRuntime {
             state: State::Running,
             events: None,
             wake_recovery: WakeRecovery::default(),
+            watchdog: TapWatchdog::default(),
         };
         live.disabled();
         assert_eq!(live.state, State::Running);
@@ -374,6 +472,7 @@ mod tests {
             state: State::Starting,
             events: None,
             wake_recovery: WakeRecovery::default(),
+            watchdog: TapWatchdog::default(),
         };
         starting.disabled();
         assert_eq!(starting.state, State::Starting);
@@ -382,6 +481,7 @@ mod tests {
             state: State::Failed("denied".to_string()),
             events: None,
             wake_recovery: WakeRecovery::default(),
+            watchdog: TapWatchdog::default(),
         };
         failed.disabled();
         assert_eq!(failed.state, State::Idle);

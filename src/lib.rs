@@ -11,6 +11,8 @@
 //! - [`device_source`]: pure public-HID transport trust classification.
 //! - [`app_session`]: non-live target-PID pinning for future app rules.
 //! - [`settings_search`]: pure settings and diagnostics lookup.
+//! - [`preset_preview`], [`refresh_policy`], and [`tap_watchdog`]: temporary
+//!   UX state plus notification/recovery policies with no OS imports.
 //! - [`config`]: schema, pure physical-device rule resolution, and storage.
 //! - [`runtime`]: process-local controls such as temporary pause.
 //! - [`scroll`]: the pure reversal policy - config + event in, decision
@@ -43,6 +45,8 @@ pub mod input;
 pub mod input_policy;
 pub mod latency_budget;
 pub mod platform;
+pub mod preset_preview;
+pub mod refresh_policy;
 pub mod runtime;
 pub mod scroll;
 pub mod scroll_benchmark;
@@ -52,5 +56,6 @@ pub mod scroll_scheduler;
 pub mod scroll_trace;
 pub mod settings_search;
 pub mod statistics;
+pub mod tap_watchdog;
 #[cfg(all(feature = "gui", target_os = "macos"))]
 pub mod ui;
