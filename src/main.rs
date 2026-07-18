@@ -18,25 +18,27 @@ use std::path::Path;
 use std::process;
 use std::sync::{Arc, RwLock};
 
-use auto_reverse::config::{AppConfig, ConfigStore, with_dynamics_rollback};
+use auto_reverse::config::{AppConfig, ConfigRepairOutcome, ConfigStore, with_dynamics_rollback};
 use auto_reverse::device_catalog::{DeviceState, build_device_catalog};
 use auto_reverse::device_classifier;
 use auto_reverse::error::{AppError, AppResult};
 use auto_reverse::event_rate::{DeviceEventRate, millihertz_to_hertz};
 use auto_reverse::input::ScrollEvent;
-use auto_reverse::platform::macos::{event_tap, hid, permissions, startup};
+use auto_reverse::platform::macos::{event_tap, external_url, hid, permissions, startup};
 #[cfg(feature = "gui")]
 use auto_reverse::platform::macos::{login_item, login_item::LoginItemStatus};
 use auto_reverse::scroll;
 use auto_reverse::scroll_lab::{self, AxisMetrics, Distribution};
 use auto_reverse::scroll_trace::{MAX_TRACE_BYTES, ScrollTrace, TraceError};
+use auto_reverse::update_policy::{ReleaseChannel, UpdatePolicy};
 use cli::{
-    Command, DoctorOptions, OutputFormat, SimulateOptions, StartupStatusOptions, TraceLabOptions,
+    Command, DoctorOptions, OpenReleasesOptions, OutputFormat, SimulateOptions,
+    StartupStatusOptions, TraceLabOptions, ValidationOptions,
 };
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("auto-reverse: {error}");
+        eprintln!("auto-reverse[{}]: {error}", error.code());
         process::exit(1);
     }
 }
@@ -58,6 +60,9 @@ fn run() -> AppResult<()> {
         Command::EnableStartup => set_startup_enabled(true),
         Command::DisableStartup => set_startup_enabled(false),
         Command::RollbackDynamics => rollback_dynamics(),
+        Command::ValidateConfig(options) => validate_config(options),
+        Command::RepairConfig => repair_config(),
+        Command::OpenReleases(options) => open_releases(options),
         Command::PrepareUninstall => prepare_uninstall(),
         Command::StartupStatus(options) => startup_status(options),
         Command::ConfigPath => {
@@ -116,7 +121,7 @@ fn run_event_tap() -> AppResult<()> {
 
     if !permissions::request_scroll_control_access() {
         permissions::print_permission_help();
-        return Err(AppError::Platform(
+        return Err(AppError::Permission(
             "Accessibility permission is not granted".to_string(),
         ));
     }
@@ -196,10 +201,23 @@ fn doctor(options: DoctorOptions) -> AppResult<()> {
          unreachable outside `simulate`"
     );
     println!(
-        "known gap: show_menu_bar_icon, check_for_updates, include_beta_updates, and \
-         show_discrete_scroll_options are stored for planned UI/updater behavior but are not \
-         applied by the runtime yet"
+        "known gap: show_menu_bar_icon and show_discrete_scroll_options are stored for planned \
+         UI behavior but are not applied by the runtime yet"
     );
+    let update_policy =
+        UpdatePolicy::from_legacy_flags(config.check_for_updates, config.include_beta_updates);
+    println!("updates: {}", update_policy.strategy_label());
+    println!(
+        "update channel: {} ({})",
+        update_policy.channel.label(),
+        update_policy.channel.url()
+    );
+    if update_policy.legacy_automatic_check_requested {
+        println!(
+            "update note: check_for_updates=true is retained for compatibility but never starts \
+             a background request; use `open-releases` explicitly"
+        );
+    }
 
     if !accessibility {
         println!();
@@ -257,6 +275,122 @@ fn init_config() -> AppResult<()> {
 
     store.load_or_create()?;
     println!("created config: {}", store.path().display());
+    Ok(())
+}
+
+fn validate_config(options: ValidationOptions) -> AppResult<()> {
+    let store = ConfigStore::default();
+    match store.inspect_existing() {
+        Ok(Some(config)) => {
+            match options.format {
+                OutputFormat::Text => {
+                    println!("config is valid: {}", store.path().display());
+                    println!("config version: {}", config.config_version);
+                }
+                OutputFormat::Json => {
+                    println!("{{");
+                    println!("  \"status\": \"valid\",");
+                    println!("  \"config_version\": {},", config.config_version);
+                    println!(
+                        "  \"path\": \"{}\"",
+                        json_escape(&store.path().display().to_string())
+                    );
+                    println!("}}");
+                }
+            }
+            Ok(())
+        }
+        Ok(None) => {
+            match options.format {
+                OutputFormat::Text => {
+                    println!("config is missing: {}", store.path().display());
+                }
+                OutputFormat::Json => {
+                    println!("{{");
+                    println!("  \"status\": \"missing\",");
+                    println!(
+                        "  \"path\": \"{}\"",
+                        json_escape(&store.path().display().to_string())
+                    );
+                    println!("}}");
+                }
+            }
+            Ok(())
+        }
+        Err(error) => {
+            let status = if matches!(
+                error,
+                AppError::ConfigParse { .. } | AppError::InvalidConfig(_)
+            ) {
+                "invalid"
+            } else {
+                "error"
+            };
+            match options.format {
+                OutputFormat::Text => {
+                    println!("config {status}: {}", store.path().display());
+                    println!("code: {}", error.code());
+                    println!("message: {error}");
+                }
+                OutputFormat::Json => {
+                    println!("{{");
+                    println!("  \"status\": \"{status}\",");
+                    println!("  \"code\": \"{}\",", error.code());
+                    println!("  \"message\": \"{}\",", json_escape(&error.to_string()));
+                    println!(
+                        "  \"path\": \"{}\"",
+                        json_escape(&store.path().display().to_string())
+                    );
+                    println!("}}");
+                }
+            }
+            Err(error)
+        }
+    }
+}
+
+fn repair_config() -> AppResult<()> {
+    let store = ConfigStore::default();
+    match store.repair_with_defaults()? {
+        ConfigRepairOutcome::Unchanged { config } => {
+            println!("config is already valid: {}", store.path().display());
+            println!("config version: {}", config.config_version);
+        }
+        ConfigRepairOutcome::Created { config } => {
+            println!("created default config: {}", store.path().display());
+            println!("config version: {}", config.config_version);
+        }
+        ConfigRepairOutcome::Repaired {
+            config,
+            backup_path,
+        } => {
+            println!(
+                "repaired config with safe defaults: {}",
+                store.path().display()
+            );
+            println!("original bytes preserved: {}", backup_path.display());
+            println!("config version: {}", config.config_version);
+        }
+    }
+    Ok(())
+}
+
+fn open_releases(options: OpenReleasesOptions) -> AppResult<()> {
+    let channel = match options.channel {
+        Some(channel) => channel,
+        None => ConfigStore::default()
+            .inspect_existing()?
+            .map(|config| {
+                UpdatePolicy::from_legacy_flags(
+                    config.check_for_updates,
+                    config.include_beta_updates,
+                )
+                .channel
+            })
+            .unwrap_or(ReleaseChannel::LatestStable),
+    };
+    external_url::open_release_page(channel)?;
+    println!("opened {}: {}", channel.label(), channel.url());
     Ok(())
 }
 
@@ -825,8 +959,13 @@ fn print_help() {
            devices                     List connected pointing devices and per-device rules\n\
            benchmark                   Open the interactive scroll benchmark\n\
            init                        Create the default config if it does not exist\n\
+           validate-config [--json]    Validate without creating config or lock files\n\
+           repair-config              Preserve an invalid config and replace it with defaults\n\
            config-path                 Print the config file path\n\
            show-config                 Print the current config as TOML\n\
+           open-releases [--latest|--all]\n\
+                                       Open the canonical GitHub releases page; no background\n\
+                                       update requests are made\n\
            simulate [flags]            Debugging tool: run one synthetic scroll event\n\
                                        through the rules without touching real hardware\n\
            trace-lab <trace.toml>       Replay a privacy trace and compare transfer metrics\n\

@@ -2,11 +2,15 @@ use std::env;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 use crate::error::{AppError, AppResult};
 
@@ -35,6 +39,20 @@ impl fmt::Debug for ConfigRevision {
 pub struct ConfigSnapshot {
     pub config: AppConfig,
     pub revision: ConfigRevision,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigRepairOutcome {
+    Unchanged {
+        config: AppConfig,
+    },
+    Created {
+        config: AppConfig,
+    },
+    Repaired {
+        config: AppConfig,
+        backup_path: PathBuf,
+    },
 }
 
 struct ConfigFileLock {
@@ -101,6 +119,20 @@ impl ConfigStore {
         Ok(self.load_snapshot()?.config)
     }
 
+    /// Reads and validates an existing config without creating its parent,
+    /// config file, or lock file. Atomic writers make either the old or new
+    /// complete revision visible to this read-only diagnostic path.
+    pub fn inspect_existing(&self) -> AppResult<Option<AppConfig>> {
+        let contents = match self.read_utf8("read config") {
+            Ok(contents) => contents,
+            Err(AppError::Io { source, .. }) if source.kind() == ErrorKind::NotFound => {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        self.parse_contents(&contents).map(Some)
+    }
+
     pub fn load_or_create(&self) -> AppResult<AppConfig> {
         Ok(self.load_or_create_snapshot()?.config)
     }
@@ -126,6 +158,13 @@ impl ConfigStore {
         }
     }
 
+    /// Explicitly repairs a missing or invalid regular config. Invalid bytes
+    /// are moved intact to a unique sibling before defaults are written; if
+    /// replacement fails, the original path is restored before returning.
+    pub fn repair_with_defaults(&self) -> AppResult<ConfigRepairOutcome> {
+        self.repair_with_writer(|store, config| store.write_unlocked(config))
+    }
+
     /// Saves only if the file is byte-for-byte identical to the snapshot the
     /// caller edited. The check and atomic rename happen under one
     /// cross-process lock, so cooperating GUI/CLI writers cannot race between
@@ -137,10 +176,10 @@ impl ConfigStore {
     ) -> AppResult<ConfigRevision> {
         self.ensure_parent_directory()?;
         let _lock = self.acquire_lock()?;
-        let current = match fs::read_to_string(&self.path) {
+        let current = match self.read_utf8("read config") {
             Ok(contents) => Some(ConfigRevision(Arc::from(contents))),
-            Err(source) if source.kind() == ErrorKind::NotFound => None,
-            Err(source) => return Err(AppError::io("read config", &self.path, source)),
+            Err(AppError::Io { source, .. }) if source.kind() == ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
         };
 
         if current.as_ref() != Some(expected) {
@@ -172,18 +211,32 @@ impl ConfigStore {
     }
 
     fn read_snapshot_unlocked(&self) -> AppResult<ConfigSnapshot> {
-        let contents = fs::read_to_string(&self.path)
-            .map_err(|source| AppError::io("read config", &self.path, source))?;
-        let config: AppConfig =
-            toml::from_str(&contents).map_err(|source| AppError::ConfigParse {
-                path: self.path.clone(),
-                source,
-            })?;
-        config.validate()?;
+        let contents = self.read_utf8("read config")?;
+        let config = self.parse_contents(&contents)?;
         Ok(ConfigSnapshot {
             config,
             revision: ConfigRevision(Arc::from(contents)),
         })
+    }
+
+    fn parse_contents(&self, contents: &str) -> AppResult<AppConfig> {
+        let config: AppConfig =
+            toml::from_str(contents).map_err(|source| AppError::ConfigParse {
+                path: self.path.clone(),
+                source,
+            })?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn read_utf8(&self, action: &'static str) -> AppResult<String> {
+        match fs::read_to_string(&self.path) {
+            Ok(contents) => Ok(contents),
+            Err(source) if source.kind() == ErrorKind::InvalidData => Err(AppError::InvalidConfig(
+                format!("`{}` must be valid UTF-8", self.path.display()),
+            )),
+            Err(source) => Err(AppError::io(action, &self.path, source)),
+        }
     }
 
     fn write_unlocked(&self, config: &AppConfig) -> AppResult<ConfigRevision> {
@@ -199,15 +252,174 @@ impl ConfigStore {
         let tmp_path =
             self.path
                 .with_extension(format!("toml.{}.{}.tmp", process::id(), next_save_id()));
-        fs::write(&tmp_path, contents.as_bytes()).map_err(|source| {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut temporary = options
+            .open(&tmp_path)
+            .map_err(|source| AppError::io("create temporary config", &tmp_path, source))?;
+        temporary.write_all(contents.as_bytes()).map_err(|source| {
             let _ = fs::remove_file(&tmp_path);
             AppError::io("write temporary config", &tmp_path, source)
         })?;
+        temporary.sync_all().map_err(|source| {
+            let _ = fs::remove_file(&tmp_path);
+            AppError::io("sync temporary config", &tmp_path, source)
+        })?;
+        drop(temporary);
         fs::rename(&tmp_path, &self.path).map_err(|source| {
             let _ = fs::remove_file(&tmp_path);
             AppError::io("replace config", &self.path, source)
         })?;
+        self.sync_parent_directory()?;
         Ok(ConfigRevision(Arc::from(contents)))
+    }
+
+    fn repair_with_writer(
+        &self,
+        write_replacement: impl FnOnce(&Self, &AppConfig) -> AppResult<ConfigRevision>,
+    ) -> AppResult<ConfigRepairOutcome> {
+        self.ensure_parent_directory()?;
+        let _lock = self.acquire_lock()?;
+        let defaults = AppConfig::default();
+        let metadata = match fs::symlink_metadata(&self.path) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == ErrorKind::NotFound => {
+                write_replacement(self, &defaults)?;
+                return Ok(ConfigRepairOutcome::Created { config: defaults });
+            }
+            Err(source) => return Err(AppError::io("inspect config", &self.path, source)),
+        };
+        if !metadata.file_type().is_file() {
+            return Err(AppError::InvalidConfig(format!(
+                "refusing to repair non-regular config `{}`",
+                self.path.display()
+            )));
+        }
+
+        let original = fs::read(&self.path)
+            .map_err(|source| AppError::io("read config for repair", &self.path, source))?;
+        if let Ok(contents) = std::str::from_utf8(&original)
+            && let Ok(config) = self.parse_contents(contents)
+        {
+            return Ok(ConfigRepairOutcome::Unchanged { config });
+        }
+
+        let backup_path = self.quarantine_invalid_config()?;
+        if let Err(error) = self.sync_parent_directory() {
+            return self.restore_after_failed_repair(&backup_path, error);
+        }
+
+        match write_replacement(self, &defaults) {
+            Ok(_) => Ok(ConfigRepairOutcome::Repaired {
+                config: defaults,
+                backup_path,
+            }),
+            Err(error) => self.restore_after_failed_repair(&backup_path, error),
+        }
+    }
+
+    fn restore_after_failed_repair<T>(
+        &self,
+        backup_path: &Path,
+        original_error: AppError,
+    ) -> AppResult<T> {
+        match fs::remove_file(&self.path) {
+            Ok(()) => {}
+            Err(source) if source.kind() == ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(AppError::Platform(format!(
+                    "config repair failed ({original_error}); removing the incomplete replacement also failed: {source}"
+                )));
+            }
+        }
+        if let Err(source) = fs::rename(backup_path, &self.path) {
+            return Err(AppError::Platform(format!(
+                "config repair failed ({original_error}); restoring `{}` also failed: {source}",
+                self.path.display()
+            )));
+        }
+        if let Err(rollback_error) = self.sync_parent_directory() {
+            return Err(AppError::Platform(format!(
+                "config repair failed ({original_error}); original bytes were restored but directory sync failed ({rollback_error})"
+            )));
+        }
+        Err(original_error)
+    }
+
+    fn quarantine_invalid_config(&self) -> AppResult<PathBuf> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let stem = self
+            .path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("config");
+        let extension = self
+            .path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("toml");
+        for _ in 0..1_024 {
+            let candidate = self.path.with_file_name(format!(
+                "{stem}.broken.{timestamp}.{}.{}.{extension}",
+                process::id(),
+                next_save_id()
+            ));
+            match fs::hard_link(&self.path, &candidate) {
+                Ok(()) => {
+                    if let Err(source) = File::open(&candidate).and_then(|backup| backup.sync_all())
+                    {
+                        let _ = fs::remove_file(&candidate);
+                        return Err(AppError::io(
+                            "sync invalid config backup",
+                            &candidate,
+                            source,
+                        ));
+                    }
+                    if let Err(source) = fs::remove_file(&self.path) {
+                        if let Err(cleanup_error) = fs::remove_file(&candidate) {
+                            return Err(AppError::Platform(format!(
+                                "could not quarantine invalid config ({source}); removing the duplicate backup `{}` also failed: {cleanup_error}",
+                                candidate.display()
+                            )));
+                        }
+                        return Err(AppError::io(
+                            "remove invalid config after backup",
+                            &self.path,
+                            source,
+                        ));
+                    }
+                    return Ok(candidate);
+                }
+                Err(source) if source.kind() == ErrorKind::AlreadyExists => continue,
+                Err(source) => {
+                    return Err(AppError::io(
+                        "create invalid config backup",
+                        &candidate,
+                        source,
+                    ));
+                }
+            }
+        }
+        Err(AppError::Platform(
+            "could not allocate a unique broken-config backup path".to_string(),
+        ))
+    }
+
+    fn sync_parent_directory(&self) -> AppResult<()> {
+        let Some(parent) = self.path.parent() else {
+            return Ok(());
+        };
+        if parent.as_os_str().is_empty() {
+            return Ok(());
+        }
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|source| AppError::io("sync config directory", parent, source))
     }
 
     fn ensure_parent_directory(&self) -> AppResult<()> {
@@ -255,6 +467,8 @@ fn next_save_id() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::{PermissionsExt, symlink};
     use std::sync::{Arc, mpsc};
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -274,6 +488,29 @@ mod tests {
         let _ = fs::remove_file(store.lock_path());
     }
 
+    fn broken_siblings(store: &ConfigStore) -> Vec<PathBuf> {
+        let parent = store.path().parent().unwrap_or_else(|| Path::new("."));
+        let prefix = format!(
+            "{}.broken.",
+            store
+                .path()
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or("config")
+        );
+        fs::read_dir(parent)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|name| name.starts_with(&prefix))
+            })
+            .collect()
+    }
+
     #[test]
     fn config_round_trips_through_toml() {
         let path = test_path("roundtrip");
@@ -289,6 +526,132 @@ mod tests {
 
         assert_eq!(store.load().unwrap(), config);
         cleanup(&store);
+    }
+
+    #[test]
+    fn read_only_inspection_does_not_create_parent_config_or_lock() {
+        let root = env::temp_dir().join(format!(
+            "auto-reverse-inspect-{}-{}",
+            process::id(),
+            next_save_id()
+        ));
+        let store = ConfigStore::new(root.join("nested/config.toml"));
+
+        assert_eq!(store.inspect_existing().unwrap(), None);
+        assert!(!root.exists());
+        assert!(!store.path().exists());
+        assert!(!store.lock_path().exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn committed_config_is_private_to_the_user() {
+        let path = test_path("private-mode");
+        let store = ConfigStore::new(&path);
+
+        store.load_or_create().unwrap();
+
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        cleanup(&store);
+    }
+
+    #[test]
+    fn explicit_repair_preserves_invalid_bytes_and_writes_defaults() {
+        let path = test_path("repair-invalid");
+        let store = ConfigStore::new(&path);
+        let invalid = b"enabled = maybe\n\xff";
+        fs::write(&path, invalid).unwrap();
+
+        let outcome = store.repair_with_defaults().unwrap();
+        let ConfigRepairOutcome::Repaired {
+            config,
+            backup_path,
+        } = outcome
+        else {
+            panic!("invalid config should be repaired");
+        };
+
+        assert_eq!(config, AppConfig::default());
+        assert_eq!(fs::read(&backup_path).unwrap(), invalid);
+        assert_eq!(store.load().unwrap(), AppConfig::default());
+        fs::remove_file(backup_path).unwrap();
+        cleanup(&store);
+    }
+
+    #[test]
+    fn repair_leaves_a_valid_config_byte_for_byte_unchanged() {
+        let path = test_path("repair-valid");
+        let store = ConfigStore::new(&path);
+        let original = "# keep this comment\nenabled = false\n";
+        fs::write(&path, original).unwrap();
+
+        let outcome = store.repair_with_defaults().unwrap();
+
+        assert!(matches!(outcome, ConfigRepairOutcome::Unchanged { .. }));
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        assert!(broken_siblings(&store).is_empty());
+        cleanup(&store);
+    }
+
+    #[test]
+    fn failed_repair_restores_the_original_path_and_bytes() {
+        let path = test_path("repair-rollback");
+        let store = ConfigStore::new(&path);
+        let invalid = b"not valid = [";
+        fs::write(&path, invalid).unwrap();
+
+        let error = store
+            .repair_with_writer(|_, _| {
+                Err(AppError::Platform(
+                    "injected replacement failure".to_string(),
+                ))
+            })
+            .unwrap_err();
+
+        assert_eq!(error.code(), "E_PLATFORM");
+        assert_eq!(fs::read(&path).unwrap(), invalid);
+        assert!(broken_siblings(&store).is_empty());
+        cleanup(&store);
+    }
+
+    #[test]
+    fn repair_creates_defaults_when_config_is_missing() {
+        let path = test_path("repair-missing");
+        let store = ConfigStore::new(&path);
+
+        let outcome = store.repair_with_defaults().unwrap();
+
+        assert!(matches!(outcome, ConfigRepairOutcome::Created { .. }));
+        assert_eq!(store.load().unwrap(), AppConfig::default());
+        cleanup(&store);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repair_refuses_to_follow_a_config_symlink() {
+        let target_path = test_path("repair-symlink-target");
+        let link_path = test_path("repair-symlink-link");
+        let store = ConfigStore::new(&link_path);
+        let invalid = b"not valid = [";
+        fs::write(&target_path, invalid).unwrap();
+        symlink(&target_path, &link_path).unwrap();
+
+        let error = store.repair_with_defaults().unwrap_err();
+
+        assert_eq!(error.code(), "E_CONFIG_INVALID");
+        assert!(
+            fs::symlink_metadata(&link_path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read(&target_path).unwrap(), invalid);
+        assert!(broken_siblings(&store).is_empty());
+        cleanup(&store);
+        fs::remove_file(target_path).unwrap();
     }
 
     #[test]

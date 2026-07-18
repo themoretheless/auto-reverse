@@ -4,6 +4,12 @@ Auto Reverse processes scroll events locally on the Mac so it can change their
 direction. It does not transmit events, device identifiers, configuration, or
 diagnostics over a network and contains no telemetry or analytics client.
 
+Auto Reverse also performs no background update check. The explicit Latest
+release and All releases actions hand one of two compile-time GitHub URLs to the
+default browser; the browser owns that user-requested navigation. No config,
+diagnostic, device, or event data is appended to either URL. `UPDATES.md` is the
+canonical update-policy contract.
+
 The Debug Console keeps at most 500 recent decisions in process memory. Export
 writes only when the user asks and confirms a destination in the native Save
 Panel; Auto Reverse never uploads or automatically relocates that CSV.
@@ -40,6 +46,6 @@ record key presses, pointer coordinates, or application content. Its passive
 AppKit gesture tap stores only whether a
 gesture had at least two touching fingers and a monotonic observation time; it
 does not retain touch positions, identities, pressure, gesture content, or raw
-events, and none of that state is exported. A future update that adds any
-network behavior must make it explicit, opt-in where appropriate, and update
-this document before release.
+events, and none of that state is exported. A future release that adds
+application-owned network behavior must make it explicit, opt-in where
+appropriate, and update this document before release.

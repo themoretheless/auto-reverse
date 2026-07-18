@@ -11,6 +11,7 @@
 //! - [`device_source`]: pure public-HID transport trust classification.
 //! - [`app_session`]: non-live target-PID pinning for future app rules.
 //! - [`settings_search`]: pure settings and diagnostics lookup.
+//! - [`update_policy`]: pure manual-update strategy and trusted release URLs.
 //! - [`preset_preview`], [`refresh_policy`], [`recovery_audit`], and
 //!   [`tap_watchdog`]: temporary UX state plus notification/recovery policies
 //!   with no OS imports.
@@ -62,3 +63,4 @@ pub mod statistics;
 pub mod tap_watchdog;
 #[cfg(all(feature = "gui", target_os = "macos"))]
 pub mod ui;
+pub mod update_policy;

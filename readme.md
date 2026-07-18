@@ -7,8 +7,10 @@ Auto Reverse is a Rust/macOS utility for reverse scrolling. The target product i
 Implemented:
 
 - macOS `CGEventTap` for scroll events;
-- TOML config with `config_version`, a persistent cross-process lock, atomic
-  CLI transactions, and exact-revision conflict detection for GUI/tray saves;
+- TOML config with `config_version`, a persistent cross-process lock, private
+  mode `0600`, durable temp-file and directory sync, atomic CLI transactions,
+  exact-revision conflict detection for GUI/tray saves, read-only text/JSON
+  validation, and explicit corrupted-config repair with exact backup/rollback;
   Advanced can export versioned TOML or securely review/import a <=256 KiB
   regular non-symlink, non-world-writable file with v0->v1 migration reporting
   and a field-level diff limited to changed sections;
@@ -112,6 +114,9 @@ Implemented:
 - fuzzy settings search routes directly to General, Devices, Permissions,
   Advanced, or Diagnostics; common direction/device controls stay on the main
   tabs while input policy, config transfer, and diagnostic tools remain separated;
+- an explicit manual update policy: About & Updates and `open-releases` open
+  canonical stable/all GitHub release pages only after a user action; Auto
+  Reverse itself performs no background version or network requests;
 - branded opposing-arrows app icon and generated Retina `.icns` in the bundle;
 - GUI Start at Login toggle via `SMAppService.mainAppService()`;
 - CLI diagnostics, JSON startup status and simulation;
@@ -134,7 +139,8 @@ Still missing:
 - guided onboarding beyond the compact permission-first state;
 - hide/show menu bar icon;
 - a provisioned Developer ID/notary account and clean-machine release QA;
-- an update strategy;
+- an automatic signed in-app updater, intentionally deferred while the manual
+  no-background-network strategy is sufficient;
 - physical-device/manual visual validation of the new benchmark and live tap
   latency snapshot;
 - platform timer/posting adapter, runtime opt-in, cancellation hooks, and
@@ -155,6 +161,10 @@ scripts/install-app-bundle.sh
 scripts/check-install-workflow.sh
 cargo run -- doctor
 cargo run -- doctor --no-create
+cargo run -- validate-config --json
+cargo run -- repair-config
+cargo run -- open-releases --latest
+cargo run -- open-releases --all
 cargo run -- devices
 cargo run -- ui
 cargo run -- show-config
@@ -190,9 +200,14 @@ grants listening only. Requiring both caused a false `NEEDS PERMISSION` state
 even when macOS had already enabled the app.
 
 For safe checks without installing the event tap, use `doctor`, `startup-status`,
-`show-config`, `simulate`, and `trace-lab`. `doctor --no-create` and `trace-lab`
-report against defaults without creating a config file when none exists. The
-trace format and privacy boundary are documented in `TRACE.md`.
+`validate-config`, `show-config`, `simulate`, and `trace-lab`.
+`validate-config` never creates a directory, config, or lock; `doctor
+--no-create` and `trace-lab` report against defaults without creating a config
+when none exists. `repair-config` is intentionally explicit: it preserves an
+invalid regular file in a unique `.broken...toml` sibling before writing safe
+defaults and restores the original if replacement fails. The trace format and
+privacy boundary are documented in `TRACE.md`; update behavior is specified in
+`UPDATES.md`.
 
 Interactive measurement lives under **Debug Console -> Benchmark...** and
 **Observed input metrics**. `BENCHMARK.md` defines the target conditions,
@@ -500,6 +515,7 @@ src/diagnostics_summary.rs           aggregate privacy-bounded clipboard text
 src/app_session.rs                   future app-target session pin, non-live
 src/input_policy.rs                  shared input provenance and bypass
 src/settings_search.rs               fuzzy settings/diagnostics navigation
+src/update_policy.rs                 network-free manual release destinations
 src/preset_preview.rs                temporary preset confirm/expiry policy
 src/refresh_policy.rs                notification coalescing + timer backstop
 src/tap_watchdog.rs                  bounded event-tap health/recovery policy
@@ -518,7 +534,7 @@ src/config/schema.rs                 fields, defaults and validation
 src/config/device_rules.rs           pure selector priority, matching and mutation
 src/config/profiles.rs               field inheritance and fixed selector precedence
 src/config/reset.rs                  exact-device and dynamics reset scopes
-src/config/store.rs                  paths, TOML I/O, atomic save, lock, snapshots/CAS
+src/config/store.rs                  durable private save, lock, inspect/repair, snapshots/CAS
 src/config/transfer/mod.rs           transfer facade and typed errors
 src/config/transfer/document.rs      version/schema migration + TOML
 src/config/transfer/diff.rs          pure section review/application
@@ -536,6 +552,7 @@ src/platform/macos/power_events.rs   NSWorkspace sleep/wake observer and atomic 
 src/platform/macos/daemon_lock.rs    flock: only one live CGEventTap at a time, any launch path
 src/platform/macos/activation.rs     second GUI launch -> existing-window focus mailbox
 src/platform/macos/save_panel.rs     native config/diagnostic open-save panels + Finder reveal
+src/platform/macos/external_url.rs   trusted release URLs -> default browser
 src/platform/macos/tap_metrics.rs    on-demand CGGetEventTapList interval snapshot
 src/platform/macos/debug_log.rs      structured decisions + local Debug Console ring buffer
 src/platform/macos/recovery_log.rs   process-local adapter to pure recovery audit
@@ -609,7 +626,7 @@ Make it releasable:
 - manual sleep/wake validation of the implemented recovery path;
 - packaging/signing;
 - localization;
-- update strategy;
+- optional automatic updater only after signed-feed and rollback prerequisites;
 - privacy/security review.
 
 ## Design Direction
@@ -667,10 +684,29 @@ Trackpad and Magic Mouse continuous events are not smoothed again. Any future
 scheduler must still write only `DeltaAxis1/2`; private touch APIs, HID seizure,
 and default telemetry remain explicitly out of scope.
 
+## S01-S10 Config and Update Pass
+
+| ID | Status | Independently reviewable change |
+| --- | --- | --- |
+| S01 | Done | Sync the temporary config file before atomic rename. |
+| S02 | Done | Sync the parent directory and commit config with mode `0600`. |
+| S03 | Done | Inspect config without creating a directory, file, or lock. |
+| S04 | Done | Report text/JSON validation status with nonzero invalid results. |
+| S05 | Done | Repair only by explicit command and preserve exact invalid bytes. |
+| S06 | Done | Allocate backups exclusively and restore the original on failure. |
+| S07 | Done | Emit stable coarse CLI error codes, including permission errors. |
+| S08 | Done | Keep update checks manual with no app-owned background network. |
+| S09 | Done | Share canonical latest/all channels across CLI and egui. |
+| S10 | Done | Show a compact version/release block with inline launch errors. |
+
+The canonical rationale and source links live in `recommendation.md` and
+`UPDATES.md`.
+
 ## Top 500
 
 The full working backlog lives in `recommendation.md`: 500 base findings,
-`N01-N400` implementation follow-ups, and `R01-R60` research-derived items.
+`N01-N400` implementation follow-ups, `R01-R60` research-derived items, and
+the completed `S01-S10` config durability/manual update pass (970 total).
 The collapsed mirror below keeps the requested 500 base items visible from the
 README without making the first read impossible.
 
@@ -689,10 +725,10 @@ README without making the first read impossible.
 | 7 | Done | `AUTO_REVERSE_CONFIG` помогает безопасно тестировать конфиг. |
 | 8 | Done | `load_or_create` делает first-run проще. |
 | 9 | Done | Config save использует уникальный temporary file. |
-| 10 | Problem | Config save еще не делает fsync файла и директории. |
-| 11 | Improve | Добавить durable save для production release. |
-| 12 | Problem | Нет backup corrupted config. |
-| 13 | Improve | При parse error сохранять `.broken.<timestamp>.toml`. |
+| 10 | Done | Config save делает `sync_all` временного файла до rename и директории после rename. |
+| 11 | Done | Durable save, unique `create_new` temp и mode `0600` покрыты тестами. |
+| 12 | Done | Явный `repair-config` сохраняет corrupted config byte-for-byte в уникальном sibling backup. |
+| 13 | Done | Backup получает имя `.broken.<timestamp>.<pid>.<counter>.toml`; valid config команда не переписывает. |
 | 14 | Problem | Нет migration framework для `config_version`. |
 | 15 | Improve | Добавить `config::migration` до schema v2. |
 | 16 | Done | `ConfigStore` и `AppConfig` разделены: `config/schema.rs` и `config/store.rs`. |
@@ -765,8 +801,8 @@ README without making the first read impossible.
 | 83 | Done | CLI parsing вынесен в отдельный command/options module. |
 | 84 | Done | `parse_bool` принимает yes/no/1/0, и help теперь перечисляет эти значения. |
 | 85 | Done | Help перечисляет accepted bool values: true/false/yes/no/1/0. |
-| 86 | Problem | CLI errors не имеют stable error codes. |
-| 87 | Improve | Добавить `E_CONFIG_PARSE`, `E_PERMISSION`, `E_PLATFORM`. |
+| 86 | Done | Каждая семья CLI errors имеет стабильный machine-readable code. |
+| 87 | Done | Реализованы `E_CONFIG_PARSE`, `E_CONFIG_INVALID`, `E_PERMISSION`, `E_PLATFORM` и остальные coarse codes. |
 | 88 | Done | `AppError` отделяет IO, config, platform и usage. |
 | 89 | Problem | `AppError::InvalidConfig` хранит plain string. |
 | 90 | Improve | Сделать structured validation errors. |
@@ -868,10 +904,10 @@ README without making the first read impossible.
 | 186 | Improve | Реализовать show/hide icon с recovery через CLI. |
 | 187 | Done | Start at login config теперь связан с LaunchAgent integration. |
 | 188 | Done | Packaged `.app` дополнен `SMAppService.mainAppService()` для GUI login item. |
-| 189 | Problem | Update config fields есть, updater нет. |
-| 190 | Improve | Решить: Sparkle, manual releases или no auto-update. |
-| 191 | Problem | Beta updates flag есть, behavior нет. |
-| 192 | Improve | Скрыть/пометить beta flag до update strategy. |
+| 189 | Done | Выбрана явная manual-browser update strategy без фоновых сетевых запросов приложения. |
+| 190 | Done | CLI и egui открывают только canonical GitHub Releases URLs через узкий macOS adapter. |
+| 191 | Done | `include_beta_updates` выбирает all-releases channel для неявного CLI выбора; `--latest`/`--all` остаются явными overrides. |
+| 192 | Done | `check_for_updates` сохранен для совместимости, но `doctor` честно сообщает, что automatic checking отключен. |
 | 193 | Problem | `show_discrete_scroll_options` есть, UI нет. |
 | 194 | Improve | Показывать wheel step section после wheel event. |
 | 195 | Problem | Нет device list. |
@@ -1187,7 +1223,7 @@ README without making the first read impossible.
 ## Documents
 
 - `architecture.md` - current and target architecture, SOLID/DRY split, UX direction.
-- `recommendation.md` - 960 recommendations, problems and improvements (500 base items + N01-N400 implementation follow-ups + R01-R60 research follow-ups).
+- `recommendation.md` - 970 recommendations, problems and improvements (500 base items + N01-N400 implementation follow-ups + R01-R60 research follow-ups + S01-S10 config/update follow-ups).
 - `RESEARCH.md` - 10-repository source review, scientific/platform sources, rejected approaches, and three incremental implementation iterations.
 - `TRACE.md` - privacy trace schema, limits, replay semantics, CLI lab, and ownership boundaries.
 - `BENCHMARK.md` - target conditions, physical matrix, metrics, event-rate

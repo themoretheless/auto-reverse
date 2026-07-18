@@ -7,6 +7,7 @@
 //! - `gesture`: passive public AppKit gesture monitor and the adapter from
 //!   macOS event fields into the pure Magic Mouse/trackpad classifier.
 //! - `event_tap`: the CGEventTap runtime loop that ties it all together.
+//! - `external_url`: opens canonical product release pages in the browser.
 //! - `startup`: per-user LaunchAgent start-at-login support for the
 //!   headless CLI (`enable-startup`/`disable-startup`, targets `run`).
 //! - `daemon_lock`: exclusive-lock guard (`flock`) preventing two live
@@ -42,6 +43,7 @@ pub mod daemon_lock;
 #[cfg(feature = "gui")]
 pub mod debug_log;
 pub mod event_tap;
+pub mod external_url;
 pub mod gesture;
 pub mod hid;
 #[cfg(feature = "gui")]

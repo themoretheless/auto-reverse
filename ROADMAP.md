@@ -1,6 +1,6 @@
 # Auto Reverse Roadmap
 
-This is the executable view of the 960-item audit in `recommendation.md`.
+This is the executable view of the 970-item audit in `recommendation.md`.
 Items are intentionally small enough to understand, implement, and verify
 independently.
 
@@ -20,9 +20,16 @@ below in fixed batches of five.
 | 7 | R31-R35 | Implemented/researched; physical virtual-HID and receiver QA remain |
 | 8 | R36-R40 | Implemented/researched; physical attribution and visual catalog QA remain |
 | 9 | R41-R45 | Implemented as session contract, provenance diagnostics, search and IA |
-| 10 | R46-R50 | Next |
-| 11 | R51-R55 | Pending |
-| 12 | R56-R60 | Pending |
+| 10 | R46-R50 | Done; secure import and exact-device manual UI QA remain |
+| 11 | R51-R55 | Done; physical refresh/watchdog QA remains |
+| 12 | R56-R60 | Done; production regression evidence remains |
+
+## Config and update batch
+
+| Batch | Items | Status |
+| --- | --- | --- |
+| 13 | S01-S05 | Done: durable/private config, read-only validation, exact repair |
+| 14 | S06-S10 | Done: rollback, stable errors, manual update policy, About UI |
 
 ## P0 - Correctness and recovery
 
@@ -65,7 +72,10 @@ below in fixed batches of five.
     scripts are covered by an isolated workflow smoke; a running `/Applications`
     update is verified, while fresh install, login-item cleanup, full uninstall,
     and permission continuity QA remains open.
-25. [Next] Choose an update strategy before enabling update-related config flags.
+25. [Done] Use explicit manual GitHub release links with no background network
+    client. `include_beta_updates` selects a manual channel; the legacy
+    automatic flag cannot initiate I/O. `UPDATES.md` defines the prerequisites
+    for any future signed automatic updater.
 
 ## Definition of Done
 

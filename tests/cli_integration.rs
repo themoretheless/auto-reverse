@@ -1,6 +1,8 @@
 #![cfg(target_os = "macos")]
 
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -117,6 +119,136 @@ fn doctor_no_create_reports_defaults_without_creating_config() {
     assert!(stdout.contains(&config_path.to_string_lossy().to_string()));
     assert!(!config_path.exists());
     assert!(!config_path.with_file_name("config.toml.lock").exists());
+}
+
+#[test]
+fn validate_config_json_is_read_only_when_config_is_missing() {
+    let sandbox = CliSandbox::new("validate-missing");
+    let config_path = sandbox.default_config_path();
+    let config_parent = config_path.parent().unwrap();
+
+    let output = sandbox.run(&["validate-config", "--json"]);
+    let report = stdout(&output);
+
+    assert!(report.contains("\"status\": \"missing\""));
+    assert!(report.contains(&config_path.to_string_lossy().to_string()));
+    assert!(!config_parent.exists());
+    assert!(!config_path.exists());
+    assert!(!config_path.with_file_name("config.toml.lock").exists());
+}
+
+#[test]
+fn validate_config_json_reports_a_valid_versioned_config() {
+    let sandbox = CliSandbox::new("validate-valid");
+    let config_path = sandbox.default_config_path();
+    sandbox.run(&["init"]);
+
+    let report = stdout(&sandbox.run(&["validate-config", "--json"]));
+
+    assert!(report.contains("\"status\": \"valid\""));
+    assert!(report.contains("\"config_version\": 1"));
+    assert!(report.contains(&config_path.to_string_lossy().to_string()));
+}
+
+#[test]
+fn validate_config_distinguishes_toml_parse_errors() {
+    let sandbox = CliSandbox::new("validate-parse-error");
+    let config_path = sandbox.default_config_path();
+    let invalid = b"enabled = maybe\n";
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, invalid).unwrap();
+
+    let output = sandbox
+        .command(&["validate-config", "--json"])
+        .output()
+        .unwrap();
+    let report = stdout(&output);
+    let error = String::from_utf8(output.stderr).unwrap();
+
+    assert!(!output.status.success());
+    assert!(report.contains("\"status\": \"invalid\""));
+    assert!(report.contains("\"code\": \"E_CONFIG_PARSE\""));
+    assert!(error.contains("auto-reverse[E_CONFIG_PARSE]"));
+    assert_eq!(fs::read(&config_path).unwrap(), invalid);
+    assert!(!config_path.with_file_name("config.toml.lock").exists());
+}
+
+#[test]
+fn validate_config_reports_stable_error_without_changing_invalid_bytes() {
+    let sandbox = CliSandbox::new("validate-invalid");
+    let config_path = sandbox.default_config_path();
+    let invalid = b"enabled = maybe\n\xff";
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, invalid).unwrap();
+
+    let output = sandbox
+        .command(&["validate-config", "--json"])
+        .output()
+        .unwrap();
+    let report = stdout(&output);
+    let error = String::from_utf8(output.stderr).unwrap();
+
+    assert!(!output.status.success());
+    assert!(report.contains("\"status\": \"invalid\""));
+    assert!(report.contains("\"code\": \"E_CONFIG_INVALID\""));
+    assert!(error.contains("auto-reverse[E_CONFIG_INVALID]"));
+    assert_eq!(fs::read(&config_path).unwrap(), invalid);
+    assert!(!config_path.with_file_name("config.toml.lock").exists());
+}
+
+#[test]
+fn repair_config_preserves_original_and_is_idempotent() {
+    let sandbox = CliSandbox::new("repair-invalid");
+    let config_path = sandbox.default_config_path();
+    let invalid = b"not valid = [\n\xff";
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, invalid).unwrap();
+
+    let repaired = sandbox.run(&["repair-config"]);
+    assert!(stdout(&repaired).contains("original bytes preserved"));
+    assert_eq!(read_config(&config_path), AppConfig::default());
+
+    let backups: Vec<_> = fs::read_dir(config_path.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("config.broken."))
+        })
+        .collect();
+    assert_eq!(backups.len(), 1);
+    assert_eq!(fs::read(&backups[0]).unwrap(), invalid);
+
+    let second = sandbox.run(&["repair-config"]);
+    assert!(stdout(&second).contains("already valid"));
+    assert_eq!(
+        fs::read_dir(config_path.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("config.broken."))
+            .count(),
+        1
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn config_mutations_commit_private_permissions() {
+    let sandbox = CliSandbox::new("private-config");
+    let config_path = sandbox.default_config_path();
+
+    sandbox.run(&["init"]);
+    sandbox.run(&["disable"]);
+
+    assert_eq!(
+        fs::metadata(config_path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
 }
 
 #[test]

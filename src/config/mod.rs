@@ -17,7 +17,7 @@ pub use device_rules::{
 pub use profiles::{ProfileSource, ResolvedDeviceProfile, ResolvedProfileValue};
 pub use reset::{with_dynamics_defaults, with_dynamics_rollback, without_device_profile};
 pub use schema::{AppConfig, CONFIG_VERSION, DeviceRule};
-pub use store::{ConfigRevision, ConfigSnapshot, ConfigStore};
+pub use store::{ConfigRepairOutcome, ConfigRevision, ConfigSnapshot, ConfigStore};
 pub use transfer::{
     ConfigImportPreview, ConfigSection, MAX_IMPORT_BYTES, MigrationReport, SectionChange,
     TransferError, export_document, preview_import_document, preview_import_file,

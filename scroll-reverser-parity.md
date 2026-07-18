@@ -176,7 +176,7 @@
 | Status icon | Retina menu status and app identity | Done | Template glyph, colored state dot, SVG-to-ICNS app icon pipeline. |
 | Hide icon | Show/hide menu bar icon | Open | Requires a recovery/focus command before exposing the toggle. |
 | Automation | Scriptable enable/disable | Done | CLI `enable`, `disable`, `toggle`, `doctor`; AppleScript property is not implemented. |
-| Updates | Explicit update strategy | Open | Choose Sparkle/manual/no-updater before activating stored flags. |
+| Updates | Explicit update strategy | Implemented | Manual stable/all GitHub release actions; no background network client. Automatic signed updates remain optional future scope. |
 | Localization | Russian and English-ready strings | Open | User-facing copy still lives inline. |
 | Distribution | Signed/notarized release | Open | Local bundle is ad-hoc signed; Developer ID/notarization remains external release work. |
 | Install | Stable install, update and uninstall | Implemented | Atomic temp-destination smoke passes; real `/Applications` and login-item cleanup QA remains. |

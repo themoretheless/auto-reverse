@@ -7,7 +7,8 @@ This file provides guidance to Codex when working with code in this repository.
 Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
 
 - a macOS `CGEventTap` runtime;
-- TOML config with validation and atomic save;
+- TOML config with validation, durable private atomic save, read-only inspect,
+  and explicit exact-backup repair;
 - CLI commands in `src/main.rs` with parsing isolated in `src/cli.rs`;
 - pure scroll policy in `src/scroll.rs`;
 - pure Magic Mouse/trackpad inventory and timing policy in
@@ -50,6 +51,9 @@ Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
   under `scripts/`.
 - a strict Developer ID/hardened-runtime/notarization/stapling release pipeline
   under `scripts/`, with its checklist in `RELEASE.md`.
+- an explicit manual update policy in `src/update_policy.rs` and `UPDATES.md`;
+  the app opens trusted release URLs only after user action and has no
+  background network client.
 - deterministic config/trace/dynamics property suites and fail-closed dynamics
   release evidence under `tests/` and `packaging/`.
 
@@ -131,6 +135,15 @@ framework code inside `platform/macos`.
   gesture tap together.
 - The `.app` bundle must launch the real Mach-O binary at
   `Contents/MacOS/auto-reverse`; do not reintroduce a shell wrapper.
+- Config commits use a unique `create_new` temporary file with mode `0600`,
+  sync the file before rename, and sync the parent directory after rename.
+  Read-only inspection must not create a directory, config, or lock.
+- Corrupted-config repair is explicit. Preserve invalid bytes in an exclusive
+  sibling backup, never overwrite an existing backup, leave valid TOML
+  byte-for-byte unchanged, and restore the original path if replacement fails.
+- Release URLs are compile-time canonical GitHub destinations. The legacy
+  automatic-update flag must never cause background network I/O; beta preference
+  may choose only the manual all-releases destination.
 - Public release artifacts must pass the Developer ID, secure timestamp,
   notarization, stapling, and Gatekeeper gates in `RELEASE.md`; an ad-hoc or
   Apple Development signature is never a distributable substitute.
@@ -149,6 +162,9 @@ framework code inside `platform/macos`.
 - Run benchmark: `cargo run -- benchmark`
 - Run headless tap: `cargo run -- run`
 - Diagnostics: `cargo run -- doctor --no-create`
+- Validate config: `cargo run -- validate-config --json`
+- Repair config: `cargo run -- repair-config`
+- Open releases: `cargo run -- open-releases --latest`
 - Devices: `cargo run -- devices`
 - Roll back dynamics presets: `cargo run -- rollback-dynamics`
 - Check: `cargo check`

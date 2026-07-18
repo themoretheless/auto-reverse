@@ -93,6 +93,12 @@ const ENTRIES: &[SearchEntry] = &[
         destination: SettingsDestination::Advanced,
     },
     SearchEntry {
+        title: "Version and updates",
+        section: "Advanced",
+        keywords: "about release latest beta prerelease github",
+        destination: SettingsDestination::Advanced,
+    },
+    SearchEntry {
         title: "Debug Console",
         section: "Diagnostics",
         keywords: "events resolution decision filter",
@@ -217,6 +223,16 @@ mod tests {
     #[test]
     fn config_transfer_terms_route_to_advanced() {
         for query in ["import config", "backup", "migration"] {
+            assert_eq!(
+                search_settings(query, 1)[0].destination,
+                SettingsDestination::Advanced
+            );
+        }
+    }
+
+    #[test]
+    fn version_and_update_terms_route_to_advanced() {
+        for query in ["version", "latest release", "prerelease"] {
             assert_eq!(
                 search_settings(query, 1)[0].destination,
                 SettingsDestination::Advanced

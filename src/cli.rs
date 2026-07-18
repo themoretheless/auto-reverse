@@ -6,6 +6,7 @@ use auto_reverse::error::{AppError, AppResult};
 use auto_reverse::scroll_lab::{
     DEFAULT_BASELINE_GAIN, DEFAULT_CLUTCH_GAP_US, LabOptions, MAX_BASELINE_GAIN, MAX_CLUTCH_GAP_US,
 };
+use auto_reverse::update_policy::ReleaseChannel;
 
 pub const BOOL_HELP_VALUES: &str = "true|false|yes|no|1|0";
 
@@ -26,6 +27,9 @@ pub enum Command {
     EnableStartup,
     DisableStartup,
     RollbackDynamics,
+    ValidateConfig(ValidationOptions),
+    RepairConfig,
+    OpenReleases(OpenReleasesOptions),
     PrepareUninstall,
     StartupStatus(StartupStatusOptions),
     ConfigPath,
@@ -54,6 +58,24 @@ impl Default for DoctorOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StartupStatusOptions {
     pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidationOptions {
+    pub format: OutputFormat,
+}
+
+impl Default for ValidationOptions {
+    fn default() -> Self {
+        Self {
+            format: OutputFormat::Text,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OpenReleasesOptions {
+    pub channel: Option<ReleaseChannel>,
 }
 
 impl Default for StartupStatusOptions {
@@ -109,6 +131,12 @@ pub fn parse_args(args: &[String]) -> AppResult<Command> {
         Some("rollback-dynamics") => Err(AppError::Usage(
             "rollback-dynamics does not accept flags".to_string(),
         )),
+        Some("validate-config") => parse_validate_config(&args[1..]),
+        Some("repair-config") if args.len() == 1 => Ok(Command::RepairConfig),
+        Some("repair-config") => Err(AppError::Usage(
+            "repair-config does not accept flags".to_string(),
+        )),
+        Some("open-releases") => parse_open_releases(&args[1..]),
         Some("prepare-uninstall") if args.len() == 1 => Ok(Command::PrepareUninstall),
         Some("prepare-uninstall") => Err(AppError::Usage(
             "prepare-uninstall does not accept flags".to_string(),
@@ -126,6 +154,51 @@ pub fn parse_args(args: &[String]) -> AppResult<Command> {
             "unknown command `{command}`; run `auto-reverse help`"
         ))),
     }
+}
+
+fn parse_validate_config(args: &[String]) -> AppResult<Command> {
+    let mut options = ValidationOptions::default();
+    for arg in args {
+        match arg.as_str() {
+            "--json" => options.format = OutputFormat::Json,
+            "--text" => options.format = OutputFormat::Text,
+            "--help" | "-h" => return Ok(Command::Help),
+            flag => {
+                return Err(AppError::Usage(format!(
+                    "unknown validate-config flag `{flag}`; run `auto-reverse help`"
+                )));
+            }
+        }
+    }
+    Ok(Command::ValidateConfig(options))
+}
+
+fn parse_open_releases(args: &[String]) -> AppResult<Command> {
+    let mut options = OpenReleasesOptions::default();
+    for arg in args {
+        match arg.as_str() {
+            "--latest" | "--all" => {
+                let channel = if arg == "--latest" {
+                    ReleaseChannel::LatestStable
+                } else {
+                    ReleaseChannel::IncludingPrereleases
+                };
+                if options.channel.is_some_and(|selected| selected != channel) {
+                    return Err(AppError::Usage(
+                        "open-releases accepts only one of --latest or --all".to_string(),
+                    ));
+                }
+                options.channel = Some(channel);
+            }
+            "--help" | "-h" => return Ok(Command::Help),
+            flag => {
+                return Err(AppError::Usage(format!(
+                    "unknown open-releases flag `{flag}`; run `auto-reverse help`"
+                )));
+            }
+        }
+    }
+    Ok(Command::OpenReleases(options))
 }
 
 fn parse_trace_lab(args: &[String]) -> AppResult<Command> {
@@ -583,6 +656,38 @@ mod tests {
             Command::RollbackDynamics
         );
         assert!(parse_args(&strings(&["rollback-dynamics", "--all"])).is_err());
+    }
+
+    #[test]
+    fn config_validation_and_repair_are_explicit_commands() {
+        assert_eq!(
+            parse_args(&strings(&["validate-config", "--json"])).unwrap(),
+            Command::ValidateConfig(ValidationOptions {
+                format: OutputFormat::Json,
+            })
+        );
+        assert_eq!(
+            parse_args(&strings(&["repair-config"])).unwrap(),
+            Command::RepairConfig
+        );
+        assert!(parse_args(&strings(&["repair-config", "--force"])).is_err());
+        assert!(parse_args(&strings(&["validate-config", "--wat"])).is_err());
+    }
+
+    #[test]
+    fn release_page_channel_is_explicit() {
+        assert_eq!(
+            parse_args(&strings(&["open-releases"])).unwrap(),
+            Command::OpenReleases(OpenReleasesOptions::default())
+        );
+        assert_eq!(
+            parse_args(&strings(&["open-releases", "--all"])).unwrap(),
+            Command::OpenReleases(OpenReleasesOptions {
+                channel: Some(ReleaseChannel::IncludingPrereleases),
+            })
+        );
+        assert!(parse_args(&strings(&["open-releases", "--beta"])).is_err());
+        assert!(parse_args(&strings(&["open-releases", "--latest", "--all"])).is_err());
     }
 
     #[test]

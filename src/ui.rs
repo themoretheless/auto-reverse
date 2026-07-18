@@ -9,8 +9,9 @@
 //!
 //! Honesty rules the layout follows:
 //! - No control is shown for config fields that do nothing today
-//!   (`reverse_unknown` and the menu-bar/update placeholders). Rendering dead
-//!   switches would be lying with widgets.
+//!   (`reverse_unknown` and the menu-bar placeholders). Rendering dead
+//!   switches would be lying with widgets. Release links are explicit browser
+//!   actions and never imply that a background updater exists.
 //! - Mouse wheel, trackpad, and Magic Mouse each have a live policy toggle;
 //!   the latter two are separated by the public gesture timing classifier.
 //!
@@ -65,13 +66,14 @@ use crate::device::DeviceIdentity;
 use crate::device_catalog::ObservedDevice;
 use crate::device_test::DeviceTestSession;
 use crate::platform::macos::{
-    activation, app_events, daemon_lock, hid, login_item, permissions, power_events, quit_handler,
-    recovery_log, tray,
+    activation, app_events, daemon_lock, external_url, hid, login_item, permissions, power_events,
+    quit_handler, recovery_log, tray,
 };
 use crate::recovery_audit::{RecoveryAction, RecoveryReason};
 use crate::refresh_policy::RefreshPolicy;
 use crate::runtime::{DEFAULT_PAUSE_DURATION, RuntimeControl};
 use crate::settings_search::{SettingsDestination, search_settings};
+use crate::update_policy::ReleaseChannel;
 
 mod config_transfer;
 mod debug_console;
@@ -270,6 +272,8 @@ struct SettingsApp {
     activation_inbox: activation::ActivationInbox,
     /// Set on a login_item register/unregister failure.
     login_item_error: Option<String>,
+    /// Last explicit browser-launch failure from About & Updates.
+    update_action_error: Option<String>,
     tray: Option<tray::TrayHandle>,
     /// Whether `quit_handler::install()` has run yet - it must happen on
     /// the main thread after `NSApplication` has started, same constraint
@@ -418,6 +422,7 @@ impl SettingsApp {
             activation_error: None,
             activation_inbox,
             login_item_error,
+            update_action_error: None,
             tray: None,
             quit_handler_installed: false,
             selected_tab,
@@ -1231,6 +1236,39 @@ impl SettingsApp {
                     self.config = request.config;
                     imported_sections = Some(request.section_labels);
                     changed = true;
+                }
+
+                section(ui, "About & updates");
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Auto Reverse").size(13.0).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                                .small()
+                                .weak(),
+                        );
+                    });
+                });
+                ui.horizontal_wrapped(|ui| {
+                    if styled_button(ui, "Latest release", egui::vec2(12.0, 5.0)).clicked() {
+                        self.update_action_error =
+                            external_url::open_release_page(ReleaseChannel::LatestStable)
+                                .err()
+                                .map(|error| error.to_string());
+                    }
+                    if styled_button(ui, "All releases", egui::vec2(12.0, 5.0)).clicked() {
+                        self.update_action_error =
+                            external_url::open_release_page(ReleaseChannel::IncludingPrereleases)
+                                .err()
+                                .map(|error| error.to_string());
+                    }
+                });
+                if let Some(error) = &self.update_action_error {
+                    ui.label(
+                        RichText::new(format!("Could not open releases: {error}"))
+                            .color(Color32::from_rgb(0xC0, 0x39, 0x2B))
+                            .small(),
+                    );
                 }
             }
         }
