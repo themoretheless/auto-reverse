@@ -217,9 +217,10 @@ impl TrayStatus {
 
 /// Owns the live AppKit objects. Dropping this removes the menu-bar item.
 pub struct TrayHandle {
-    /// Kept alive only so dropping `TrayHandle` removes the menu-bar item -
-    /// the icon/menu themselves are never touched again after `build()`.
-    _status_item: Retained<NSStatusItem>,
+    /// Kept alive so dropping `TrayHandle` removes the menu-bar item. Its
+    /// visibility follows `show_menu_bar_icon`; the menu and image remain
+    /// attached while hidden so restoring it is immediate and lossless.
+    status_item: Retained<NSStatusItem>,
     /// The status item's button, kept so `set_status` can re-check its
     /// `effectiveAppearance` on every status change - the menu bar's
     /// light/dark state can change independently of the app's own windows
@@ -248,6 +249,9 @@ pub struct TrayHandle {
     /// between light and dark while Auto Reverse stays Active/Paused, and
     /// the handoff defines different dot colors for those appearances.
     last_icon_dark: Option<bool>,
+    /// Last value sent to AppKit, avoiding a redundant Objective-C message on
+    /// every 250 ms logic tick.
+    visible: bool,
 }
 
 impl TrayHandle {
@@ -266,6 +270,16 @@ impl TrayHandle {
         }
         self.last_icon_status = Some(status);
         self.last_icon_dark = Some(dark);
+    }
+
+    /// Hides or restores the existing status item without rebuilding its
+    /// target, menu, device snapshot, or status-dot views.
+    pub fn set_visible(&mut self, visible: bool) {
+        if self.visible == visible {
+            return;
+        }
+        self.status_item.setVisible(visible);
+        self.visible = visible;
     }
 }
 
@@ -491,7 +505,7 @@ pub fn build(
     #[allow(deprecated)]
     status_item.setImage(Some(&icon));
     status_item.setMenu(Some(&menu));
-    status_item.setVisible(true);
+    status_item.setVisible(config_snapshot.show_menu_bar_icon);
 
     // Status dot: a separate, non-template `NSImageView` subview of the
     // status item's button, positioned in its bottom-right corner - see the
@@ -520,13 +534,14 @@ pub fn build(
     let initial_icon_dark = button.as_deref().map(is_dark_menu_bar);
 
     Ok(TrayHandle {
-        _status_item: status_item,
+        status_item,
         button,
         dot_view,
         _menu: menu,
         _target: target,
         last_icon_status: Some(status),
         last_icon_dark: initial_icon_dark,
+        visible: config_snapshot.show_menu_bar_icon,
     })
 }
 

@@ -47,7 +47,8 @@ below in fixed batches of five.
 ## P1 - Product and design
 
 11. [Done] Match handoff 1b settings tabs and native compact control styling.
-12. [Done] Match Concept B menu-bar arrows and status dot.
+12. [Done] Match Concept B menu-bar arrows/status dot and honor live icon
+    visibility only with relaunch plus CLI recovery.
 13. [Done] Match handoff 1e rich menu and 1f Debug Console.
 14. [Done] Add a branded app icon and `.icns` bundle pipeline.
 15. [Done] Route first launch with missing permissions to the Permissions tab.

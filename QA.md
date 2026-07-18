@@ -54,6 +54,7 @@ Mark these on the exact bundle intended for release. Blank means not verified.
 |  |  | Sleep/wake preserves Magic Mouse/trackpad classification |  |  |  |  |
 |  |  | Cmd-W, Cmd-Q, Dock Quit, tray Quit |  |  |  |  |
 |  |  | Hide window, launch app again: one icon and focused existing window |  |  |  |  |
+|  |  | Hide menu icon, close window, relaunch and CLI recovery each restore one existing-process icon |  |  |  |  |
 |  |  | Menu, device submenu, Option-click console |  |  |  |  |
 |  |  | Debug filter/clear; Save Panel cancel/save/overwrite; Reveal in Finder |  |  |  |  |
 |  |  | Hovering a Debug row explains attribution, classifier evidence, profile sources, preset, and final reason |  |  |  |  |

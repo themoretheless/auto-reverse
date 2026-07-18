@@ -57,7 +57,8 @@ Implemented:
 - menu bar UI with a custom opposing-arrows template icon, a separate colored
   status dot, a rich native menu, a Reverse Scrolling toggle, per-device
   quick-pick submenu, temporary pause/resume, Open Settings, Open Debug Console,
-  and Quit;
+  and Quit; Advanced can hide the status item without stopping reversal, while
+  relaunch and `show-menu-bar-icon` provide recovery without a second instance;
 - local Debug Console with search, decision filters, clear, and a bounded
   structured ring buffer; CSV export includes stable reason codes, source PID,
   synthetic flag, device kind, raw HID name, vendor/product IDs, attribution,
@@ -137,7 +138,6 @@ Implemented:
 Still missing:
 
 - guided onboarding beyond the compact permission-first state;
-- hide/show menu bar icon;
 - a provisioned Developer ID/notary account and clean-machine release QA;
 - an automatic signed in-app updater, intentionally deferred while the manual
   no-background-network strategy is sufficient;
@@ -178,6 +178,7 @@ cargo run -- disable
 cargo run -- toggle
 cargo run -- enable-startup
 cargo run -- disable-startup
+cargo run -- show-menu-bar-icon
 cargo run -- startup-status
 cargo run -- startup-status --json
 cargo run -- rollback-dynamics
@@ -313,7 +314,7 @@ Then launch the bundled app:
 open "target/debug/Auto Reverse.app"
 ```
 
-Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and Accessibility is granted, sharing one live config with the window so changes made in that window apply immediately with no restart. If the app was opened before Accessibility was granted, it keeps watching the permission state and retries starting the tap once the check becomes ready; if startup failed or stopped immediately, turning Reverse scrolling off clears that pending attempt so turning it on again can retry cleanly. A menu-bar icon stays up for as long as the process runs: it uses an opposing-arrows template glyph plus a separate colored status dot for active/paused/permission-blocked states. Its native menu includes Reverse Scrolling, device quick-picks, Open Settings, Open Debug Console, and Quit; holding Option while opening the icon opens the Debug Console directly. Closing the settings window hides it rather than quitting. A separate `ui.lock` prevents duplicate windows/menu-bar icons. When a second GUI launch finds that lock held, it atomically writes a PID-addressed `ui.activate` request and exits with success; the existing process consumes the request on its hidden-window tick, makes the settings viewport visible, and focuses it. An exclusive tap lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. External CLI edits made while the settings window is already open are not live-watched. They are nevertheless protected: the next GUI/tray save detects the exact TOML revision mismatch, reloads the newer disk state, and asks the user to repeat the local action instead of silently overwriting it. Reopen the window to apply an external edit immediately. For terminal diagnostics through the bundled identity:
+Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and Accessibility is granted, sharing one live config with the window so changes made in that window apply immediately with no restart. If the app was opened before Accessibility was granted, it keeps watching the permission state and retries starting the tap once the check becomes ready; if startup failed or stopped immediately, turning Reverse scrolling off clears that pending attempt so turning it on again can retry cleanly. The default menu-bar item uses an opposing-arrows template glyph plus a separate colored status dot for active/paused/permission-blocked states. Its native menu includes Reverse Scrolling, device quick-picks, Open Settings, Open Debug Console, and Quit; holding Option while opening the icon opens the Debug Console directly. Advanced can hide the icon without stopping reversal. While hidden, reopening Auto Reverse focuses the existing settings process and reloads its exact external config revision; `show-menu-bar-icon` provides the same recovery from Terminal. Closing the settings window hides it rather than quitting. A separate `ui.lock` prevents duplicate windows/menu-bar icons. When a second GUI launch finds that lock held, it atomically writes a PID-addressed `ui.activate` request and exits with success; the existing process consumes the request on its hidden-window tick, reloads a newer config, makes the settings viewport visible, and focuses it. An exclusive tap lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. External CLI edits made while the settings window is already open are not continuously watched. They are nevertheless protected: activation reloads them, while the next GUI/tray save detects an exact TOML revision mismatch and asks the user to repeat the local action instead of silently overwriting it. For terminal diagnostics through the bundled identity:
 
 Debug Console rows keep raw source metadata in memory and derive display text
 only while the console is searching or rendering. Export preserves the raw HID
@@ -615,7 +616,7 @@ Build the app surface:
 - permission onboarding;
 - debug console and its dedicated module;
 - process-local pause and permission-first recovery;
-- hide/show icon.
+- configurable menu-bar visibility with relaunch/CLI recovery (done).
 
 ### Iteration 3: Release Quality
 
@@ -887,7 +888,7 @@ README without making the first read impossible.
 | 169 | Done | Remote `origin` настроен. |
 | 170 | Done | Push в `origin/master` работает. |
 | 171 | Done | Menu bar app есть: native AppKit `NSStatusItem`. |
-| 172 | Done | macOS status item стал primary always-on UI для Open Settings/Quit. |
+| 172 | Done | macOS status item остается primary UI по умолчанию; visibility меняется live с безопасным recovery. |
 | 173 | Done | CLI больше не единственный способ менять настройки. |
 | 174 | Done | Preferences/settings window добавлен через egui. |
 | 175 | Done | Missing permissions дают compact permission-first state без marketing welcome. |
@@ -900,8 +901,8 @@ README without making the first read impossible.
 | 182 | Improve | Повторить Scroll Reverser: right/control click toggles app. |
 | 183 | Done | Option-click debug console реализован через rich tray menu handling. |
 | 184 | Done | Option-click открывает Debug Console; меню также имеет явный fallback пункт. |
-| 185 | Problem | Hide menu bar icon config есть, UI нет. |
-| 186 | Improve | Реализовать show/hide icon с recovery через CLI. |
+| 185 | Done | Advanced UI управляет `show_menu_bar_icon`, не останавливая runtime. |
+| 186 | Done | `show-menu-bar-icon` и повторный запуск reload-ят config и возвращают hidden icon/window. |
 | 187 | Done | Start at login config теперь связан с LaunchAgent integration. |
 | 188 | Done | Packaged `.app` дополнен `SMAppService.mainAppService()` для GUI login item. |
 | 189 | Done | Выбрана явная manual-browser update strategy без фоновых сетевых запросов приложения. |
@@ -1054,8 +1055,8 @@ README without making the first read impossible.
 | 336 | Improve | `reverse_only_raw_input` needs docs and UI explanation. |
 | 337 | Problem | Raw-input mode wording confusing. |
 | 338 | Improve | Label it "Ignore injected/remote scroll events". |
-| 339 | Problem | Нет support for restoring menu icon after hidden config mistake. |
-| 340 | Improve | Document `show_menu_bar_icon = true` recovery. |
+| 339 | Done | Hidden menu icon восстанавливается через relaunch или `show-menu-bar-icon`. |
+| 340 | Done | Recovery задокументирован в UI, README, architecture, parity и `doctor`. |
 | 341 | Implemented | Local install/update/uninstall и production release pipeline готовы; реальный Developer ID/notary QA остаётся. |
 | 342 | Done | Local app bundle structure выбран: `target/<profile>/Auto Reverse.app`. |
 | 343 | Implemented | Developer ID signing path и strict authority gate готовы; сертификат является external prerequisite. |

@@ -1,10 +1,11 @@
 //! Small cross-process mailbox for focusing the existing settings window.
 //!
 //! `ui.lock` remains the single-instance authority. When a second GUI process
-//! cannot acquire it, that process atomically writes the lock owner's PID to a
-//! sibling `ui.activate` file and exits successfully. The owner polls this file
-//! from egui's existing 250 ms logic tick, consumes matching requests, and
-//! makes its hidden settings viewport visible and focused.
+//! cannot acquire it, that process commits any requested recovery change,
+//! atomically writes the lock owner's PID to a sibling `ui.activate` file, and
+//! exits successfully. The owner polls this file from egui's existing 250 ms
+//! logic tick, consumes matching requests, reloads config, and makes its hidden
+//! settings viewport visible and focused.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -39,14 +40,42 @@ impl PrimaryUiInstance {
 /// existing one. `Ok(None)` means the request was published successfully and
 /// this second process should exit without constructing AppKit objects.
 pub fn acquire_or_activate(lock_path: &Path) -> AppResult<Option<PrimaryUiInstance>> {
+    acquire_or_activate_after(lock_path, || Ok(()))
+}
+
+/// Like [`acquire_or_activate`], but commits a recovery change before the
+/// activation request becomes visible to the owner. This ordering prevents
+/// the primary GUI from consuming the request and reloading the old config.
+pub fn acquire_or_activate_after(
+    lock_path: &Path,
+    before_activate: impl FnOnce() -> AppResult<()>,
+) -> AppResult<Option<PrimaryUiInstance>> {
     match daemon_lock::try_acquire(lock_path)? {
         Some(lock) => Ok(Some(PrimaryUiInstance {
             _lock: lock,
             inbox: ActivationInbox::for_lock(lock_path),
         })),
         None => {
+            before_activate()?;
             request_existing_window(lock_path)?;
             Ok(None)
+        }
+    }
+}
+
+/// Asks a running primary GUI to reopen its window without claiming ownership
+/// when no GUI exists. This is the recovery path used after an external CLI
+/// edit restores the menu-bar icon: a live owner reloads the config on receipt,
+/// while a later ordinary launch reads the already-persisted value itself.
+pub fn request_existing_window_if_running(lock_path: &Path) -> AppResult<bool> {
+    match daemon_lock::try_acquire(lock_path)? {
+        Some(lock) => {
+            drop(lock);
+            Ok(false)
+        }
+        None => {
+            request_existing_window(lock_path)?;
+            Ok(true)
         }
     }
 }
@@ -177,6 +206,58 @@ mod tests {
 
         assert!(primary.inbox().poll().unwrap());
         assert!(!primary.inbox().poll().unwrap());
+        drop(primary);
+        cleanup(&lock_path);
+    }
+
+    #[test]
+    fn recovery_request_is_only_published_for_a_live_owner() {
+        let lock_path = test_lock_path("recovery");
+
+        assert!(!request_existing_window_if_running(&lock_path).unwrap());
+        let primary = acquire_or_activate(&lock_path).unwrap().unwrap();
+        assert!(request_existing_window_if_running(&lock_path).unwrap());
+        assert!(primary.inbox().poll().unwrap());
+
+        drop(primary);
+        cleanup(&lock_path);
+    }
+
+    #[test]
+    fn recovery_change_is_committed_before_activation_is_published() {
+        let lock_path = test_lock_path("ordered-recovery");
+        let primary = acquire_or_activate(&lock_path).unwrap().unwrap();
+        let changed = std::cell::Cell::new(false);
+
+        assert!(
+            acquire_or_activate_after(&lock_path, || {
+                assert!(!activation_path(&lock_path).exists());
+                changed.set(true);
+                Ok(())
+            })
+            .unwrap()
+            .is_none()
+        );
+        assert!(changed.get());
+        assert!(primary.inbox().poll().unwrap());
+
+        drop(primary);
+        cleanup(&lock_path);
+    }
+
+    #[test]
+    fn primary_launch_does_not_apply_secondary_recovery_change() {
+        let lock_path = test_lock_path("primary-keeps-config");
+        let changed = std::cell::Cell::new(false);
+
+        let primary = acquire_or_activate_after(&lock_path, || {
+            changed.set(true);
+            Ok(())
+        })
+        .unwrap()
+        .unwrap();
+        assert!(!changed.get());
+
         drop(primary);
         cleanup(&lock_path);
     }

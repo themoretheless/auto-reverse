@@ -91,3 +91,10 @@ The menu-bar glyph is a template `NSImage`, so AppKit owns light/dark tinting.
 Its colored status dot is a separate non-template `NSImageView`. The app icon
 uses the same opposing-arrow geometry, the accent blue, and the active green,
 rendered from `assets/AppIcon.svg` into `AutoReverse.icns` during bundle build.
+
+Menu-bar visibility is an Advanced binary setting, not a destructive action.
+Hiding the `NSStatusItem` leaves reversal, its menu target, status views, and
+the settings process alive. The hidden state shows one muted recovery line in
+the still-open window. Reopening Auto Reverse reloads any newer config before
+focusing the existing window; `show-menu-bar-icon` is the terminal recovery
+path. A visibility change never creates a second status item or GUI process.

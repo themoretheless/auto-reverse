@@ -24,9 +24,11 @@ use auto_reverse::device_classifier;
 use auto_reverse::error::{AppError, AppResult};
 use auto_reverse::event_rate::{DeviceEventRate, millihertz_to_hertz};
 use auto_reverse::input::ScrollEvent;
-use auto_reverse::platform::macos::{event_tap, external_url, hid, permissions, startup};
 #[cfg(feature = "gui")]
-use auto_reverse::platform::macos::{login_item, login_item::LoginItemStatus};
+use auto_reverse::platform::macos::{
+    activation, daemon_lock, login_item, login_item::LoginItemStatus,
+};
+use auto_reverse::platform::macos::{event_tap, external_url, hid, permissions, startup};
 use auto_reverse::scroll;
 use auto_reverse::scroll_lab::{self, AxisMetrics, Distribution};
 use auto_reverse::scroll_trace::{MAX_TRACE_BYTES, ScrollTrace, TraceError};
@@ -59,6 +61,7 @@ fn run() -> AppResult<()> {
         Command::Toggle => toggle_enabled(),
         Command::EnableStartup => set_startup_enabled(true),
         Command::DisableStartup => set_startup_enabled(false),
+        Command::ShowMenuBarIcon => show_menu_bar_icon(),
         Command::RollbackDynamics => rollback_dynamics(),
         Command::ValidateConfig(options) => validate_config(options),
         Command::RepairConfig => repair_config(),
@@ -201,8 +204,16 @@ fn doctor(options: DoctorOptions) -> AppResult<()> {
          unreachable outside `simulate`"
     );
     println!(
-        "known gap: show_menu_bar_icon and show_discrete_scroll_options are stored for planned \
-         UI behavior but are not applied by the runtime yet"
+        "menu bar icon: {} (recovery: `auto-reverse show-menu-bar-icon` or reopen the app)",
+        if config.show_menu_bar_icon {
+            "shown"
+        } else {
+            "hidden"
+        }
+    );
+    println!(
+        "known gap: show_discrete_scroll_options is stored for planned UI behavior but is not \
+         applied by the runtime yet"
     );
     let update_policy =
         UpdatePolicy::from_legacy_flags(config.check_for_updates, config.include_beta_updates);
@@ -450,6 +461,33 @@ fn set_startup_enabled(enabled: bool) -> AppResult<()> {
         warn_if_dev_tree_binary();
     }
     Ok(())
+}
+
+fn show_menu_bar_icon() -> AppResult<()> {
+    let store = ConfigStore::default();
+    store.update(|config| config.show_menu_bar_icon = true)?;
+    println!("menu bar icon: shown");
+
+    match notify_existing_settings_window() {
+        Ok(true) => println!("the running settings process was asked to reload and reopen"),
+        Ok(false) => println!("the icon will be visible the next time Auto Reverse opens"),
+        Err(error) => eprintln!(
+            "auto-reverse: the setting was saved, but the running window could not be notified \
+             ({error}); reopen Auto Reverse to apply it"
+        ),
+    }
+    Ok(())
+}
+
+#[cfg(feature = "gui")]
+fn notify_existing_settings_window() -> AppResult<bool> {
+    let ui_lock_path = daemon_lock::default_path().with_file_name("ui.lock");
+    activation::request_existing_window_if_running(&ui_lock_path)
+}
+
+#[cfg(not(feature = "gui"))]
+fn notify_existing_settings_window() -> AppResult<bool> {
+    Ok(false)
 }
 
 /// Removes both startup registrations before an installer deletes the app.
@@ -918,8 +956,8 @@ fn config_summary(config: &AppConfig) -> String {
     format!(
         "enabled={}, reverse_vertical={}, reverse_horizontal={}, reverse_mouse={}, \
          reverse_trackpad={}, reverse_magic_mouse={}, reverse_unknown={}, \
-         discrete_scroll_step_size={}, start_at_login={}, reverse_only_raw_input={}, \
-         device_rules={}",
+         discrete_scroll_step_size={}, start_at_login={}, show_menu_bar_icon={}, \
+         reverse_only_raw_input={}, device_rules={}",
         config.enabled,
         config.reverse_vertical,
         config.reverse_horizontal,
@@ -929,6 +967,7 @@ fn config_summary(config: &AppConfig) -> String {
         config.reverse_unknown,
         config.discrete_scroll_step_size,
         config.start_at_login,
+        config.show_menu_bar_icon,
         config.reverse_only_raw_input,
         config.device_rules.len(),
     )
@@ -949,6 +988,7 @@ fn print_help() {
            toggle                      Flip scroll reversing on/off\n\
            enable-startup              Start Auto Reverse at login\n\
            disable-startup             Stop starting Auto Reverse at login\n\
+           show-menu-bar-icon          Restore a hidden menu-bar icon and reopen settings\n\
            startup-status [--json]     Show LaunchAgent startup status\n\
            doctor [--no-create]        Show status, config, and permissions\n\
            help                        Show this help\n\

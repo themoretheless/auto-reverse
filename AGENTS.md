@@ -24,7 +24,8 @@ Auto Reverse is a working macOS Rust utility for reverse scrolling. It has:
 - a public listen-only AppKit gesture monitor in
   `src/platform/macos/gesture.rs`;
 - an egui settings window in `src/ui.rs`;
-- a native AppKit menu-bar item in `src/platform/macos/tray.rs`;
+- a native AppKit menu-bar item with live visibility and relaunch/CLI recovery
+  in `src/platform/macos/tray.rs` and `src/platform/macos/activation.rs`;
 - a process-local temporary pause in `src/runtime.rs`;
 - privacy-bounded trace/replay and observed-rate diagnostics in
   `src/scroll_trace.rs`, `src/scroll_lab.rs`, and `src/event_rate.rs`;
@@ -133,6 +134,10 @@ framework code inside `platform/macos`.
 - The GUI and CLI runtime paths share `daemon_lock`; never allow two runtime
   instances. One runtime owns the active scroll tap and optional passive
   gesture tap together.
+- Hiding the menu-bar icon must not drop its menu target or stop reversal.
+  Keep relaunch activation and `show-menu-bar-icon` recovery working: the live
+  GUI reloads the external config before focus and no second UI instance is
+  created.
 - The `.app` bundle must launch the real Mach-O binary at
   `Contents/MacOS/auto-reverse`; do not reintroduce a shell wrapper.
 - Config commits use a unique `create_new` temporary file with mode `0600`,
@@ -165,6 +170,7 @@ framework code inside `platform/macos`.
 - Validate config: `cargo run -- validate-config --json`
 - Repair config: `cargo run -- repair-config`
 - Open releases: `cargo run -- open-releases --latest`
+- Restore menu icon: `cargo run -- show-menu-bar-icon`
 - Devices: `cargo run -- devices`
 - Roll back dynamics presets: `cargo run -- rollback-dynamics`
 - Check: `cargo check`

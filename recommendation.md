@@ -270,7 +270,7 @@ V18-V24. **[Тесты]** Добавлены недостающие тесты: 
 V25. **[Soundness]** `AXIsProcessTrusted`/`AXIsProcessTrustedWithOptions` были объявлены как возвращающие Rust `bool`, но реальный тип SDK - Carbon `Boolean` (`unsigned char`, где валиден любой ненулевой байт). У Rust `bool` жесткий инвариант 0x00/0x01 - это potential UB. Исправлено на `u8` + явное сравнение `!= 0`.
 V26. **[Баг]** `discrete_scroll_step_size` применялся, даже если реверс для этого устройства выключен (`reverse_mouse = false`) - масштабировал скорость скролла, не переворачивая направление. Теперь оба эффекта зависят от одного и того же условия.
 V27. **[Честность]** `reverse_unknown` - того же класса мертвый код, что и `reverse_magic_mouse`, но не был отмечен как известный gap.
-V28. **[Честность]** Раньше 5 полей конфига (`start_at_login`, `show_menu_bar_icon`, `check_for_updates`, `include_beta_updates`, `show_discrete_scroll_options`) были GUI/updater заглушками без единой строчки реализации где-либо в проекте, и `doctor` никак это не показывал. `start_at_login` теперь реализован через LaunchAgent/SMAppService; update fields имеют честную manual/no-network policy; `show_menu_bar_icon` и `show_discrete_scroll_options` остаются stored-but-ignored и явно перечислены `doctor`.
+V28. **[Честность]** Раньше 5 полей конфига (`start_at_login`, `show_menu_bar_icon`, `check_for_updates`, `include_beta_updates`, `show_discrete_scroll_options`) были GUI/updater заглушками без единой строчки реализации где-либо в проекте, и `doctor` никак это не показывал. `start_at_login` теперь реализован через LaunchAgent/SMAppService; update fields имеют честную manual/no-network policy; `show_menu_bar_icon` управляет live status item и имеет CLI/relaunch recovery; только `show_discrete_scroll_options` остается stored-but-ignored и явно перечислен `doctor`.
 V29. **[UX]** `doctor` показывал сырые имена полей конфига (`vertical=`, `magic_mouse=`) без единого понятного предложения о том, что реально происходит. Добавлена строка "what it's doing" на понятном языке.
 V30. **[Консистентность]** `magic_mouse=` в выводе `config_summary` не совпадало с `reverse_magic_mouse` в тексте про known gap - те же имена полей теперь используются везде.
 V31. **[UX]** Статус `NEEDS PERMISSION` в `doctor` не показывал, что именно делать - теперь `doctor` печатает ту же actionable-инструкцию, что и `run`.
@@ -603,10 +603,10 @@ N91. [Problem] `start_at_login` в config отражает CLI LaunchAgent, но
 N92. [Improve] Переименовать config field или добавить два поля: `cli_start_at_login`, `app_start_at_login`.
 N93. [Problem] В README два механизма объяснены, но `doctor` показывает только CLI startup.
 N94. [Improve] `doctor` должен явно сказать: "GUI login item status is available in settings window" или вывести его под `gui`.
-N95. [Problem] `show_menu_bar_icon` хранится, но UI/runtime его игнорируют.
-N96. [Improve] Не показывать hide-icon control до готового CLI recovery command.
-N97. [Problem] Если иконку позже скрыть, нужен способ вернуть окно.
-N98. [Partial] `auto-reverse ui`/relaunch фокусирует existing instance; hide-icon recovery ждет реализации hide-icon.
+N95. [Done] `show_menu_bar_icon` управляет существующим `NSStatusItem` live без rebuild menu/target.
+N96. [Done] Hide-icon control появился только вместе с CLI `show-menu-bar-icon` и relaunch recovery.
+N97. [Done] Скрытая иконка восстанавливается повторным запуском приложения или CLI command без второго GUI instance.
+N98. [Done] Activation existing instance теперь сначала reload-ит внешний config, затем показывает и фокусирует окно.
 N99. [Done] Двойной запуск `.app` больше не должен создавать вторую иконку: `ui.lock` берется до окна и tray.
 N100. [Done] Поверх `ui.lock` добавлен atomic PID-addressed mailbox/focus command.
 N101. [Problem] Status item icon сейчас системный Refresh symbol, не бренд/состояние продукта.
@@ -711,8 +711,8 @@ N196. [Problem] CLI `start_at_login` и GUI login item используют ра
 N197. [Improve] Сделать `StartupStatus { cli_agent, gui_login_item }` и показывать конфликт явно.
 N198. [Problem] Нет migration UX для пользователей, у которых старый LaunchAgent уже включен.
 N199. [Improve] При включении GUI login item предложить отключить CLI LaunchAgent.
-N200. [Problem] `show_menu_bar_icon` опасно включать без recovery channel.
-N201. [Improve] До реализации hide-icon сначала сделать `auto-reverse show-window`/`auto-reverse show-icon`.
+N200. [Done] `show_menu_bar_icon` включен только после готового recovery channel.
+N201. [Done] `auto-reverse show-menu-bar-icon` сохраняет флаг и уведомляет live GUI через PID-addressed activation mailbox.
 N202. [Problem] Нет keyboard-first UX для settings.
 N203. [Improve] Добавить tab order, default focus и Escape-to-hide поведение.
 N204. [Problem] Строки ошибок сейчас длинные и inline, их трудно локализовать и ревьюить.
@@ -843,8 +843,8 @@ N325. [Done] App-managed export folder больше не растет автом
 N326. [Done] Structured receipt открывает точный export через Reveal in Finder.
 N327. [Done] Missing permissions больше не открывают пользователя на нерелевантной General tab.
 N328. [Done] Первый запуск с missing TCC сразу выбирает Permissions и дает отдельные targeted actions.
-N329. [Problem] `show_menu_bar_icon` config field remains stored-but-ignored and now conflicts with tray as primary UI.
-N330. [Improve] Hide the field from user docs or implement hide icon only after CLI recovery is built.
+N329. [Done] `show_menu_bar_icon` больше не stored-but-ignored: initial и live AppKit visibility следуют config.
+N330. [Done] Advanced toggle, relaunch activation reload и CLI recovery реализованы одним безопасным workflow.
 N331. [Done] Update flags больше не planned-only: beta выбирает default manual release channel, automatic flag явно compatibility-only и не запускает сеть.
 N332. [Done] `doctor` показывает manual/no-background strategy, channel, URL и предупреждение для legacy automatic request.
 N333. [Implemented] Stable path и production signing/notarization track готовы; TCC/SMAppService continuity на реальном Developer ID update остаётся manual QA.
@@ -947,7 +947,7 @@ N400. [Done] Native Save Panel, structured receipt, atomic export и Reveal in F
 ## Итерация 2: Product UX and Design
 
 171. [Done] Menu bar app есть: native AppKit `NSStatusItem`.
-172. [Done] macOS status item стал primary always-on UI для Open Settings/Quit.
+172. [Done] macOS status item остается primary UI по умолчанию; visibility меняется live с безопасным recovery.
 173. [Done] CLI больше не единственный способ менять настройки.
 174. [Done] Preferences/settings window добавлен через egui.
 175. [Done] Missing permissions дают compact permission-first state без marketing welcome.
@@ -960,8 +960,8 @@ N400. [Done] Native Save Panel, structured receipt, atomic export и Reveal in F
 182. [Improve] Повторить Scroll Reverser: right/control click toggles app.
 183. [Done] Option-click debug console реализован через rich tray menu handling.
 184. [Done] Option-click открывает Debug Console; меню также имеет явный fallback пункт.
-185. [Problem] Hide menu bar icon config есть, UI нет.
-186. [Improve] Реализовать show/hide icon с recovery через CLI.
+185. [Done] Advanced UI управляет `show_menu_bar_icon`, не останавливая runtime.
+186. [Done] `show-menu-bar-icon` и повторный запуск reload-ят config и возвращают hidden icon/window.
 187. [Done] Start at login config теперь связан с LaunchAgent integration.
 188. [Done] Packaged `.app` дополнен `SMAppService.mainAppService()` для GUI login item.
 189. [Done] Выбрана явная manual-browser update strategy без фоновых сетевых запросов приложения.
@@ -1114,8 +1114,8 @@ N400. [Done] Native Save Panel, structured receipt, atomic export и Reveal in F
 336. [Improve] `reverse_only_raw_input` needs docs and UI explanation.
 337. [Problem] Raw-input mode wording confusing.
 338. [Improve] Label it "Ignore injected/remote scroll events".
-339. [Problem] Нет support for restoring menu icon after hidden config mistake.
-340. [Improve] Document `show_menu_bar_icon = true` recovery.
+339. [Done] Hidden menu icon восстанавливается через relaunch или `show-menu-bar-icon`.
+340. [Done] Recovery задокументирован в UI, README, architecture, parity и `doctor`.
 
 ## Итерация 3: Reliability, Release, Review
 

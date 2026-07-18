@@ -174,7 +174,7 @@
 | Debug | Option-click debug console | Done | Search/filter/export/clear and bounded local ring buffer exist. |
 | Startup | Start at login | Done | GUI uses SMAppService; lean CLI keeps LaunchAgent support. |
 | Status icon | Retina menu status and app identity | Done | Template glyph, colored state dot, SVG-to-ICNS app icon pipeline. |
-| Hide icon | Show/hide menu bar icon | Open | Requires a recovery/focus command before exposing the toggle. |
+| Hide icon | Show/hide menu bar icon | Done | Advanced toggle is live; relaunch and `show-menu-bar-icon` reload/focus the existing process for recovery. |
 | Automation | Scriptable enable/disable | Done | CLI `enable`, `disable`, `toggle`, `doctor`; AppleScript property is not implemented. |
 | Updates | Explicit update strategy | Implemented | Manual stable/all GitHub release actions; no background network client. Automatic signed updates remain optional future scope. |
 | Localization | Russian and English-ready strings | Open | User-facing copy still lives inline. |

@@ -81,6 +81,12 @@ const ENTRIES: &[SearchEntry] = &[
         destination: SettingsDestination::Advanced,
     },
     SearchEntry {
+        title: "Menu bar icon",
+        section: "Advanced",
+        keywords: "show hide status tray restore",
+        destination: SettingsDestination::Advanced,
+    },
+    SearchEntry {
         title: "Dynamics preset preview and reset",
         section: "Advanced",
         keywords: "smooth precise balanced fast temporary wheel feel restore",
@@ -233,6 +239,16 @@ mod tests {
     #[test]
     fn version_and_update_terms_route_to_advanced() {
         for query in ["version", "latest release", "prerelease"] {
+            assert_eq!(
+                search_settings(query, 1)[0].destination,
+                SettingsDestination::Advanced
+            );
+        }
+    }
+
+    #[test]
+    fn menu_bar_visibility_terms_route_to_advanced() {
+        for query in ["menu bar icon", "hide tray", "restore status icon"] {
             assert_eq!(
                 search_settings(query, 1)[0].destination,
                 SettingsDestination::Advanced

@@ -252,6 +252,23 @@ fn config_mutations_commit_private_permissions() {
 }
 
 #[test]
+fn menu_bar_icon_recovery_persists_without_starting_a_gui() {
+    let sandbox = CliSandbox::new("show-menu-bar-icon");
+    let config_path = sandbox.default_config_path();
+    let config = AppConfig {
+        show_menu_bar_icon: false,
+        ..AppConfig::default()
+    };
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
+
+    let output = sandbox.run(&["show-menu-bar-icon"]);
+
+    assert!(stdout(&output).contains("menu bar icon: shown"));
+    assert!(read_config(&config_path).show_menu_bar_icon);
+}
+
+#[test]
 fn explicit_config_override_wins_over_home() {
     let sandbox = CliSandbox::new("config-override");
     let override_path = sandbox.home.join("override").join("custom.toml");

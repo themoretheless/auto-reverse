@@ -35,9 +35,10 @@
 //! e.g. via `enable-startup`'s LaunchAgent) and this in-process tap thread
 //! can never both hold a live tap at once.
 //!
-//! A menu-bar tray icon (`platform::macos::tray`) is present for the
-//! lifetime of the process. Closing the window (red button or Cmd-W) hides
-//! it rather than quitting - the window's close is intercepted via
+//! A menu-bar status item (`platform::macos::tray`) is owned for the lifetime
+//! of the process; Advanced may hide its icon without dropping the menu target
+//! or stopping reversal. Closing the window (red button or Cmd-W) hides the
+//! window rather than quitting - the close is intercepted via
 //! `ViewportCommand::CancelClose` and turned into a hide, so the background
 //! tap thread and tray icon keep running. Only the tray menu's "Quit"
 //! really exits the process (`std::process::exit(0)`), which also tears
@@ -103,7 +104,9 @@ const WINDOW_HEIGHT: f32 = 640.0;
 /// the tap thread never even attempts to start) would otherwise build a
 /// second live window and a second menu-bar icon with nothing to tell the
 /// user which one is authoritative. If this lock is already held, this
-/// process leaves an activation request for the owner and exits cleanly.
+/// process first restores a deliberately hidden menu-bar icon, then leaves an
+/// activation request for the owner and exits cleanly. Publishing only after
+/// the config commit guarantees that the owner reloads the restored value.
 pub fn run_settings_window() -> Result<(), String> {
     run_window(false)
 }
@@ -116,8 +119,12 @@ pub fn run_benchmark_window() -> Result<(), String> {
 
 fn run_window(open_benchmark: bool) -> Result<(), String> {
     let ui_lock_path = daemon_lock::default_path().with_file_name("ui.lock");
-    let Some(ui_instance_guard) =
-        activation::acquire_or_activate(&ui_lock_path).map_err(|error| error.to_string())?
+    let Some(ui_instance_guard) = activation::acquire_or_activate_after(&ui_lock_path, || {
+        ConfigStore::default()
+            .update(|config| config.show_menu_bar_icon = true)
+            .map(|_| ())
+    })
+    .map_err(|error| error.to_string())?
     else {
         return Ok(());
     };
@@ -763,6 +770,7 @@ impl eframe::App for SettingsApp {
         }
 
         if let Some(tray) = &mut self.tray {
+            tray.set_visible(self.config.show_menu_bar_icon);
             tray.set_status(tray::TrayStatus::from_config(
                 &self.config,
                 self.permissions_ready,
@@ -807,6 +815,11 @@ impl eframe::App for SettingsApp {
             Ok(should_activate) => {
                 self.activation_error = None;
                 if should_activate {
+                    if let Err(error) = self.reload_external_config() {
+                        self.load_error = Some(format!(
+                            "could not reload settings while reopening the window: {error}"
+                        ));
+                    }
                     show_settings_window(ctx);
                 }
             }
@@ -1220,6 +1233,23 @@ impl SettingsApp {
                     4.0,
                 )
                 .changed();
+
+                section(ui, "Menu bar");
+                changed |= styled_checkbox(
+                    ui,
+                    &mut self.config.show_menu_bar_icon,
+                    RichText::new("Show menu bar icon").size(13.0),
+                    16.0,
+                    4.0,
+                )
+                .changed();
+                if !self.config.show_menu_bar_icon {
+                    ui.label(
+                        RichText::new("Reopen Auto Reverse to restore the icon.")
+                            .small()
+                            .weak(),
+                    );
+                }
 
                 section(ui, "Diagnostics");
                 if styled_button(ui, "Open Debug Console", egui::vec2(12.0, 5.0)).clicked() {

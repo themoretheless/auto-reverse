@@ -26,6 +26,7 @@ pub enum Command {
     Toggle,
     EnableStartup,
     DisableStartup,
+    ShowMenuBarIcon,
     RollbackDynamics,
     ValidateConfig(ValidationOptions),
     RepairConfig,
@@ -127,6 +128,10 @@ pub fn parse_args(args: &[String]) -> AppResult<Command> {
         Some("toggle") => Ok(Command::Toggle),
         Some("enable-startup") => Ok(Command::EnableStartup),
         Some("disable-startup") => Ok(Command::DisableStartup),
+        Some("show-menu-bar-icon") if args.len() == 1 => Ok(Command::ShowMenuBarIcon),
+        Some("show-menu-bar-icon") => Err(AppError::Usage(
+            "show-menu-bar-icon does not accept flags".to_string(),
+        )),
         Some("rollback-dynamics") if args.len() == 1 => Ok(Command::RollbackDynamics),
         Some("rollback-dynamics") => Err(AppError::Usage(
             "rollback-dynamics does not accept flags".to_string(),
@@ -656,6 +661,15 @@ mod tests {
             Command::RollbackDynamics
         );
         assert!(parse_args(&strings(&["rollback-dynamics", "--all"])).is_err());
+    }
+
+    #[test]
+    fn menu_bar_icon_recovery_is_an_explicit_command() {
+        assert_eq!(
+            parse_args(&strings(&["show-menu-bar-icon"])).unwrap(),
+            Command::ShowMenuBarIcon
+        );
+        assert!(parse_args(&strings(&["show-menu-bar-icon", "--force"])).is_err());
     }
 
     #[test]
