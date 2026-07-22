@@ -292,6 +292,28 @@ pub fn install_and_run_with_ready(
 }
 
 fn handle_event(
+    proxy: CGEventTapProxy,
+    event_type: CGEventType,
+    event: &CGEvent,
+) -> CallbackResult {
+    callback_result_or_keep(|| handle_event_inner(proxy, event_type, event))
+}
+
+/// Keep Rust panics inside the callback boundary. The `core-graphics`
+/// trampoline is `extern "C"`, so unwinding through it would abort the whole
+/// process and bypass every tap-recovery path. `Keep` is the least invasive
+/// result available; mutations completed before a panic cannot be rolled back.
+fn callback_result_or_keep(callback: impl FnOnce() -> CallbackResult) -> CallbackResult {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(callback)) {
+        Ok(result) => result,
+        Err(_) => {
+            eprintln!("auto-reverse: panic caught in event tap callback; keeping the event");
+            CallbackResult::Keep
+        }
+    }
+}
+
+fn handle_event_inner(
     _proxy: CGEventTapProxy,
     event_type: CGEventType,
     event: &CGEvent,
@@ -396,6 +418,18 @@ fn handle_event(
         _ => {}
     }
     CallbackResult::Keep
+}
+
+#[cfg(test)]
+mod callback_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn callback_panic_is_caught_and_fails_open() {
+        let result = callback_result_or_keep(|| panic!("callback test panic"));
+
+        assert!(matches!(result, CallbackResult::Keep));
+    }
 }
 
 fn recover_disabled_tap(reason: RecoveryReason) {
