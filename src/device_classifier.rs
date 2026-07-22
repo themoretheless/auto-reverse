@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::device::DeviceKind;
 
-pub const CLASSIFIER_DESCRIPTION: &str = "discrete wheel = mouse; an exclusive connected trackpad or Magic Mouse wins; when both are connected, recent two-finger gestures identify the trackpad";
+pub const CLASSIFIER_DESCRIPTION: &str = "discrete wheel = mouse; an exclusive connected trackpad or Magic Mouse wins; when both are connected, recent one-finger/two-finger gesture evidence and public scroll phases pin the source, while ambiguity falls back to trackpad";
 
 const TRACKPAD_TOUCH_WINDOW: Duration = Duration::from_millis(222);
 const SOURCE_RESET_WINDOW: Duration = Duration::from_millis(333);
@@ -20,6 +20,17 @@ pub enum MomentumPhase {
     Began,
     Continued,
     Ended,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollPhase {
+    None,
+    Began,
+    Changed,
+    Ended,
+    Cancelled,
+    MayBegin,
     Unknown,
 }
 
@@ -74,9 +85,11 @@ pub enum ClassificationEvidence {
     ExclusiveMagicMouseInventory,
     UnknownInventoryFallback,
     RecentTwoFingerGesture,
+    RecentSingleFingerGesture,
+    DirectGestureContinuation,
     MomentumContinuation,
     RecentSourceContinuation,
-    StaleTouchMagicMouse,
+    AmbiguousTrackpadFallback,
 }
 
 impl ClassificationEvidence {
@@ -87,9 +100,11 @@ impl ClassificationEvidence {
             Self::ExclusiveMagicMouseInventory => "exclusive_magic_mouse_inventory",
             Self::UnknownInventoryFallback => "unknown_inventory_fallback",
             Self::RecentTwoFingerGesture => "recent_two_finger_gesture",
+            Self::RecentSingleFingerGesture => "recent_single_finger_gesture",
+            Self::DirectGestureContinuation => "direct_gesture_continuation",
             Self::MomentumContinuation => "momentum_continuation",
             Self::RecentSourceContinuation => "recent_source_continuation",
-            Self::StaleTouchMagicMouse => "stale_touch_magic_mouse",
+            Self::AmbiguousTrackpadFallback => "ambiguous_trackpad_fallback",
         }
     }
 
@@ -100,9 +115,11 @@ impl ClassificationEvidence {
             Self::ExclusiveMagicMouseInventory => "exclusive Magic Mouse inventory",
             Self::UnknownInventoryFallback => "unknown inventory fallback",
             Self::RecentTwoFingerGesture => "recent two-finger gesture",
+            Self::RecentSingleFingerGesture => "recent one-finger gesture",
+            Self::DirectGestureContinuation => "pinned direct gesture source",
             Self::MomentumContinuation => "pinned momentum source",
             Self::RecentSourceContinuation => "recent continuous source",
-            Self::StaleTouchMagicMouse => "stale-touch Magic Mouse fallback",
+            Self::AmbiguousTrackpadFallback => "ambiguous input; trackpad fallback",
         }
     }
 }
@@ -116,16 +133,19 @@ pub struct ClassifiedDevice {
 /// Stateful public-API heuristic for separating two continuous sources.
 ///
 /// A two-finger AppKit gesture immediately preceding a scroll identifies a
-/// trackpad. Momentum events inherit the last continuous source. A normal
-/// continuous event after the touch observation has gone stale is treated as
-/// Magic Mouse-like. This intentionally mirrors Scroll Reverser's proven
-/// timing model while preserving a distinct `MagicMouse` domain value.
+/// trackpad; a positive one-finger observation identifies Magic Mouse-like
+/// input. Public direct-scroll phases and momentum pin that positive source.
+/// Missing observations never prove Magic Mouse: ambiguous input falls back
+/// to trackpad so an optional monitor failure cannot reverse the built-in
+/// trackpad unexpectedly.
 #[derive(Debug, Clone)]
 pub struct GestureSourceClassifier {
     source_hint: ContinuousSourceHint,
-    last_two_finger_touch: Option<Instant>,
-    two_finger_touch_pending: bool,
+    last_gesture_observation: Option<(Instant, DeviceKind)>,
+    gesture_observation_pending: bool,
     last_continuous_kind: DeviceKind,
+    last_continuous_at: Option<Instant>,
+    active_direct_kind: Option<DeviceKind>,
 }
 
 impl Default for GestureSourceClassifier {
@@ -138,24 +158,27 @@ impl GestureSourceClassifier {
     pub const fn new(source_hint: ContinuousSourceHint) -> Self {
         Self {
             source_hint,
-            last_two_finger_touch: None,
-            two_finger_touch_pending: false,
+            last_gesture_observation: None,
+            gesture_observation_pending: false,
             last_continuous_kind: match source_hint {
-                ContinuousSourceHint::MagicMouseOnly | ContinuousSourceHint::Both => {
-                    DeviceKind::MagicMouse
-                }
-                ContinuousSourceHint::TrackpadOnly | ContinuousSourceHint::Unknown => {
-                    DeviceKind::Trackpad
-                }
+                ContinuousSourceHint::MagicMouseOnly => DeviceKind::MagicMouse,
+                ContinuousSourceHint::TrackpadOnly
+                | ContinuousSourceHint::Both
+                | ContinuousSourceHint::Unknown => DeviceKind::Trackpad,
             },
+            last_continuous_at: None,
+            active_direct_kind: None,
         }
     }
 
     pub fn observe_gesture(&mut self, touching_fingers: usize, now: Instant) {
-        if touching_fingers >= 2 {
-            self.last_two_finger_touch = Some(now);
-            self.two_finger_touch_pending = true;
-        }
+        let kind = match touching_fingers {
+            0 => return,
+            1 => DeviceKind::MagicMouse,
+            _ => DeviceKind::Trackpad,
+        };
+        self.last_gesture_observation = Some((now, kind));
+        self.gesture_observation_pending = true;
     }
 
     /// Applies a hot-plug inventory change and discards observations that
@@ -172,7 +195,7 @@ impl GestureSourceClassifier {
         momentum_phase: MomentumPhase,
         now: Instant,
     ) -> DeviceKind {
-        self.classify_scroll_with_evidence(continuous, momentum_phase, now)
+        self.classify_scroll_with_phases(continuous, ScrollPhase::None, momentum_phase, now)
             .kind
     }
 
@@ -182,10 +205,20 @@ impl GestureSourceClassifier {
         momentum_phase: MomentumPhase,
         now: Instant,
     ) -> ClassifiedDevice {
+        self.classify_scroll_with_phases(continuous, ScrollPhase::None, momentum_phase, now)
+    }
+
+    pub fn classify_scroll_with_phases(
+        &mut self,
+        continuous: bool,
+        scroll_phase: ScrollPhase,
+        momentum_phase: MomentumPhase,
+        now: Instant,
+    ) -> ClassifiedDevice {
         // Every scroll consumes the pending gesture observation. Otherwise a
         // mouse-wheel tick between a trackpad gesture and a later continuous
         // event could incorrectly lend that stale touch to the later device.
-        let touch_pending = std::mem::take(&mut self.two_finger_touch_pending);
+        let observation_pending = std::mem::take(&mut self.gesture_observation_pending);
         if !continuous {
             return ClassifiedDevice {
                 kind: DeviceKind::Mouse,
@@ -194,58 +227,120 @@ impl GestureSourceClassifier {
         }
 
         if let Some(kind) = self.source_hint.exclusive_kind() {
-            self.last_continuous_kind = kind;
-            return ClassifiedDevice {
-                kind,
-                evidence: match kind {
-                    DeviceKind::Trackpad => ClassificationEvidence::ExclusiveTrackpadInventory,
-                    DeviceKind::MagicMouse => ClassificationEvidence::ExclusiveMagicMouseInventory,
-                    DeviceKind::Mouse | DeviceKind::Unknown => {
-                        ClassificationEvidence::UnknownInventoryFallback
-                    }
+            return self.remember(
+                ClassifiedDevice {
+                    kind,
+                    evidence: match kind {
+                        DeviceKind::Trackpad => ClassificationEvidence::ExclusiveTrackpadInventory,
+                        DeviceKind::MagicMouse => {
+                            ClassificationEvidence::ExclusiveMagicMouseInventory
+                        }
+                        DeviceKind::Mouse | DeviceKind::Unknown => {
+                            ClassificationEvidence::UnknownInventoryFallback
+                        }
+                    },
                 },
-            };
+                now,
+            );
         }
         if self.source_hint == ContinuousSourceHint::Unknown {
-            self.last_continuous_kind = DeviceKind::Trackpad;
-            return ClassifiedDevice {
-                kind: DeviceKind::Trackpad,
-                evidence: ClassificationEvidence::UnknownInventoryFallback,
-            };
+            return self.remember(
+                ClassifiedDevice {
+                    kind: DeviceKind::Trackpad,
+                    evidence: ClassificationEvidence::UnknownInventoryFallback,
+                },
+                now,
+            );
         }
 
-        let touch_elapsed = self
-            .last_two_finger_touch
-            .map(|observed| now.saturating_duration_since(observed));
-
-        let (kind, evidence) = if touch_pending
-            && touch_elapsed.is_some_and(|elapsed| elapsed < TRACKPAD_TOUCH_WINDOW)
-        {
-            (
-                DeviceKind::Trackpad,
-                ClassificationEvidence::RecentTwoFingerGesture,
-            )
-        } else if momentum_phase == MomentumPhase::None
-            && touch_elapsed.is_none_or(|elapsed| elapsed > SOURCE_RESET_WINDOW)
-        {
-            (
-                DeviceKind::MagicMouse,
-                ClassificationEvidence::StaleTouchMagicMouse,
-            )
-        } else if momentum_phase != MomentumPhase::None {
-            (
-                self.last_continuous_kind,
-                ClassificationEvidence::MomentumContinuation,
-            )
-        } else {
-            (
-                self.last_continuous_kind,
-                ClassificationEvidence::RecentSourceContinuation,
-            )
+        let observed = observation_pending
+            .then_some(self.last_gesture_observation)
+            .flatten()
+            .filter(|(observed_at, _)| {
+                now.saturating_duration_since(*observed_at) < TRACKPAD_TOUCH_WINDOW
+            })
+            .map(|(_, kind)| ClassifiedDevice {
+                kind,
+                evidence: match kind {
+                    DeviceKind::Trackpad => ClassificationEvidence::RecentTwoFingerGesture,
+                    DeviceKind::MagicMouse => ClassificationEvidence::RecentSingleFingerGesture,
+                    DeviceKind::Mouse | DeviceKind::Unknown => {
+                        ClassificationEvidence::AmbiguousTrackpadFallback
+                    }
+                },
+            });
+        let fallback = ClassifiedDevice {
+            kind: DeviceKind::Trackpad,
+            evidence: ClassificationEvidence::AmbiguousTrackpadFallback,
         };
 
-        self.last_continuous_kind = kind;
-        ClassifiedDevice { kind, evidence }
+        let direct = match scroll_phase {
+            ScrollPhase::Began => {
+                let classified = observed.unwrap_or(fallback);
+                self.active_direct_kind = Some(classified.kind);
+                Some(classified)
+            }
+            ScrollPhase::Changed => {
+                let classified = observed.unwrap_or_else(|| {
+                    self.active_direct_kind
+                        .map(|kind| ClassifiedDevice {
+                            kind,
+                            evidence: ClassificationEvidence::DirectGestureContinuation,
+                        })
+                        .unwrap_or(fallback)
+                });
+                self.active_direct_kind = Some(classified.kind);
+                Some(classified)
+            }
+            ScrollPhase::Ended | ScrollPhase::Cancelled => {
+                let classified = self
+                    .active_direct_kind
+                    .map(|kind| ClassifiedDevice {
+                        kind,
+                        evidence: ClassificationEvidence::DirectGestureContinuation,
+                    })
+                    .or(observed)
+                    .unwrap_or(fallback);
+                self.active_direct_kind = None;
+                Some(classified)
+            }
+            ScrollPhase::MayBegin => Some(observed.unwrap_or(fallback)),
+            ScrollPhase::None | ScrollPhase::Unknown => None,
+        };
+        if let Some(classified) = direct {
+            return self.remember(classified, now);
+        }
+
+        let classified = match momentum_phase {
+            MomentumPhase::Began | MomentumPhase::Continued | MomentumPhase::Ended => {
+                ClassifiedDevice {
+                    kind: self.last_continuous_kind,
+                    evidence: ClassificationEvidence::MomentumContinuation,
+                }
+            }
+            MomentumPhase::Unknown => observed.unwrap_or(fallback),
+            MomentumPhase::None => observed.unwrap_or_else(|| {
+                if self
+                    .last_continuous_at
+                    .is_some_and(|last| now.saturating_duration_since(last) <= SOURCE_RESET_WINDOW)
+                {
+                    ClassifiedDevice {
+                        kind: self.last_continuous_kind,
+                        evidence: ClassificationEvidence::RecentSourceContinuation,
+                    }
+                } else {
+                    fallback
+                }
+            }),
+        };
+
+        self.remember(classified, now)
+    }
+
+    fn remember(&mut self, classified: ClassifiedDevice, now: Instant) -> ClassifiedDevice {
+        self.last_continuous_kind = classified.kind;
+        self.last_continuous_at = Some(now);
+        classified
     }
 
     /// Safe classification when the passive gesture monitor is unavailable.
@@ -274,7 +369,11 @@ impl GestureSourceClassifier {
                 kind: DeviceKind::Trackpad,
                 evidence: ClassificationEvidence::ExclusiveTrackpadInventory,
             },
-            ContinuousSourceHint::Both | ContinuousSourceHint::Unknown => ClassifiedDevice {
+            ContinuousSourceHint::Both => ClassifiedDevice {
+                kind: DeviceKind::Trackpad,
+                evidence: ClassificationEvidence::AmbiguousTrackpadFallback,
+            },
+            ContinuousSourceHint::Unknown => ClassifiedDevice {
                 kind: DeviceKind::Trackpad,
                 evidence: ClassificationEvidence::UnknownInventoryFallback,
             },
@@ -431,7 +530,7 @@ mod tests {
 
         assert_eq!(
             classifier.classify_scroll(true, MomentumPhase::None, after(start, 20)),
-            DeviceKind::MagicMouse
+            DeviceKind::Trackpad
         );
     }
 
@@ -448,25 +547,28 @@ mod tests {
     }
 
     #[test]
-    fn one_finger_gesture_is_ignored() {
+    fn recent_one_finger_gesture_is_positive_magic_mouse_evidence() {
         let now = Instant::now();
         let mut classifier = both_sources();
         classifier.observe_gesture(1, now);
 
         assert_eq!(
-            classifier.classify_scroll(true, MomentumPhase::None, now),
-            DeviceKind::MagicMouse
+            classifier.classify_scroll_with_evidence(true, MomentumPhase::None, now),
+            ClassifiedDevice {
+                kind: DeviceKind::MagicMouse,
+                evidence: ClassificationEvidence::RecentSingleFingerGesture,
+            }
         );
     }
 
     #[test]
-    fn continuous_scroll_without_touch_is_magic_mouse_like() {
+    fn continuous_scroll_without_touch_falls_back_to_trackpad() {
         let now = Instant::now();
         let mut classifier = both_sources();
 
         assert_eq!(
             classifier.classify_scroll(true, MomentumPhase::None, now),
-            DeviceKind::MagicMouse
+            DeviceKind::Trackpad
         );
     }
 
@@ -491,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_scroll_after_stale_touch_resets_to_magic_mouse() {
+    fn normal_scroll_after_stale_touch_falls_back_to_trackpad() {
         let start = Instant::now();
         let mut classifier = both_sources();
         classifier.observe_gesture(2, start);
@@ -502,7 +604,7 @@ mod tests {
 
         assert_eq!(
             classifier.classify_scroll(true, MomentumPhase::None, after(start, 334)),
-            DeviceKind::MagicMouse
+            DeviceKind::Trackpad
         );
     }
 
@@ -529,7 +631,7 @@ mod tests {
         at_touch_boundary.observe_gesture(2, start);
         assert_eq!(
             at_touch_boundary.classify_scroll(true, MomentumPhase::None, after(start, 222)),
-            DeviceKind::MagicMouse
+            DeviceKind::Trackpad
         );
 
         let mut at_reset_boundary = both_sources();
@@ -540,6 +642,69 @@ mod tests {
         );
         assert_eq!(
             at_reset_boundary.classify_scroll(true, MomentumPhase::None, after(start, 333)),
+            DeviceKind::Trackpad
+        );
+    }
+
+    #[test]
+    fn direct_scroll_phase_pins_positive_magic_mouse_evidence_until_end() {
+        let start = Instant::now();
+        let mut classifier = both_sources();
+        classifier.observe_gesture(1, start);
+
+        assert_eq!(
+            classifier.classify_scroll_with_phases(
+                true,
+                ScrollPhase::Began,
+                MomentumPhase::None,
+                after(start, 10),
+            ),
+            ClassifiedDevice {
+                kind: DeviceKind::MagicMouse,
+                evidence: ClassificationEvidence::RecentSingleFingerGesture,
+            }
+        );
+        assert_eq!(
+            classifier.classify_scroll_with_phases(
+                true,
+                ScrollPhase::Changed,
+                MomentumPhase::None,
+                after(start, 600),
+            ),
+            ClassifiedDevice {
+                kind: DeviceKind::MagicMouse,
+                evidence: ClassificationEvidence::DirectGestureContinuation,
+            }
+        );
+        assert_eq!(
+            classifier
+                .classify_scroll_with_phases(
+                    true,
+                    ScrollPhase::Ended,
+                    MomentumPhase::None,
+                    after(start, 700),
+                )
+                .kind,
+            DeviceKind::MagicMouse
+        );
+        assert_eq!(
+            classifier.classify_scroll(true, MomentumPhase::None, after(start, 1_034)),
+            DeviceKind::Trackpad
+        );
+    }
+
+    #[test]
+    fn unknown_momentum_does_not_inherit_a_stale_magic_mouse_source() {
+        let start = Instant::now();
+        let mut classifier = both_sources();
+        classifier.observe_gesture(1, start);
+        assert_eq!(
+            classifier.classify_scroll(true, MomentumPhase::None, start),
+            DeviceKind::MagicMouse
+        );
+
+        assert_eq!(
+            classifier.classify_scroll(true, MomentumPhase::Unknown, after(start, 500)),
             DeviceKind::Trackpad
         );
     }

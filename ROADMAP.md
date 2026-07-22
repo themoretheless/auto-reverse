@@ -1,6 +1,6 @@
 # Auto Reverse Roadmap
 
-This is the executable view of the 970-item audit in `recommendation.md`.
+This is the executable view of the 980-item audit in `recommendation.md`.
 Items are intentionally small enough to understand, implement, and verify
 independently.
 
@@ -30,6 +30,13 @@ below in fixed batches of five.
 | --- | --- | --- |
 | 13 | S01-S05 | Done: durable/private config, read-only validation, exact repair |
 | 14 | S06-S10 | Done: rollback, stable errors, manual update policy, About UI |
+
+## Runtime hardening batch
+
+| Batch | Items | Status |
+| --- | --- | --- |
+| 15 | T01-T05 | Done: typed live reload and non-blocking event-tap diagnostics/config reads |
+| 16 | T06-T10 | Implemented: classifier sessions, precise diagnostics, single startup owner, macOS 13 bundle contract and stable ICNS; physical dual-device/Finder QA remains |
 
 ## P0 - Correctness and recovery
 

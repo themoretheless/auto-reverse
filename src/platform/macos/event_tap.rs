@@ -5,7 +5,7 @@ use core_graphics::event::{
     CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventTapProxy, CGEventType, CallbackResult,
 };
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock, TryLockError};
 use std::time::Duration;
 
 use crate::config::AppConfig;
@@ -341,19 +341,19 @@ fn handle_event(
                 .unwrap_or(HidSourceClass::NotObserved);
             #[cfg(feature = "gui")]
             let device_name = accepted_snapshot.and_then(|snapshot| snapshot.name.clone());
+            #[cfg(feature = "gui")]
+            let raw_deltas = scroll_events::diagnostic_deltas(event);
 
-            // Hot path: hold the read lock only long enough to clone the
-            // config, then drop it before touching the CGEvent fields. A
-            // writer (the settings window, on every checkbox change) only
-            // ever needs a brief exclusive window between reads, so this
-            // never blocks the GUI thread noticeably, and this thread never
-            // holds the lock across the actual field-write syscalls below.
-            let config = {
-                let guard = match config_lock.read() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                guard.clone()
+            // Hot path: borrow the immutable config directly. Deep-cloning
+            // AppConfig here used to allocate and copy every device rule on
+            // every scroll event. Never wait behind a GUI writer either: one
+            // contended event passes through unchanged instead of risking a
+            // system event-tap timeout. A poisoned lock still exposes its
+            // last value so diagnostics remain fail-open rather than panic.
+            let config = match config_lock.try_read() {
+                Ok(guard) => guard,
+                Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+                Err(TryLockError::WouldBlock) => return CallbackResult::Keep,
             };
             let temporarily_paused = RUNTIME_CONTROL
                 .get()
@@ -377,14 +377,20 @@ fn handle_event(
             };
 
             #[cfg(feature = "gui")]
+            let output_deltas = scroll_events::diagnostic_deltas(event);
+            #[cfg(feature = "gui")]
             record_debug_event(
                 &config,
-                device_kind,
-                device_name,
-                attribution_status,
-                classification.evidence,
-                temporarily_paused,
                 decision,
+                DebugEventContext {
+                    device_kind,
+                    device_name,
+                    attribution_status,
+                    classification_evidence: classification.evidence,
+                    temporarily_paused,
+                    raw_deltas,
+                    output_deltas,
+                },
             );
         }
         _ => {}
@@ -414,15 +420,18 @@ fn recover_disabled_tap(reason: RecoveryReason) {
 /// `config.should_reverse`, `config.reverse_only_raw_input`) the pure policy
 /// itself is built on, not a second reimplementation of it.
 #[cfg(feature = "gui")]
-fn record_debug_event(
-    config: &AppConfig,
+struct DebugEventContext {
     device_kind: DeviceKind,
     device_name: Option<Arc<str>>,
     attribution_status: AttributionStatus,
     classification_evidence: ClassificationEvidence,
     temporarily_paused: bool,
-    decision: TransformDecision,
-) {
+    raw_deltas: (i64, i64),
+    output_deltas: (i64, i64),
+}
+
+#[cfg(feature = "gui")]
+fn record_debug_event(config: &AppConfig, decision: TransformDecision, context: DebugEventContext) {
     let timestamp_ms = debug_log::now_millis();
     let monotonic_us = debug_log::now_monotonic_micros();
     let identity = decision.original.identity.as_deref();
@@ -434,20 +443,20 @@ fn record_debug_event(
         decision.original.source_pid,
         config.reverse_only_raw_input,
     );
-    let profile = config.resolve_device_profile(device_kind, identity);
+    let profile = config.resolve_device_profile(context.device_kind, identity);
 
     // Two rows (vertical/horizontal) whenever the event carries a nonzero
     // delta on that axis - mirrors the handoff's per-axis rows exactly.
     let axes: &[(debug_log::Axis, i64, i64)] = &[
         (
             debug_log::Axis::Vertical,
-            decision.original.delta_vertical,
-            decision.transformed.delta_vertical,
+            context.raw_deltas.0,
+            context.output_deltas.0,
         ),
         (
             debug_log::Axis::Horizontal,
-            decision.original.delta_horizontal,
-            decision.transformed.delta_horizontal,
+            context.raw_deltas.1,
+            context.output_deltas.1,
         ),
     ];
 
@@ -464,19 +473,19 @@ fn record_debug_event(
         let reason = decision_reason(
             config,
             &decision.original,
-            temporarily_paused,
+            context.temporarily_paused,
             axis_reversed,
         );
 
         debug_log::push(debug_log::DebugEvent {
             timestamp_ms,
             monotonic_us,
-            device_kind,
-            device_name: device_name.clone(),
+            device_kind: context.device_kind,
+            device_name: context.device_name.clone(),
             identity: decision.original.identity.clone(),
             hardware,
-            attribution_status,
-            classification_evidence,
+            attribution_status: context.attribution_status,
+            classification_evidence: context.classification_evidence,
             input_provenance: input_policy.provenance,
             hid_source: decision.original.hid_source,
             profile,

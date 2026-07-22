@@ -21,7 +21,7 @@ use objc2_app_kit::{NSEvent, NSTouchPhase};
 use objc2_core_graphics::CGEvent as ObjcCGEvent;
 
 use crate::device_classifier::{
-    ClassifiedDevice, ContinuousSourceHint, GestureSourceClassifier, MomentumPhase,
+    ClassifiedDevice, ContinuousSourceHint, GestureSourceClassifier, MomentumPhase, ScrollPhase,
 };
 use crate::error::{AppError, AppResult};
 
@@ -32,6 +32,7 @@ const GESTURE_EVENT_TYPE: u32 = 29;
 const GESTURE_EVENT_MASK: u64 = 1_u64 << GESTURE_EVENT_TYPE;
 const TAP_DISABLED_BY_TIMEOUT: u32 = u32::MAX - 1;
 const TAP_DISABLED_BY_USER_INPUT: u32 = u32::MAX;
+const SCROLL_PHASE_FIELD: u32 = 99;
 const SCROLL_MOMENTUM_PHASE_FIELD: u32 = 123;
 
 type GestureTapCallback = unsafe extern "C-unwind" fn(
@@ -202,12 +203,55 @@ pub fn classify_scroll(
         return classifier.classify_without_gesture_with_evidence(continuous);
     }
 
-    let momentum_phase = match event.get_integer_value_field(SCROLL_MOMENTUM_PHASE_FIELD) {
+    let scroll_phase = decode_scroll_phase(event.get_integer_value_field(SCROLL_PHASE_FIELD));
+    let momentum_phase =
+        decode_momentum_phase(event.get_integer_value_field(SCROLL_MOMENTUM_PHASE_FIELD));
+    classifier.classify_scroll_with_phases(continuous, scroll_phase, momentum_phase, Instant::now())
+}
+
+fn decode_scroll_phase(raw: i64) -> ScrollPhase {
+    match raw {
+        0 => ScrollPhase::None,
+        1 => ScrollPhase::Began,
+        2 => ScrollPhase::Changed,
+        4 => ScrollPhase::Ended,
+        8 => ScrollPhase::Cancelled,
+        128 => ScrollPhase::MayBegin,
+        _ => ScrollPhase::Unknown,
+    }
+}
+
+fn decode_momentum_phase(raw: i64) -> MomentumPhase {
+    match raw {
         0 => MomentumPhase::None,
         1 => MomentumPhase::Began,
         2 => MomentumPhase::Continued,
         3 => MomentumPhase::Ended,
         _ => MomentumPhase::Unknown,
-    };
-    classifier.classify_scroll_with_evidence(continuous, momentum_phase, Instant::now())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_scroll_phase_values_decode_exactly() {
+        assert_eq!(decode_scroll_phase(0), ScrollPhase::None);
+        assert_eq!(decode_scroll_phase(1), ScrollPhase::Began);
+        assert_eq!(decode_scroll_phase(2), ScrollPhase::Changed);
+        assert_eq!(decode_scroll_phase(4), ScrollPhase::Ended);
+        assert_eq!(decode_scroll_phase(8), ScrollPhase::Cancelled);
+        assert_eq!(decode_scroll_phase(128), ScrollPhase::MayBegin);
+        assert_eq!(decode_scroll_phase(3), ScrollPhase::Unknown);
+    }
+
+    #[test]
+    fn public_momentum_phase_values_decode_exactly() {
+        assert_eq!(decode_momentum_phase(0), MomentumPhase::None);
+        assert_eq!(decode_momentum_phase(1), MomentumPhase::Began);
+        assert_eq!(decode_momentum_phase(2), MomentumPhase::Continued);
+        assert_eq!(decode_momentum_phase(3), MomentumPhase::Ended);
+        assert_eq!(decode_momentum_phase(4), MomentumPhase::Unknown);
+    }
 }

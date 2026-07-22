@@ -18,9 +18,9 @@ Usage:
   scripts/check-app-bundle.sh --require-notarized --app /path/to/app
 
 Validates the real Mach-O executable, bundle identity, version, icon, plist,
-LSUIElement mode, and code signature. Identity-only mode recognizes an
-old/damaged installation before repair or removal without requiring its
-resources or signature to still be intact.
+LSUIElement mode, minimum macOS version, and code signature. Identity-only mode
+recognizes an old/damaged installation before repair or removal without
+requiring its resources or signature to still be intact.
 
 Release-signature mode requires Developer ID Application authority, hardened
 runtime, and a secure timestamp. Notarized mode adds stapled-ticket validation.
@@ -112,6 +112,34 @@ contents="$app/Contents"
 plist="$contents/Info.plist"
 executable="$(auto_reverse_bundle_executable "$app")"
 icon="$contents/Resources/AutoReverse.icns"
+readonly required_api_macos_version="13.0"
+
+valid_macos_version() {
+  [[ "$1" =~ ^[0-9]+([.][0-9]+){0,2}$ ]]
+}
+
+macos_version_at_least() {
+  local actual="$1"
+  local required="$2"
+
+  awk -v actual="$actual" -v required="$required" '
+    BEGIN {
+      split(actual, a, ".")
+      split(required, r, ".")
+      for (i = 1; i <= 3; i++) {
+        av = (a[i] == "" ? 0 : a[i]) + 0
+        rv = (r[i] == "" ? 0 : r[i]) + 0
+        if (av > rv) exit 0
+        if (av < rv) exit 1
+      }
+      exit 0
+    }
+  '
+}
+
+macos_versions_equal() {
+  macos_version_at_least "$1" "$2" && macos_version_at_least "$2" "$1"
+}
 
 if [[ ! -d "$app" ]]; then
   echo "app bundle is missing: $app" >&2
@@ -163,6 +191,10 @@ fi
 
 bundle_version="$(plutil -extract CFBundleShortVersionString raw "$plist")"
 ui_element="$(plutil -extract LSUIElement raw "$plist")"
+if ! minimum_system_version="$(plutil -extract LSMinimumSystemVersion raw "$plist" 2>/dev/null)"; then
+  echo "LSMinimumSystemVersion is missing from $plist" >&2
+  exit 1
+fi
 if [[ -z "$bundle_version" ]]; then
   echo "CFBundleShortVersionString is empty" >&2
   exit 1
@@ -171,10 +203,69 @@ if [[ "$ui_element" != "true" && "$ui_element" != "1" ]]; then
   echo "LSUIElement must be true, got: $ui_element" >&2
   exit 1
 fi
+if ! valid_macos_version "$minimum_system_version"; then
+  echo "invalid LSMinimumSystemVersion: $minimum_system_version (expected N, N.N, or N.N.N)" >&2
+  exit 1
+fi
+if ! macos_version_at_least "$minimum_system_version" "$required_api_macos_version"; then
+  echo "LSMinimumSystemVersion $minimum_system_version is below macOS $required_api_macos_version required by SMAppService" >&2
+  exit 1
+fi
 if [[ ! -f "$icon" ]]; then
   echo "bundle icon is missing: $icon" >&2
   exit 1
 fi
+if [[ "$(file "$icon")" != *"Mac OS X icon"* ]]; then
+  echo "bundle icon is not a valid ICNS file: $icon" >&2
+  exit 1
+fi
+
+if command -v xcrun >/dev/null 2>&1 && otool_path="$(xcrun --find otool 2>/dev/null)"; then
+  :
+elif command -v otool >/dev/null 2>&1; then
+  otool_path="$(command -v otool)"
+else
+  echo "otool is required to validate the Mach-O minimum macOS version" >&2
+  exit 1
+fi
+
+if ! load_commands="$($otool_path -l "$executable" 2>&1)"; then
+  echo "could not read Mach-O load commands with $otool_path: $load_commands" >&2
+  exit 1
+fi
+minimum_versions="$(printf '%s\n' "$load_commands" | awk '
+  $1 == "cmd" && $2 == "LC_BUILD_VERSION" {
+    command = "build"
+    next
+  }
+  $1 == "cmd" && $2 == "LC_VERSION_MIN_MACOSX" {
+    command = "legacy"
+    next
+  }
+  command == "build" && $1 == "minos" {
+    print $2
+    command = ""
+    next
+  }
+  command == "legacy" && $1 == "version" {
+    print $2
+    command = ""
+  }
+')"
+if [[ -z "$minimum_versions" ]]; then
+  echo "Mach-O executable has no LC_BUILD_VERSION or LC_VERSION_MIN_MACOSX minimum: $executable" >&2
+  exit 1
+fi
+while IFS= read -r macho_minimum; do
+  if ! valid_macos_version "$macho_minimum"; then
+    echo "invalid minimum macOS version in Mach-O load command: $macho_minimum" >&2
+    exit 1
+  fi
+  if ! macos_versions_equal "$macho_minimum" "$minimum_system_version"; then
+    echo "minimum macOS version mismatch: Info.plist declares $minimum_system_version but Mach-O declares $macho_minimum" >&2
+    exit 1
+  fi
+done <<< "$minimum_versions"
 
 if ! command -v codesign >/dev/null 2>&1; then
   echo "codesign is required for strict bundle validation" >&2
@@ -211,4 +302,4 @@ if [[ "$require_notarized" == true ]]; then
   xcrun stapler validate "$app"
 fi
 
-echo "Bundle check passed: $app ($bundle_identifier, version $bundle_version)"
+echo "Bundle check passed: $app ($bundle_identifier, version $bundle_version, macOS $minimum_system_version+)"

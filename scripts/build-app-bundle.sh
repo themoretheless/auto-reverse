@@ -15,6 +15,9 @@ Builds a local macOS app bundle:
   target/debug/Auto Reverse.app
   target/release/Auto Reverse.app
 
+The bundle requires macOS 13.0 or newer because its GUI uses SMAppService.
+MACOSX_DEPLOYMENT_TARGET may raise that minimum, but may not lower it.
+
 Double-clicking the bundle opens the settings window (`auto-reverse ui`).
 It also gives macOS Privacy & Security a stable .app target for granting
 Accessibility. The settings window also owns the live
@@ -88,6 +91,34 @@ done
 
 cd "$repo_root"
 
+readonly required_macos_version="13.0"
+deployment_target="${MACOSX_DEPLOYMENT_TARGET:-$required_macos_version}"
+
+if [[ ! "$deployment_target" =~ ^[0-9]+([.][0-9]+){0,2}$ ]]; then
+  echo "invalid MACOSX_DEPLOYMENT_TARGET: $deployment_target (expected N, N.N, or N.N.N)" >&2
+  exit 2
+fi
+if ! awk -v actual="$deployment_target" -v required="$required_macos_version" '
+  BEGIN {
+    split(actual, a, ".")
+    split(required, r, ".")
+    for (i = 1; i <= 3; i++) {
+      av = (a[i] == "" ? 0 : a[i]) + 0
+      rv = (r[i] == "" ? 0 : r[i]) + 0
+      if (av > rv) exit 0
+      if (av < rv) exit 1
+    }
+    exit 0
+  }
+'; then
+  echo "MACOSX_DEPLOYMENT_TARGET $deployment_target is below macOS $required_macos_version required by SMAppService" >&2
+  exit 2
+fi
+
+# One value drives both rustc's linker target and LSMinimumSystemVersion. The
+# bundle smoke check independently verifies the resulting Mach-O load command.
+export MACOSX_DEPLOYMENT_TARGET="$deployment_target"
+
 if [[ "$profile" == "release" ]]; then
   cargo build --release
 else
@@ -100,7 +131,9 @@ app="target/$profile/$AUTO_REVERSE_APP_BASENAME"
 contents="$app/Contents"
 macos="$contents/MacOS"
 resources="$contents/Resources"
-icon_source="assets/AppIcon.svg"
+# Keep editable SVG/PNG sources beside a checked-in multi-resolution ICNS.
+# Runtime iconset conversion is not stable across macOS tool versions.
+icon_source="assets/AutoReverse.icns"
 entitlements="packaging/AutoReverse.entitlements"
 
 if [[ ! -x "$binary" ]]; then
@@ -123,27 +156,11 @@ if [[ ! -f "$entitlements" ]]; then
 fi
 plutil -lint "$entitlements" >/dev/null
 
-iconset="$resources/AppIcon.iconset"
-icon_base="$resources/AppIcon-1024.png"
-mkdir -p "$iconset"
-sips -s format png "$icon_source" --out "$icon_base" >/dev/null
-while read -r filename pixels; do
-  sips -z "$pixels" "$pixels" "$icon_base" --out "$iconset/$filename" >/dev/null
-done <<'ICON_SIZES'
-icon_16x16.png 16
-icon_16x16@2x.png 32
-icon_32x32.png 32
-icon_32x32@2x.png 64
-icon_128x128.png 128
-icon_128x128@2x.png 256
-icon_256x256.png 256
-icon_256x256@2x.png 512
-icon_512x512.png 512
-icon_512x512@2x.png 1024
-ICON_SIZES
-iconutil -c icns "$iconset" -o "$resources/AutoReverse.icns"
-rm -rf "$iconset"
-rm -f "$icon_base"
+if [[ "$(file "$icon_source")" != *"Mac OS X icon"* ]]; then
+  echo "app icon source is not a valid ICNS file: $icon_source" >&2
+  exit 1
+fi
+cp "$icon_source" "$resources/AutoReverse.icns"
 
 cat > "$contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -173,7 +190,7 @@ cat > "$contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.utilities</string>
   <key>LSMinimumSystemVersion</key>
-  <string>10.13</string>
+  <string>$deployment_target</string>
   <key>LSUIElement</key>
   <true/>
   <key>NSHighResolutionCapable</key>

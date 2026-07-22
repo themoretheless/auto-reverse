@@ -31,6 +31,23 @@ pub fn event_source_pid(event: &CGEvent) -> i64 {
     event.get_integer_value_field(EventField::EVENT_SOURCE_UNIX_PROCESS_ID)
 }
 
+/// Returns the deltas users actually experience for diagnostics. Discrete
+/// wheels use line deltas; continuous devices use pixel deltas because their
+/// coarse line fields are commonly zero during real motion.
+pub fn diagnostic_deltas(event: &CGEvent) -> (i64, i64) {
+    if is_physical_mouse_wheel(event) {
+        (
+            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1),
+            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2),
+        )
+    } else {
+        (
+            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1),
+            event.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2),
+        )
+    }
+}
+
 pub fn mark_auto_reverse_synthetic(event: &CGEvent) {
     event.set_integer_value_field(
         EventField::EVENT_SOURCE_USER_DATA,
@@ -430,5 +447,29 @@ mod tests {
             event.get_double_value_field(EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1),
             -0.5
         );
+    }
+
+    #[test]
+    fn diagnostics_use_continuous_pixel_motion_when_coarse_delta_is_zero() {
+        let event = new_continuous_test_event(0);
+        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1, 5);
+        event.set_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2, -2);
+
+        assert_eq!(diagnostic_deltas(&event), (5, -2));
+
+        let config = AppConfig {
+            reverse_trackpad: true,
+            reverse_horizontal: true,
+            ..AppConfig::default()
+        };
+        apply_config_in_place(
+            &event,
+            &config,
+            DeviceKind::Trackpad,
+            None,
+            HidSourceClass::NotObserved,
+        );
+
+        assert_eq!(diagnostic_deltas(&event), (-5, 2));
     }
 }

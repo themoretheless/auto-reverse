@@ -92,6 +92,7 @@ fn contents(
     accessibility_granted: bool,
 ) {
     let all_events = debug_log::snapshot();
+    let mut dropped_records = debug_log::dropped_records();
     let recoveries = recovery_log::snapshot();
 
     ui.horizontal(|ui| {
@@ -117,6 +118,8 @@ fn contents(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if styled_button(ui, "Clear", egui::vec2(10.0, 5.0)).clicked() {
                 debug_log::clear();
+                debug_log::take_dropped_records();
+                dropped_records = 0;
                 recovery_log::clear();
             }
             export_menu(ui, &filtered_events(&all_events, state), state);
@@ -220,11 +223,17 @@ fn contents(
         });
 
     ui.separator();
+    let omitted = if dropped_records > 0 {
+        format!(" · {dropped_records} diagnostic records omitted while the log was busy")
+    } else {
+        String::new()
+    };
     ui.label(
         RichText::new(format!(
-            "{} events shown · ring buffer holds the last {} · stays on this Mac, never sent over the network",
+            "{} events shown · ring buffer holds the last {}{} · stays on this Mac, never sent over the network",
             events.len(),
-            debug_log::CAPACITY
+            debug_log::CAPACITY,
+            omitted
         ))
         .small()
         .weak(),

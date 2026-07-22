@@ -286,6 +286,7 @@ fn init_config() -> AppResult<()> {
 
     store.load_or_create()?;
     println!("created config: {}", store.path().display());
+    notify_running_gui_reload_best_effort();
     Ok(())
 }
 
@@ -370,6 +371,7 @@ fn repair_config() -> AppResult<()> {
         ConfigRepairOutcome::Created { config } => {
             println!("created default config: {}", store.path().display());
             println!("config version: {}", config.config_version);
+            notify_running_gui_reload_best_effort();
         }
         ConfigRepairOutcome::Repaired {
             config,
@@ -381,6 +383,7 @@ fn repair_config() -> AppResult<()> {
             );
             println!("original bytes preserved: {}", backup_path.display());
             println!("config version: {}", config.config_version);
+            notify_running_gui_reload_best_effort();
         }
     }
     Ok(())
@@ -408,6 +411,7 @@ fn open_releases(options: OpenReleasesOptions) -> AppResult<()> {
 fn set_enabled(enabled: bool) -> AppResult<()> {
     let store = ConfigStore::default();
     store.update(|config| config.enabled = enabled)?;
+    notify_running_gui_reload_best_effort();
     println!(
         "auto-reverse is now {}",
         if enabled { "enabled" } else { "disabled" }
@@ -419,6 +423,7 @@ fn toggle_enabled() -> AppResult<()> {
     let store = ConfigStore::default();
     let snapshot = store.update(|config| config.enabled = !config.enabled)?;
     let enabled = snapshot.config.enabled;
+    notify_running_gui_reload_best_effort();
     println!(
         "auto-reverse is now {}",
         if enabled { "enabled" } else { "disabled" }
@@ -429,6 +434,7 @@ fn toggle_enabled() -> AppResult<()> {
 fn rollback_dynamics() -> AppResult<()> {
     let store = ConfigStore::default();
     let snapshot = store.update(|config| *config = with_dynamics_rollback(config))?;
+    notify_running_gui_reload_best_effort();
     println!(
         "experimental dynamics rolled back to {}; wheel step and unrelated settings preserved",
         snapshot.config.smooth_preset.as_str()
@@ -438,7 +444,7 @@ fn rollback_dynamics() -> AppResult<()> {
 
 fn set_startup_enabled(enabled: bool) -> AppResult<()> {
     let status = if enabled {
-        startup::enable_for_current_executable()?
+        enable_cli_startup_exclusively()?
     } else {
         startup::disable()?
     };
@@ -454,6 +460,7 @@ fn set_startup_enabled(enabled: bool) -> AppResult<()> {
         );
         return Err(error);
     }
+    notify_running_gui_reload_best_effort();
 
     println!("start at login: {}", status.summary());
     if enabled {
@@ -463,12 +470,41 @@ fn set_startup_enabled(enabled: bool) -> AppResult<()> {
     Ok(())
 }
 
+#[cfg(feature = "gui")]
+fn enable_cli_startup_exclusively() -> AppResult<startup::StartupStatus> {
+    let gui_was_registered = matches!(
+        login_item::status(),
+        LoginItemStatus::Enabled | LoginItemStatus::RequiresApproval
+    );
+    let status = startup::enable_for_current_executable()?;
+    if !gui_was_registered {
+        return Ok(status);
+    }
+
+    if let Err(error) = login_item::unregister() {
+        let rollback = startup::disable();
+        let rollback_note = rollback
+            .err()
+            .map(|rollback_error| format!("; LaunchAgent rollback also failed: {rollback_error}"))
+            .unwrap_or_default();
+        return Err(AppError::Platform(format!(
+            "could not replace the GUI login item with the CLI LaunchAgent: {error}{rollback_note}"
+        )));
+    }
+    Ok(status)
+}
+
+#[cfg(not(feature = "gui"))]
+fn enable_cli_startup_exclusively() -> AppResult<startup::StartupStatus> {
+    startup::enable_for_current_executable()
+}
+
 fn show_menu_bar_icon() -> AppResult<()> {
     let store = ConfigStore::default();
     store.update(|config| config.show_menu_bar_icon = true)?;
     println!("menu bar icon: shown");
 
-    match notify_existing_settings_window() {
+    match notify_existing_settings_window(true) {
         Ok(true) => println!("the running settings process was asked to reload and reopen"),
         Ok(false) => println!("the icon will be visible the next time Auto Reverse opens"),
         Err(error) => eprintln!(
@@ -480,14 +516,28 @@ fn show_menu_bar_icon() -> AppResult<()> {
 }
 
 #[cfg(feature = "gui")]
-fn notify_existing_settings_window() -> AppResult<bool> {
+fn notify_existing_settings_window(open_window: bool) -> AppResult<bool> {
     let ui_lock_path = daemon_lock::default_path().with_file_name("ui.lock");
-    activation::request_existing_window_if_running(&ui_lock_path)
+    let action = if open_window {
+        activation::ActivationAction::ReloadAndOpen
+    } else {
+        activation::ActivationAction::ReloadOnly
+    };
+    activation::request_existing_gui_if_running(&ui_lock_path, action)
 }
 
 #[cfg(not(feature = "gui"))]
-fn notify_existing_settings_window() -> AppResult<bool> {
+fn notify_existing_settings_window(_open_window: bool) -> AppResult<bool> {
     Ok(false)
+}
+
+fn notify_running_gui_reload_best_effort() {
+    if let Err(error) = notify_existing_settings_window(false) {
+        eprintln!(
+            "auto-reverse: the config was saved, but the running GUI could not be notified to \
+             reload it ({error}); reopen Auto Reverse to apply the change"
+        );
+    }
 }
 
 /// Removes both startup registrations before an installer deletes the app.
@@ -505,10 +555,13 @@ fn prepare_uninstall() -> AppResult<()> {
     let store = ConfigStore::default();
     if store.exists() {
         match store.update(|config| config.start_at_login = false) {
-            Ok(_) => println!(
-                "config retained with start_at_login=false: {}",
-                store.path().display()
-            ),
+            Ok(_) => {
+                println!(
+                    "config retained with start_at_login=false: {}",
+                    store.path().display()
+                );
+                notify_running_gui_reload_best_effort();
+            }
             Err(error) => eprintln!(
                 "auto-reverse: startup registrations were removed, but the retained config \
                  could not be updated ({error}): {}",

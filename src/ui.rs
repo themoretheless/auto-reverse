@@ -403,7 +403,7 @@ impl SettingsApp {
         let runtime_control = Arc::new(RuntimeControl::default());
         let permissions_ready_shared = Arc::new(AtomicBool::new(permissions_ready));
 
-        let login_item_error = None;
+        let login_item_error = login_item::reconcile_startup_ownership().err();
 
         let mut app = Self {
             store,
@@ -811,16 +811,25 @@ impl eframe::App for SettingsApp {
 
         // Process second-launch requests after close/quit-to-hide commands so
         // a concurrent relaunch wins the frame and leaves the window visible.
+        // CLI config edits use the same mailbox with ReloadOnly, which updates
+        // the live tap without unexpectedly exposing a hidden window.
         match self.activation_inbox.poll() {
-            Ok(should_activate) => {
+            Ok(action) => {
                 self.activation_error = None;
-                if should_activate {
+                if let Some(action) = action {
                     if let Err(error) = self.reload_external_config() {
-                        self.load_error = Some(format!(
-                            "could not reload settings while reopening the window: {error}"
-                        ));
+                        self.load_error = Some(match action {
+                            activation::ActivationAction::ReloadOnly => {
+                                format!("could not reload externally changed settings: {error}")
+                            }
+                            activation::ActivationAction::ReloadAndOpen => format!(
+                                "could not reload settings while reopening the window: {error}"
+                            ),
+                        });
                     }
-                    show_settings_window(ctx);
+                    if action == activation::ActivationAction::ReloadAndOpen {
+                        show_settings_window(ctx);
+                    }
                 }
             }
             Err(error) => self.activation_error = Some(error.to_string()),
@@ -1390,14 +1399,24 @@ impl SettingsApp {
             }
             login_item::LoginItemStatus::NotRegistered | login_item::LoginItemStatus::NotFound => {
                 if styled_button(ui, "Turn on", egui::vec2(12.0, 5.0)).clicked() {
-                    self.login_item_error = login_item::register().err();
+                    match login_item::register() {
+                        Ok(()) => {
+                            self.login_item_error = None;
+                            // Registration boots out any legacy CLI owner. If
+                            // it held run.lock, retry after launchctl returns.
+                            if self.config.enabled && self.permissions_ready {
+                                self.retry_tap_thread();
+                            }
+                        }
+                        Err(error) => self.login_item_error = Some(error),
+                    }
                 }
             }
         });
         ui.label(
             RichText::new(
-                "Separate from the CLI's enable-startup command - this registers the app \
-                 bundle itself with macOS.",
+                "Uses the app bundle as the login-time owner and removes a legacy CLI \
+                 LaunchAgent if one is installed.",
             )
             .small()
             .weak(),

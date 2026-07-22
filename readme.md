@@ -18,8 +18,9 @@ Implemented:
 - vertical and horizontal reverse flags;
 - mouse, trackpad, Magic Mouse and unknown-device config flags;
 - independent live mouse, trackpad, and Magic Mouse policies: public IOHID
-  inventory resolves an exclusive continuous source, while a listen-only
-  AppKit gesture tap and pure timing state machine handle the `Both` case;
+  inventory resolves an exclusive continuous source; for `Both`, positive
+  one-finger/two-finger gesture evidence and public scroll phases pin direct
+  sessions, while missing/unknown evidence falls back to trackpad;
 - wheel step size;
 - raw-input guard through `source_pid`;
 - Accessibility check and targeted first-run request; Input Monitoring is not
@@ -53,14 +54,17 @@ Implemented:
   scroll event tap in the same process when enabled and permissions are ready,
   deduped against any other already-running tap via `daemon_lock`;
 - single-instance GUI activation: a second launch exits without another tray
-  icon and asks the existing process to reveal and focus its settings window;
+  icon and asks the existing process to reload/reveal settings; ordinary CLI
+  mutations use the same typed mailbox to reload without opening the window;
 - menu bar UI with a custom opposing-arrows template icon, a separate colored
   status dot, a rich native menu, a Reverse Scrolling toggle, per-device
   quick-pick submenu, temporary pause/resume, Open Settings, Open Debug Console,
   and Quit; Advanced can hide the status item without stopping reversal, while
   relaunch and `show-menu-bar-icon` provide recovery without a second instance;
 - local Debug Console with search, decision filters, clear, and a bounded
-  structured ring buffer; CSV export includes stable reason codes, source PID,
+  structured ring buffer; event-tap insertion never waits for the console,
+  counted contention drops are visible, and continuous pixel deltas remain
+  observable even when coarse line deltas are zero; CSV export includes stable reason codes, source PID,
   synthetic flag, device kind, raw HID name, vendor/product IDs, attribution,
   classifier evidence, input provenance, and resolved profile sources, while
   serial/location qualifiers stay out of automatic exports; a native Save Panel
@@ -118,8 +122,10 @@ Implemented:
 - an explicit manual update policy: About & Updates and `open-releases` open
   canonical stable/all GitHub release pages only after a user action; Auto
   Reverse itself performs no background version or network requests;
-- branded opposing-arrows app icon and generated Retina `.icns` in the bundle;
-- GUI Start at Login toggle via `SMAppService.mainAppService()`;
+- branded opposing-arrows app icon and checked multi-resolution `.icns` in the bundle;
+- mutually exclusive GUI/CLI login ownership: `SMAppService.mainAppService()`
+  replaces the legacy LaunchAgent transactionally, and the reverse migration
+  rolls back on failure;
 - CLI diagnostics, JSON startup status and simulation;
 - separated CLI parser in `src/cli.rs`;
 - black-box CLI integration tests with isolated `HOME`, explicit config paths,
@@ -231,12 +237,14 @@ Default output:
 target/debug/Auto Reverse.app
 ```
 
-The bundle contains `Contents/Resources/AutoReverse.icns`; the build script
-generates its complete Retina iconset from `assets/AppIcon.svg`, signs local
-builds ad-hoc with hardened runtime and the least-privilege entitlement file,
-and validates the Mach-O/plist/icon/signature structure. Ad-hoc still means
-development-only: it has no stable public signing identity or notarization
-ticket.
+The bundle requires macOS 13.0 or newer because the GUI login item uses
+`SMAppService`. It contains `Contents/Resources/AutoReverse.icns`, copied from
+the checked multi-resolution asset beside the editable SVG/PNG sources. The
+build exports the same deployment target used by `LSMinimumSystemVersion`,
+signs local builds ad-hoc with hardened runtime and least-privilege
+entitlements, and verifies every Mach-O slice against the plist minimum plus
+the icon/identity/signature contract. Ad-hoc still means development-only: it
+has no stable public signing identity or notarization ticket.
 
 For a stable local TCC identity across rebuilds, use an Apple Development
 certificate explicitly:
@@ -314,7 +322,7 @@ Then launch the bundled app:
 open "target/debug/Auto Reverse.app"
 ```
 
-Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and Accessibility is granted, sharing one live config with the window so changes made in that window apply immediately with no restart. If the app was opened before Accessibility was granted, it keeps watching the permission state and retries starting the tap once the check becomes ready; if startup failed or stopped immediately, turning Reverse scrolling off clears that pending attempt so turning it on again can retry cleanly. The default menu-bar item uses an opposing-arrows template glyph plus a separate colored status dot for active/paused/permission-blocked states. Its native menu includes Reverse Scrolling, device quick-picks, Open Settings, Open Debug Console, and Quit; holding Option while opening the icon opens the Debug Console directly. Advanced can hide the icon without stopping reversal. While hidden, reopening Auto Reverse focuses the existing settings process and reloads its exact external config revision; `show-menu-bar-icon` provides the same recovery from Terminal. Closing the settings window hides it rather than quitting. A separate `ui.lock` prevents duplicate windows/menu-bar icons. When a second GUI launch finds that lock held, it atomically writes a PID-addressed `ui.activate` request and exits with success; the existing process consumes the request on its hidden-window tick, reloads a newer config, makes the settings viewport visible, and focuses it. An exclusive tap lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` (manual, or via a LaunchAgent) can never both hold a live event tap - whichever gets there first wins, and the other observes the lock held and does nothing. External CLI edits made while the settings window is already open are not continuously watched. They are nevertheless protected: activation reloads them, while the next GUI/tray save detects an exact TOML revision mismatch and asks the user to repeat the local action instead of silently overwriting it. For terminal diagnostics through the bundled identity:
+Double-clicking the bundle opens the settings window (`ui`), which also starts the scroll event tap on a background thread in this same process when `enabled=true` in the config and Accessibility is granted, sharing one live config with the window so changes made in that window apply immediately with no restart. If the app was opened before Accessibility was granted, it keeps watching the permission state and retries starting the tap once the check becomes ready; if startup failed or stopped immediately, turning Reverse scrolling off clears that pending attempt so turning it on again can retry cleanly. The default menu-bar item uses an opposing-arrows template glyph plus a separate colored status dot for active/paused/permission-blocked states. Its native menu includes Reverse Scrolling, device quick-picks, Open Settings, Open Debug Console, and Quit; holding Option while opening the icon opens the Debug Console directly. Advanced can hide the icon without stopping reversal. While hidden, reopening Auto Reverse focuses the existing settings process and reloads its exact external config revision; `show-menu-bar-icon` provides the same recovery from Terminal. Closing the settings window hides it rather than quitting. A separate `ui.lock` prevents duplicate windows/menu-bar icons. When a second GUI launch finds that lock held, it atomically writes a PID-addressed `ReloadAndOpen` request and exits with success. Successful CLI config mutations publish `ReloadOnly`, so the existing process consumes and applies the newer snapshot on its hidden-window tick without unexpectedly revealing settings. The owner claims the mailbox inode before parsing, while request coalescing preserves the stronger open action across races. An exclusive tap lock (`platform::macos::daemon_lock`) still guards tap installation, so this in-process tap and a separately started `run` cannot both hold a live event tap. GUI and CLI startup controls also replace the other registered login owner transactionally instead of treating two startup processes as normal. Exact TOML revision checks remain the final defense against a simultaneous manual edit. For terminal diagnostics through the bundled identity:
 
 Debug Console rows keep raw source metadata in memory and derive display text
 only while the console is searching or rendering. Export preserves the raw HID
@@ -469,22 +477,28 @@ momentum cannot adopt whichever app happens to be frontmost later.
 `reverse_magic_mouse` is live and independent from `reverse_trackpad`. Public
 IOHID product inventory now wins when only a trackpad or only a Magic Mouse is
 connected, so a missing touch observation can no longer route a lone built-in
-trackpad through the Magic Mouse setting. When both are connected, a two-finger
-gesture within 222 ms identifies the trackpad, momentum keeps the last source,
-and a normal continuous event after 333 ms without a fresh touch is Magic
-Mouse-like. IOHID matching/removal callbacks update the hint after hot-plug and
-sleep/wake. Failed or unknown probes conservatively use the trackpad policy.
-Rapid dual-device alternation and third-party smooth wheels remain heuristic;
-per-device rules remain limited to discrete HID wheel devices.
+trackpad through the Magic Mouse setting. When both are connected, a recent
+one-finger observation is positive Magic Mouse evidence and a two-finger
+observation is Trackpad evidence. Public scroll phases pin that choice across a
+direct gesture, valid momentum continues it, and unknown momentum or missing
+evidence conservatively uses the trackpad policy. IOHID matching/removal
+callbacks update the hint after hot-plug and sleep/wake. Rapid dual-device
+alternation and third-party smooth wheels remain heuristic and require physical
+QA; per-device rules remain limited to discrete HID wheel devices.
 
 ## Start At Login
 
-There are two start-at-login mechanisms because there are two launch styles:
+There are two adapters for two installation styles, but the supported controls
+keep only one registered login-time owner:
 
 - the GUI settings window uses `SMAppService.mainAppService()` and registers the `.app` bundle itself;
 - the CLI command `enable-startup` installs a per-user LaunchAgent for the current binary path.
 
-The CLI LaunchAgent lives at:
+Turning on the GUI login item removes and boots out the legacy CLI LaunchAgent;
+`enable-startup` performs the inverse migration and rolls the new LaunchAgent
+back if the GUI service cannot be unregistered. On load, an already-registered
+GUI also reconciles a dual registration left by an older release. The CLI
+LaunchAgent lives at:
 
 ```text
 ~/Library/LaunchAgents/com.auto-reverse.agent.plist
@@ -707,7 +721,8 @@ The canonical rationale and source links live in `recommendation.md` and
 
 The full working backlog lives in `recommendation.md`: 500 base findings,
 `N01-N400` implementation follow-ups, `R01-R60` research-derived items, and
-the completed `S01-S10` config durability/manual update pass (970 total).
+the completed `S01-S10` config/update pass and `T01-T10` runtime/classifier/
+packaging hardening pass (980 total).
 The collapsed mirror below keeps the requested 500 base items visible from the
 README without making the first read impossible.
 
@@ -1224,7 +1239,7 @@ README without making the first read impossible.
 ## Documents
 
 - `architecture.md` - current and target architecture, SOLID/DRY split, UX direction.
-- `recommendation.md` - 970 recommendations, problems and improvements (500 base items + N01-N400 implementation follow-ups + R01-R60 research follow-ups + S01-S10 config/update follow-ups).
+- `recommendation.md` - 980 recommendations, problems and improvements (500 base items + N01-N400 implementation follow-ups + R01-R60 research follow-ups + S01-S10 config/update follow-ups + T01-T10 hardening follow-ups).
 - `RESEARCH.md` - 10-repository source review, scientific/platform sources, rejected approaches, and three incremental implementation iterations.
 - `TRACE.md` - privacy trace schema, limits, replay semantics, CLI lab, and ownership boundaries.
 - `BENCHMARK.md` - target conditions, physical matrix, metrics, event-rate

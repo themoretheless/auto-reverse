@@ -90,7 +90,9 @@ Mouse policy does not resize controls or disturb the stable section hierarchy.
 The menu-bar glyph is a template `NSImage`, so AppKit owns light/dark tinting.
 Its colored status dot is a separate non-template `NSImageView`. The app icon
 uses the same opposing-arrow geometry, the accent blue, and the active green,
-rendered from `assets/AppIcon.svg` into `AutoReverse.icns` during bundle build.
+kept as editable `assets/AppIcon.svg`/`AppIcon.png` sources plus a validated
+multi-resolution `assets/AutoReverse.icns` copied into the bundle. This avoids
+tool-version-dependent SVG/iconset conversion during signing.
 
 Menu-bar visibility is an Advanced binary setting, not a destructive action.
 Hiding the `NSStatusItem` leaves reversal, its menu target, status views, and

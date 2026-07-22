@@ -15,7 +15,8 @@
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, TryLockError};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::ResolvedDeviceProfile;
@@ -188,28 +189,87 @@ impl RingBuffer {
     }
 }
 
-/// Process-wide ring buffer. `OnceLock` rather than plumbing an `Arc`
-/// through `event_tap`/`hid` call sites that don't otherwise need shared
-/// state - the console window and the tap callback both just call
-/// `buffer()`.
-static BUFFER: OnceLock<Arc<Mutex<RingBuffer>>> = OnceLock::new();
+struct DebugLog {
+    buffer: Mutex<RingBuffer>,
+    dropped_records: AtomicU64,
+}
 
-fn buffer() -> &'static Arc<Mutex<RingBuffer>> {
-    BUFFER.get_or_init(|| Arc::new(Mutex::new(RingBuffer::new())))
+impl DebugLog {
+    fn new() -> Self {
+        Self {
+            buffer: Mutex::new(RingBuffer::new()),
+            dropped_records: AtomicU64::new(0),
+        }
+    }
+
+    /// Attempts one bounded write without waiting for a GUI reader. A
+    /// poisoned mutex is still owned when `try_lock` reports it, so recovering
+    /// that guard remains non-blocking and keeps diagnostics fail-open.
+    fn try_push(&self, event: DebugEvent) -> bool {
+        match self.buffer.try_lock() {
+            Ok(mut guard) => {
+                guard.push(event);
+                true
+            }
+            Err(TryLockError::Poisoned(poisoned)) => {
+                poisoned.into_inner().push(event);
+                true
+            }
+            Err(TryLockError::WouldBlock) => {
+                self.record_drop();
+                false
+            }
+        }
+    }
+
+    fn snapshot(&self) -> Vec<DebugEvent> {
+        let guard = match self.buffer.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.snapshot()
+    }
+
+    fn clear(&self) {
+        let mut guard = match self.buffer.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.clear();
+    }
+
+    fn record_drop(&self) {
+        let _ = self
+            .dropped_records
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                count.checked_add(1)
+            });
+    }
+
+    fn dropped_records(&self) -> u64 {
+        self.dropped_records.load(Ordering::Relaxed)
+    }
+
+    fn take_dropped_records(&self) -> u64 {
+        self.dropped_records.swap(0, Ordering::Relaxed)
+    }
+}
+
+/// Process-wide diagnostics state. `OnceLock` avoids plumbing a shared owner
+/// through event-tap and GUI call sites that otherwise do not need one.
+static DEBUG_LOG: OnceLock<DebugLog> = OnceLock::new();
+
+fn debug_log() -> &'static DebugLog {
+    DEBUG_LOG.get_or_init(DebugLog::new)
 }
 
 /// Hot-path entry point, called once per real scroll event from
-/// `event_tap::handle_event`. The critical section is a plain push plus a
-/// pop-front-if-over-capacity - no string formatting, no filtering, no I/O
-/// happens while the lock is held; the caller builds `event` completely
-/// before calling this.
+/// `event_tap::handle_event`. This never waits for the GUI's snapshot lock: if
+/// it is contended, this diagnostic record is dropped and counted. The caller
+/// builds `event` completely before calling this; no formatting, filtering or
+/// I/O happens here.
 pub fn push(event: DebugEvent) {
-    let buf = buffer();
-    let mut guard = match buf.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    guard.push(event);
+    debug_log().try_push(event);
 }
 
 /// A cloned snapshot of the current buffer contents, oldest first. Cloning
@@ -217,21 +277,25 @@ pub fn push(event: DebugEvent) {
 /// lock's critical section short and lets the GUI thread filter/format the
 /// snapshot without blocking the tap thread.
 pub fn snapshot() -> Vec<DebugEvent> {
-    let buf = buffer();
-    let guard = match buf.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    guard.snapshot()
+    debug_log().snapshot()
 }
 
 pub fn clear() {
-    let buf = buffer();
-    let mut guard = match buf.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    guard.clear();
+    debug_log().clear();
+}
+
+/// Number of records omitted because the ring was busy. This is independent
+/// of ring eviction: reaching [`CAPACITY`] still evicts the oldest record and
+/// does not increment this counter.
+pub fn dropped_records() -> u64 {
+    debug_log().dropped_records()
+}
+
+/// Atomically returns and resets the contention-drop count. Clearing the ring
+/// does not reset this value, so consumers can choose their own reporting
+/// interval without losing data unexpectedly.
+pub fn take_dropped_records() -> u64 {
+    debug_log().take_dropped_records()
 }
 
 /// Human-readable device description, built outside the event-tap callback.
@@ -277,6 +341,8 @@ pub fn now_monotonic_micros() -> u64 {
 mod tests {
     use super::*;
     use crate::config::AppConfig;
+    use std::sync::mpsc;
+    use std::thread;
 
     fn sample_event(tag: u32) -> DebugEvent {
         DebugEvent {
@@ -344,6 +410,59 @@ mod tests {
             snapshot.iter().map(|e| e.timestamp_ms).collect::<Vec<_>>(),
             vec![1, 2, 3]
         );
+    }
+
+    #[test]
+    fn debug_log_drops_without_waiting_when_buffer_is_contended() {
+        let log = Arc::new(DebugLog::new());
+        let holder_log = Arc::clone(&log);
+        let (locked_tx, locked_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let holder = thread::spawn(move || {
+            let _guard = holder_log.buffer.lock().unwrap();
+            locked_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+
+        locked_rx.recv().unwrap();
+        assert!(!log.try_push(sample_event(1)));
+        assert_eq!(log.dropped_records(), 1);
+
+        release_tx.send(()).unwrap();
+        holder.join().unwrap();
+
+        assert!(log.try_push(sample_event(2)));
+        assert_eq!(log.snapshot().len(), 1);
+        assert_eq!(log.take_dropped_records(), 1);
+        assert_eq!(log.dropped_records(), 0);
+    }
+
+    #[test]
+    fn debug_log_recovers_a_poisoned_buffer_without_panicking() {
+        let log = Arc::new(DebugLog::new());
+        let poison_log = Arc::clone(&log);
+        let poisoner = thread::spawn(move || {
+            let _guard = poison_log.buffer.lock().unwrap();
+            panic!("poison diagnostics mutex");
+        });
+
+        assert!(poisoner.join().is_err());
+        assert!(log.try_push(sample_event(7)));
+        assert_eq!(log.dropped_records(), 0);
+        assert_eq!(log.snapshot()[0].timestamp_ms, 7);
+
+        log.clear();
+        assert!(log.snapshot().is_empty());
+    }
+
+    #[test]
+    fn dropped_record_count_saturates() {
+        let log = DebugLog::new();
+        log.dropped_records.store(u64::MAX, Ordering::Relaxed);
+
+        log.record_drop();
+
+        assert_eq!(log.dropped_records(), u64::MAX);
     }
 
     #[test]
