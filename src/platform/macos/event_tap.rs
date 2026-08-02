@@ -17,7 +17,7 @@ use crate::recovery_audit::{RecoveryAction, RecoveryReason};
 use crate::runtime::RuntimeControl;
 use crate::scroll::TransformDecision;
 
-use super::{daemon_lock, gesture, hid, recovery_log, scroll_events};
+use super::{daemon_lock, gesture, hid, recovery_log, runtime_ipc, scroll_events};
 
 #[cfg(feature = "gui")]
 use super::debug_log;
@@ -222,6 +222,23 @@ pub fn install_and_run_with_ready(
             AppError::Platform("event tap runtime control initialization raced".to_string())
         })?;
     }
+
+    // The lock owner also owns the one cross-process config endpoint. This
+    // keeps the supported headless `run` path live when a CLI or a concurrently
+    // open settings process commits a new snapshot. Listener failure is
+    // recoverable: the tap continues with its current validated config and the
+    // next process start reads disk normally.
+    let _config_reload_listener = match runtime_ipc::ConfigReloadListener::start(Arc::clone(
+        &config,
+    )) {
+        Ok(listener) => Some(listener),
+        Err(error) => {
+            eprintln!(
+                "auto-reverse: runtime config control unavailable ({error}); restart is required for external config edits"
+            );
+            None
+        }
+    };
 
     // Always start the HID monitor, even when config currently has no rules:
     // the merged UI can add its first rule live after startup, and the tap

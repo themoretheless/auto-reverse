@@ -68,7 +68,7 @@ use crate::device_catalog::ObservedDevice;
 use crate::device_test::DeviceTestSession;
 use crate::platform::macos::{
     activation, app_events, daemon_lock, external_url, hid, login_item, permissions, power_events,
-    quit_handler, recovery_log, tray,
+    quit_handler, recovery_log, runtime_ipc, tray,
 };
 use crate::recovery_audit::{RecoveryAction, RecoveryReason};
 use crate::refresh_policy::RefreshPolicy;
@@ -177,6 +177,14 @@ fn show_settings_window(ctx: &egui::Context) {
     // applied first; Focus then activates the app and orders the window front.
     ctx.send_viewport_cmd(ViewportCommand::Visible(true));
     ctx.send_viewport_cmd(ViewportCommand::Focus);
+}
+
+fn notify_active_runtime_reload_best_effort() {
+    if let Err(error) = runtime_ipc::request_reload_if_running() {
+        eprintln!(
+            "auto-reverse: settings were saved, but the active scroll runtime could not be notified ({error})"
+        );
+    }
 }
 
 /// Loads the real macOS system fonts (SF Pro / SF Mono) into egui so the
@@ -510,11 +518,14 @@ impl SettingsApp {
             Ok(revision) => {
                 self.set_config_revision(revision);
                 self.save_error = None;
-                let mut guard = match self.shared_config.write() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                *guard = self.config.clone();
+                {
+                    let mut guard = match self.shared_config.write() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    *guard = self.config.clone();
+                }
+                notify_active_runtime_reload_best_effort();
             }
             Err(error) if error.is_config_changed() => {
                 let conflict = error.to_string();
@@ -571,13 +582,11 @@ impl SettingsApp {
             return Ok(false);
         }
 
-        let enabled_before = {
-            let guard = match self.shared_config.read() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            guard.enabled
-        };
+        // Compare with the state the UI lifecycle last processed. The tap
+        // owner's socket may already have updated `shared_config` before the
+        // activation mailbox reaches this tick; using that shared value would
+        // hide a real enable/disable transition and skip lifecycle effects.
+        let enabled_before = self.config.enabled;
         self.config = snapshot.config;
         {
             let mut guard = match self.shared_config.write() {
@@ -588,6 +597,7 @@ impl SettingsApp {
         }
         self.set_config_revision(snapshot.revision);
         self.load_error = None;
+        notify_active_runtime_reload_best_effort();
 
         if enabled_before != self.config.enabled {
             self.handle_enabled_changed();
@@ -759,6 +769,8 @@ impl eframe::App for SettingsApp {
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner());
                     *current = Some(revision);
+                    drop(current);
+                    notify_active_runtime_reload_best_effort();
                     Ok(())
                 },
             ) {

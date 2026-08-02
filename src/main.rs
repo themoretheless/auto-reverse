@@ -28,7 +28,9 @@ use auto_reverse::input::ScrollEvent;
 use auto_reverse::platform::macos::{
     activation, daemon_lock, login_item, login_item::LoginItemStatus,
 };
-use auto_reverse::platform::macos::{event_tap, external_url, hid, permissions, startup};
+use auto_reverse::platform::macos::{
+    event_tap, external_url, hid, permissions, runtime_ipc, startup,
+};
 use auto_reverse::scroll;
 use auto_reverse::scroll_lab::{self, AxisMetrics, Distribution};
 use auto_reverse::scroll_trace::{MAX_TRACE_BYTES, ScrollTrace, TraceError};
@@ -130,10 +132,7 @@ fn run_event_tap() -> AppResult<()> {
     }
 
     println!(
-        "auto-reverse: config changes made while this headless `run` process is running have \
-         no effect until restart. An open `ui` process does not continuously watch external \
-         edits either, but its next window or tray save compares the exact TOML revision: a \
-         newer CLI or manual edit is reloaded instead of being silently overwritten."
+        "auto-reverse: live config control is ready; successful CLI and GUI saves reload this runtime without restart"
     );
 
     // install_and_run acquires the exclusive daemon_lock itself, as the
@@ -286,7 +285,7 @@ fn init_config() -> AppResult<()> {
 
     store.load_or_create()?;
     println!("created config: {}", store.path().display());
-    notify_running_gui_reload_best_effort();
+    notify_live_config_reload_best_effort();
     Ok(())
 }
 
@@ -371,7 +370,7 @@ fn repair_config() -> AppResult<()> {
         ConfigRepairOutcome::Created { config } => {
             println!("created default config: {}", store.path().display());
             println!("config version: {}", config.config_version);
-            notify_running_gui_reload_best_effort();
+            notify_live_config_reload_best_effort();
         }
         ConfigRepairOutcome::Repaired {
             config,
@@ -383,7 +382,7 @@ fn repair_config() -> AppResult<()> {
             );
             println!("original bytes preserved: {}", backup_path.display());
             println!("config version: {}", config.config_version);
-            notify_running_gui_reload_best_effort();
+            notify_live_config_reload_best_effort();
         }
     }
     Ok(())
@@ -411,7 +410,7 @@ fn open_releases(options: OpenReleasesOptions) -> AppResult<()> {
 fn set_enabled(enabled: bool) -> AppResult<()> {
     let store = ConfigStore::default();
     store.update(|config| config.enabled = enabled)?;
-    notify_running_gui_reload_best_effort();
+    notify_live_config_reload_best_effort();
     println!(
         "auto-reverse is now {}",
         if enabled { "enabled" } else { "disabled" }
@@ -423,7 +422,7 @@ fn toggle_enabled() -> AppResult<()> {
     let store = ConfigStore::default();
     let snapshot = store.update(|config| config.enabled = !config.enabled)?;
     let enabled = snapshot.config.enabled;
-    notify_running_gui_reload_best_effort();
+    notify_live_config_reload_best_effort();
     println!(
         "auto-reverse is now {}",
         if enabled { "enabled" } else { "disabled" }
@@ -434,7 +433,7 @@ fn toggle_enabled() -> AppResult<()> {
 fn rollback_dynamics() -> AppResult<()> {
     let store = ConfigStore::default();
     let snapshot = store.update(|config| *config = with_dynamics_rollback(config))?;
-    notify_running_gui_reload_best_effort();
+    notify_live_config_reload_best_effort();
     println!(
         "experimental dynamics rolled back to {}; wheel step and unrelated settings preserved",
         snapshot.config.smooth_preset.as_str()
@@ -460,7 +459,7 @@ fn set_startup_enabled(enabled: bool) -> AppResult<()> {
         );
         return Err(error);
     }
-    notify_running_gui_reload_best_effort();
+    notify_live_config_reload_best_effort();
 
     println!("start at login: {}", status.summary());
     if enabled {
@@ -531,7 +530,13 @@ fn notify_existing_settings_window(_open_window: bool) -> AppResult<bool> {
     Ok(false)
 }
 
-fn notify_running_gui_reload_best_effort() {
+fn notify_live_config_reload_best_effort() {
+    if let Err(error) = runtime_ipc::request_reload_if_running() {
+        eprintln!(
+            "auto-reverse: the config was saved, but the active scroll runtime could not be \
+             notified ({error}); restart Auto Reverse to apply the change"
+        );
+    }
     if let Err(error) = notify_existing_settings_window(false) {
         eprintln!(
             "auto-reverse: the config was saved, but the running GUI could not be notified to \
@@ -560,7 +565,7 @@ fn prepare_uninstall() -> AppResult<()> {
                     "config retained with start_at_login=false: {}",
                     store.path().display()
                 );
-                notify_running_gui_reload_best_effort();
+                notify_live_config_reload_best_effort();
             }
             Err(error) => eprintln!(
                 "auto-reverse: startup registrations were removed, but the retained config \

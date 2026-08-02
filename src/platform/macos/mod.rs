@@ -12,6 +12,8 @@
 //!   headless CLI (`enable-startup`/`disable-startup`, targets `run`).
 //! - `daemon_lock`: exclusive-lock guard (`flock`) preventing two live
 //!   CGEventTaps at once, regardless of which process/thread installs them.
+//! - `runtime_ipc`: private Unix-datagram control channel that reloads the
+//!   validated config in whichever process currently owns the live tap.
 //! - `activation` (gui only): PID-addressed file mailbox that lets a second
 //!   GUI launch reveal and focus the existing settings window.
 //! - `app_events` (gui only): coalesced app-activation notification used to
@@ -54,6 +56,7 @@ pub mod power_events;
 #[cfg(feature = "gui")]
 pub mod quit_handler;
 pub mod recovery_log;
+pub mod runtime_ipc;
 #[cfg(feature = "gui")]
 pub mod save_panel;
 pub mod scroll_events;

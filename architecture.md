@@ -8,7 +8,7 @@ Auto Reverse - системная Rust-утилита для reverse scrolling �
 
 - `src/main.rs` - тонкий CLI entrypoint/orchestrator: запускает команды, но не парсит флаги вручную.
 - `src/cli.rs` - маленький parser команд и флагов: `run`, `ui`, `benchmark`, `doctor --no-create`, `init`, `enable`, `disable`, `toggle`, startup commands, recovery `show-menu-bar-icon`, `validate-config --json`, `repair-config`, `open-releases --latest|--all`, internal-safe `prepare-uninstall`, `devices`, `config-path`, `show-config`, `simulate` и `trace-lab`.
-- `src/ui.rs` - coordinator egui settings app: владеет config/store/tray и собирает вкладки General/Devices/Permissions/Advanced плюс fuzzy navigation. General/Devices держат основные controls, posted-input policy, menu-bar visibility и config transfer находятся в Advanced, trace/latency/benchmark - в отдельном Debug Console. Тяжелые ответственности вынесены: `ui/runtime.rs` типизирует tap lifecycle, wake recovery и watchdog adapter; `ui/device_rules.rs` владеет catalog/profile/test/reset rows; `ui/preset_preview.rs` - временным dynamics preview; `ui/theme.rs` - handoff tokens/custom controls; `ui/config_transfer.rs` - native panels и pending import review; `ui/debug_console.rs` - diagnostics viewport; `ui/debug_console/export.rs` - trace/CSV workflow; `ui/scroll_benchmark.rs` - benchmark viewport; `ui/local_export.rs` - общий atomic local write/CSV escaping. Окно и event tap делят `Arc<RwLock<AppConfig>>`; изменения применяются к следующему событию, а process-local `RuntimeControl` дает pause/resume без записи TOML. UI и tray сохраняют только поверх точной загруженной TOML-ревизии. Missing permission открывает Permissions только когда utility enabled; scoped resets требуют подтверждения. `ui.lock` запрещает дубли окна/иконки; typed activation mailbox reload-ит внешний config для CLI mutations и добавляет focus только для relaunch/recovery, не создавая второй instance; Cmd-W/Cmd-Q скрывают окно, только tray Quit завершает процесс.
+- `src/ui.rs` - coordinator egui settings app: владеет config/store/tray и собирает вкладки General/Devices/Permissions/Advanced плюс fuzzy navigation. General/Devices держат основные controls, posted-input policy, menu-bar visibility и config transfer находятся в Advanced, trace/latency/benchmark - в отдельном Debug Console. Тяжелые ответственности вынесены: `ui/runtime.rs` типизирует tap lifecycle, wake recovery и watchdog adapter; `ui/device_rules.rs` владеет catalog/profile/test/reset rows; `ui/preset_preview.rs` - временным dynamics preview; `ui/theme.rs` - handoff tokens/custom controls; `ui/config_transfer.rs` - native panels и pending import review; `ui/debug_console.rs` - diagnostics viewport; `ui/debug_console/export.rs` - trace/CSV workflow; `ui/scroll_benchmark.rs` - benchmark viewport; `ui/local_export.rs` - общий atomic local write/CSV escaping. Окно и собственный event tap делят `Arc<RwLock<AppConfig>>`; изменения применяются к следующему событию. Если `run.lock` принадлежит совместимому headless runtime, успешный UI/tray save отправляет тому же владельцу private reload command. Process-local `RuntimeControl` дает pause/resume без записи TOML. UI и tray сохраняют только поверх точной загруженной TOML-ревизии. Missing permission открывает Permissions только когда utility enabled; scoped resets требуют подтверждения. `ui.lock` запрещает дубли окна/иконки; typed activation mailbox reload-ит внешний config для CLI mutations и добавляет focus только для relaunch/recovery, не создавая второй instance; Cmd-W/Cmd-Q скрывают окно, только tray Quit завершает процесс.
 - `src/lib.rs` - публичный фасад с документацией слоев.
 - `src/config/` - разделен по ответственности: `schema.rs` хранит поля/defaults/validation, `device_rules.rs` - чистый matching и мутацию для UI/tray, `profiles.rs` - field precedence, `reset.rs` - exact-device и dynamics reset scopes, `store.rs` - пути, TOML I/O, cross-process lock, revision CAS, durable temp-file/directory sync и explicit corrupted-config recovery. Read-only inspection не создает каталог или lock; committed TOML получает mode `0600`; repair сохраняет exact bytes через exclusive sibling hard link и откатывается при replacement failure. Transfer тоже не монолит: `transfer/document.rs` владеет version/schema migration, `transfer/diff.rs` - section review/apply, `transfer/secure_file.rs` - bounded non-following file read, а `transfer/mod.rs` оставляет стабильный facade. Direction использует `Option<bool>` для Inherit/Reverse/Don't reverse; alias, step и preset сохраняются независимо. Все profile values живут в существующем `device_rules`, второй profile database нет.
 - `src/device.rs` - только словарь: `DeviceKind`, `HardwareId` и best-available `DeviceIdentity`.
@@ -38,7 +38,7 @@ Auto Reverse - системная Rust-утилита для reverse scrolling �
 - `src/scroll_dynamics.rs` и `src/scroll_dynamics/` - pure dynamics разделена по SRP: facade делает transactional two-axis routing, continuous bypass и explicit click/action policy; `axis.rs` владеет velocity/residual/momentum/canceled ledger, direction/gap generations и stop threshold; `rate.rs` - bounded `dt` и fixed recent-rate window; `preset.rs` - Off/Precise/Balanced/Fast. Live event tap этот слой пока не вызывает.
 - `src/dynamics_gate.rs` - fail-closed runtime/release policy для non-live dynamics: kill switch имеет высший приоритет, evidence thresholds типизированы, а отсутствие acceptance data сохраняет effective Off.
 - `src/scroll_scheduler.rs` и `src/scroll_scheduler/schedule.rs` - pure non-live safety boundary: facade latch-ит fail-open и оркестрирует caller-driven poll, а schedule-модуль владеет unique wake id, two-axis generation, due-anchored 8 ms TTL, synthetic provenance и idle teardown. CoreGraphics/timer сюда не входят.
-- `src/platform/macos/` - вся OS-специфика и unsafe-код: `scroll_events.rs` владеет полями CGEvent и coarse-zero precise diagnostics, `permissions.rs` - TCC, `hid.rs` - IOHIDManager inventory, serial/location/public transport reads и timestamped `WheelSnapshot`, `gesture.rs` - отдельный listen-only public AppKit tap и перевод touch/scroll-phase/momentum observations в чистый classifier, `event_tap.rs` - lock/install/readiness/run loop, non-blocking config/debug reads, confidence-gated HID-source normalization и lifetime-safe registry обоих tap ports, `activation.rs` - PID-addressed typed reload/open mailbox, `tray.rs` - live status item visibility без rebuild, `tap_metrics.rs` - bounded on-demand `CGGetEventTapList`, `external_url.rs` - только trusted release destinations через `/usr/bin/open`, остальные adapters сохраняют прежние узкие ответственности.
+- `src/platform/macos/` - вся OS-специфика и unsafe-код: `scroll_events.rs` владеет полями CGEvent и coarse-zero precise diagnostics, `permissions.rs` - TCC, `hid.rs` - IOHIDManager inventory, serial/location/public transport reads и timestamped `WheelSnapshot`, `gesture.rs` - отдельный listen-only public AppKit tap и перевод touch/scroll-phase/momentum observations в чистый classifier, `event_tap.rs` - lock/install/readiness/run loop, non-blocking config/debug reads, confidence-gated HID-source normalization и lifetime-safe registry обоих tap ports, `runtime_ipc.rs` - private `0600` Unix-datagram endpoint фактического `run.lock` owner для reload валидированного config, `activation.rs` - PID-addressed typed reload/open mailbox окна, `tray.rs` - live status item visibility без rebuild, `tap_metrics.rs` - bounded on-demand `CGGetEventTapList`, `external_url.rs` - только trusted release destinations через `/usr/bin/open`, остальные adapters сохраняют прежние узкие ответственности.
 - `Cargo.toml` - macOS framework dependencies target-specific. Lean `--no-default-features` сохраняет только минимальные AppKit NSEvent/NSTouch bindings для классификатора; eframe, окна, меню, изображения и login item остаются строго под `gui`.
 - `scripts/` - `build-app-bundle.sh` строит macOS 13.0+ `.app` с реальным Mach-O, checked multi-resolution ICNS, versioned plist, least-privilege entitlements и hardened signature; `check-app-bundle.sh` сверяет plist minimum с Mach-O load commands и разделяет identity/local/release/notarized validation; `release-app-bundle.sh` оркестрирует Developer ID, secure timestamp, `notarytool`, stapling, Gatekeeper и checksummed ZIP; installer/uninstaller сохраняют staged same-volume rollback и exact identity; оба workflow имеют отдельные smoke scripts.
 - `tests/cli_integration.rs` - black-box запуск собранного binary через `std::process::Command`: каждый test получает отдельный `HOME`, очищает inherited path overrides и проверяет default/explicit config paths, read-only validation, exact repair backup, private config mode и конкурентные CLI/startup writes без доступа к реальному профилю.
@@ -298,6 +298,7 @@ src/
       permissions.rs               Accessibility TCC policy/check/request
       startup.rs                   LaunchAgent start at login (headless `run`)
       event_tap.rs                 CGEventTap runtime, config shared via Arc<RwLock<_>>
+      runtime_ipc.rs               private live config reload for the run.lock owner
       app_events.rs                NSApplication activation refresh signal (gui only)
       power_events.rs              NSWorkspace sleep/wake observer (gui only)
       debug_log.rs                 structured events + локальный ring buffer (gui only)
@@ -412,6 +413,14 @@ second ui launch
   -> owner claims the inode before parsing, preserving a newer concurrent request
   -> owner consumes the action on the existing 250 ms tick after close handling
   -> only ReloadAndOpen sends Visible(true) before Focus
+
+successful config mutation
+  -> ConfigStore atomically commits and validates one complete TOML revision
+  -> writer sends a payload-free reload-config-v1 datagram to runtime-control.sock
+  -> the process holding run.lock owns the only 0600 socket endpoint
+  -> listener reloads through ConfigStore and replaces the shared AppConfig
+  -> GUI activation mailbox separately refreshes widgets and enabled lifecycle
+  -> no endpoint is a normal no-op; the next runtime start reads the committed file
 
 debug export
   -> snapshot the currently filtered structured events
@@ -1204,7 +1213,7 @@ pure policy не импортирует AppKit, а egui только вызыв�
 | 497 | Done | Final review fixes and updated docs are included in the merge/push commit. |
 | 498 | Done | Full gate is required immediately before the final commit. |
 | 499 | Done | Push destination exists today. |
-| 500 | Done | Remote configured; `master` can be pushed with docs/review commits. |
+| 500 | Done | Remote configured; current integration branch can be pushed with docs/review commits. |
 <!-- TOP500_ARCHITECTURE:END -->
 
 </details>
@@ -1283,6 +1292,12 @@ Issues fixed after the latest merge:
   The adversarial pass caught a relaunch race/contract gap: the secondary
   process now commits icon restoration before publishing activation, so the
   owner cannot reload the old hidden revision.
+- 2026-08-02 three-pass runtime-owner review first integrated typed GUI control,
+  classifier and macOS 13 bundle fixes; then added a private event-driven
+  config reload endpoint for whichever process owns `run.lock`; finally tested
+  malformed config and full bundle workflows. The adversarial pass caught and
+  fixed a socket-before-mailbox race that could hide an enable/disable lifecycle
+  transition from the settings coordinator.
 
 Known risks still open:
 

@@ -1,12 +1,12 @@
 # 980 рекомендаций, проблем и улучшений (500 базовых + N01-N400 + R01-R60 + S01-S10 + T01-T10)
 
-Список обновлен 2026-07-22 после дополнительного анализа 10 популярных macOS utility/input repositories, научных работ по scrolling transfer functions, accuracy и latency, официальных Apple/libinput materials и нового four-agent hardening pass. Первые 500 пунктов остаются базовым аудитом, `N01-N400` фиксируют предыдущие implementation/review проходы, `R01-R60` - research-derived backlog, `S01-S10` - надежность config/update, а `T01-T10` - первоочередные runtime, classifier и packaging исправления. Подробные исследовательские источники находятся в `RESEARCH.md`, контракт обновлений - в `UPDATES.md`.
+Список обновлен 2026-08-02 после дополнительного анализа 10 популярных macOS utility/input repositories, научных работ по scrolling transfer functions, accuracy и latency, официальных Apple/libinput materials и runtime-owner follow-up. Первые 500 пунктов остаются базовым аудитом, `N01-N400` фиксируют предыдущие implementation/review проходы, `R01-R60` - research-derived backlog, `S01-S10` - надежность config/update, а `T01-T10` - первоочередные runtime, classifier и packaging исправления. Подробные исследовательские источники находятся в `RESEARCH.md`, контракт обновлений - в `UPDATES.md`.
 
 ## T01-T10: первоочередной four-agent hardening pass (2026-07-22)
 
 T01. **[Done, live control]** PID-addressed activation mailbox получил типизированные действия `ReloadOnly` и `ReloadAndOpen`: обычный CLI edit больше не открывает скрытое окно, а повторный launch по-прежнему reload-ит config и фокусирует settings.
 
-T02. **[Done, consistency]** Успешные CLI mutations (`enable`, `disable`, `toggle`, startup, repair/init, dynamics rollback, uninstall preparation и menu-bar recovery) best-effort уведомляют живой GUI; tap применяет новый persisted snapshot на существующем 250 ms tick без второго runtime.
+T02. **[Done, consistency]** Успешные CLI mutations (`enable`, `disable`, `toggle`, startup, repair/init, dynamics rollback, uninstall preparation и menu-bar recovery) уведомляют и живой GUI, и фактического владельца tap. GUI mailbox обновляет widgets/lifecycle на существующем 250 ms tick, а private `0600` Unix-datagram endpoint позволяет совместимому headless `run` reload-ить полный validated persisted snapshot без restart. Payload не содержит config/device data; отсутствие runtime является нормальным no-op.
 
 T03. **[Done, race safety]** Owner сначала atomically переименовывает mailbox inode в unique claim, поэтому concurrent writer не теряется при consume. Reload requests coalesce, `ReloadAndOpen` имеет приоритет, PID-only legacy request сохраняет прежнюю семантику.
 
@@ -1300,7 +1300,7 @@ N400. [Done] Native Save Panel, structured receipt, atomic export и Reveal in F
 497. [Done] Final review fixes and updated docs are included in the merge/push commit.
 498. [Done] Full gate is required immediately before the final commit.
 499. [Done] Push destination exists today.
-500. [Done] Remote configured; `master` can be pushed with docs/review commits.
+500. [Done] Remote configured; current integration branch can be pushed with docs/review commits.
 
 ## Research follow-up после 10 дополнительных репозиториев и научных работ
 

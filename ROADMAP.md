@@ -35,7 +35,7 @@ below in fixed batches of five.
 
 | Batch | Items | Status |
 | --- | --- | --- |
-| 15 | T01-T05 | Done: typed live reload and non-blocking event-tap diagnostics/config reads |
+| 15 | T01-T05 | Done: typed GUI + tap-owner live reload and non-blocking event-tap diagnostics/config reads |
 | 16 | T06-T10 | Implemented: classifier sessions, precise diagnostics, single startup owner, macOS 13 bundle contract and stable ICNS; physical dual-device/Finder QA remains |
 
 ## P0 - Correctness and recovery
