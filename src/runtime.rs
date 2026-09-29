@@ -1,7 +1,7 @@
 //! Process-local runtime controls that intentionally do not persist to TOML.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_PAUSE_DURATION: Duration = Duration::from_secs(15 * 60);
