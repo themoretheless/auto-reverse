@@ -1,7 +1,8 @@
 //! Process-local runtime controls that intentionally do not persist to TOML.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 pub const DEFAULT_PAUSE_DURATION: Duration = Duration::from_secs(15 * 60);
 
@@ -35,10 +36,13 @@ impl RuntimeControl {
 }
 
 fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or(0)
+    // A pause is process-local and duration-based, so wall-clock time is the
+    // wrong clock: NTP corrections or a manual clock change could otherwise
+    // expire it early or extend it unexpectedly. `Instant` is monotonic and
+    // makes the stored deadline immune to those adjustments.
+    static PROCESS_EPOCH: OnceLock<Instant> = OnceLock::new();
+    let elapsed = PROCESS_EPOCH.get_or_init(Instant::now).elapsed();
+    u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]
@@ -63,9 +67,18 @@ mod tests {
     }
 
     #[test]
+    fn zero_length_pause_is_not_reported() {
+        let control = RuntimeControl::default();
+
+        control.pause_for(Duration::ZERO);
+
+        assert!(!control.is_paused());
+    }
+
+    #[test]
     fn expired_pause_is_not_reported() {
         let control = RuntimeControl::default();
-        control.paused_until_ms.store(1, Ordering::Release);
+        control.paused_until_ms.store(0, Ordering::Release);
 
         assert_eq!(control.remaining_pause(), None);
     }
